@@ -1,19 +1,18 @@
 use core::marker::PhantomData;
 
-use bitmaps::Bitmap;
-use bitmaps::Bits;
-use bitmaps::BitsImpl;
-
-use crate::compute::Compute;
+use crate::capacity::Capacity;
+use crate::capacity::Supported;
+use crate::plumbing::CapacityImpl;
+use crate::plumbing::Flags as _;
 use crate::sink::Sink;
+use crate::stratum::Compute;
 use crate::stratum::Derived;
-use crate::stratum::Drain;
-use crate::stratum::Evaluate;
 use crate::stratum::Feed;
 use crate::stratum::Input;
-use crate::stratum::Len;
 use crate::stratum::Nil;
+use crate::stratum::Report;
 use crate::stratum::Router;
+use crate::stratum::Strata;
 use crate::stratum::Stratum;
 
 type Deposited<const N: usize, E, S> = Formation<N, Stratum<E, S>>;
@@ -61,21 +60,21 @@ type Deposited<const N: usize, E, S> = Formation<N, Stratum<E, S>>;
 #[derive(Debug)]
 pub struct Formation<const N: usize, S = Nil>
 where
-    BitsImpl<N>: Bits,
+    Capacity<N>: Supported,
 {
-    changed: Bitmap<N>,
+    changed: <Capacity<N> as CapacityImpl>::Flags,
     strata: S,
 }
 
 impl<const N: usize> Formation<N>
 where
-    BitsImpl<N>: Bits,
+    Capacity<N>: Supported,
 {
     /// Creates an empty formation.
     #[must_use]
     pub fn new() -> Self {
         Self {
-            changed: Bitmap::new(),
+            changed: Default::default(),
             strata: Nil,
         }
     }
@@ -83,16 +82,16 @@ where
 
 impl<const N: usize> Default for Formation<N>
 where
-    BitsImpl<N>: Bits,
+    Capacity<N>: Supported,
 {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<const N: usize, S: Len> Formation<N, S>
+impl<const N: usize, S: Strata> Formation<N, S>
 where
-    BitsImpl<N>: Bits,
+    Capacity<N>: Supported,
 {
     /// Deposits an input signal with its initial value.
     ///
@@ -105,7 +104,7 @@ where
                 "the formation has more signals than its capacity N"
             );
         }
-        self.changed.set(S::LEN, true);
+        self.changed.set(S::LEN);
         Formation {
             changed: self.changed,
             strata: Stratum {
@@ -134,7 +133,7 @@ where
             );
         }
         let value = f.compute(&self.strata);
-        self.changed.set(S::LEN, true);
+        self.changed.set(S::LEN);
         Formation {
             changed: self.changed,
             strata: Stratum {
@@ -169,7 +168,7 @@ where
     #[must_use]
     pub fn route<In: ?Sized, F>(self, f: F) -> Deposited<N, Router<In, F>, S>
     where
-        F: FnMut(&In, &mut Sink<'_, S, Bitmap<N>>),
+        F: FnMut(&In, &mut Sink<'_, S, Capacity<N>>),
     {
         Formation {
             changed: self.changed,
@@ -188,7 +187,7 @@ where
     /// Feeding an input its current value changes nothing.
     pub fn feed<T, I>(&mut self, value: T)
     where
-        S: Feed<T, I, Bitmap<N>>,
+        S: Feed<T, I, Capacity<N>>,
     {
         self.strata.feed(&mut self.changed, value);
     }
@@ -200,10 +199,10 @@ where
     /// nor propagated to its dependents.
     pub fn poll<V>(&mut self, visitor: &mut V)
     where
-        S: Evaluate + Drain<V>,
+        S: Report<V>,
     {
         self.strata.evaluate(&mut self.changed);
         self.strata
-            .drain(&core::mem::take(&mut self.changed), visitor);
+            .report(&core::mem::take(&mut self.changed), visitor);
     }
 }

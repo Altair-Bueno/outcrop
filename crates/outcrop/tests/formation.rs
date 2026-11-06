@@ -3,8 +3,12 @@
 use core::cell::Cell;
 use core::fmt::Debug;
 
+use outcrop::Capacity;
 use outcrop::Formation;
+use outcrop::Supported;
 use outcrop::Visit;
+use outcrop::stratum::Report;
+use outcrop::stratum::Strata;
 
 #[derive(Debug, PartialEq)]
 struct Temperature(i16);
@@ -29,8 +33,8 @@ impl<T: Debug> Visit<T> for Recorder {
 
 fn poll<const N: usize, S>(formation: &mut Formation<N, S>) -> Vec<String>
 where
-    bitmaps::BitsImpl<N>: bitmaps::Bits,
-    S: outcrop::stratum::Len + outcrop::stratum::Evaluate + outcrop::stratum::Drain<Recorder>,
+    Capacity<N>: Supported,
+    S: Strata + Report<Recorder>,
 {
     let mut recorder = Recorder::default();
     formation.poll(&mut recorder);

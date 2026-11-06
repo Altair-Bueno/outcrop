@@ -36,15 +36,20 @@
 #![forbid(unsafe_code)]
 #![cfg_attr(coverage_nightly, feature(coverage_attribute))]
 
+mod capacity;
 mod compute;
-mod flags;
 mod formation;
+#[expect(
+    unnameable_types,
+    reason = "sealed supertraits of the public bounds, unnameable so they cannot be implemented downstream"
+)]
+mod plumbing;
 mod sink;
 pub mod stratum;
 mod visit;
 
-pub use compute::Compute;
-pub use flags::Flags;
+pub use capacity::Capacity;
+pub use capacity::Supported;
 pub use formation::Formation;
 pub use sink::Sink;
 pub use visit::Visit;

@@ -1,14 +1,23 @@
 //! The building blocks a [`Formation`](crate::Formation) is made of.
 //!
 //! A formation's strata form a type-level list: every stratum wraps the ones
-//! declared before it, ending in [`Nil`]. These types and traits appear in the
-//! formation's type and bounds; they are rarely written by hand.
+//! declared before it, ending in [`Nil`]. The types are opaque and only
+//! appear in a formation's type. The traits are sealed bounds for generic
+//! code over formations; they cannot be implemented outside this crate.
 
 use core::fmt;
 use core::marker::PhantomData;
 
-use crate::compute::Compute;
-use crate::flags::Flags;
+use crate::capacity::Supported;
+use crate::plumbing::Absent;
+use crate::plumbing::CapacityImpl;
+use crate::plumbing::ComputeImpl;
+use crate::plumbing::FeedImpl;
+use crate::plumbing::Flags;
+use crate::plumbing::ReportImpl;
+use crate::plumbing::Select;
+use crate::plumbing::StrataImpl;
+use crate::plumbing::Value;
 use crate::sink::Sink;
 use crate::visit::Visit;
 
@@ -66,57 +75,82 @@ pub struct There<I>(PhantomData<I>);
 #[derive(Debug)]
 pub struct Nowhere;
 
-mod sealed {
-    #[expect(
-        unnameable_types,
-        reason = "sealed supertrait: unnameable so that `Absent` cannot be implemented downstream"
-    )]
-    pub trait Sealed {}
-}
+/// A well-formed stack of strata.
+pub trait Strata: StrataImpl {}
 
-/// A value fed to a formation that has no input or router accepting it.
+impl<S: StrataImpl> Strata for S {}
+
+/// A function deriving a signal from the strata `S`.
 ///
-/// Never implemented. It exists so that feeding an unknown value reports
-/// this trait's diagnostic instead of a type mismatch.
+/// Implemented for every function and closure taking one to eight references
+/// to distinct signals, such as `fn(&A, &B) -> O`. The marker `M` records the
+/// argument types and their positions so that the dependencies are inferred
+/// from the signature.
 #[diagnostic::on_unimplemented(
-    message = "`{Self}` cannot be fed to this formation",
+    message = "`{Self}` cannot derive a signal from the strata beneath it",
+    label = "not a function of signals already in the formation",
+    note = "every argument must be a reference `&T` to a distinct signal deposited earlier with `input` or `with`, with at most eight arguments"
+)]
+pub trait Compute<S, M>: ComputeImpl<S, M> {}
+
+impl<S, M, F: ComputeImpl<S, M>> Compute<S, M> for F {}
+
+/// Strata accepting a `T` at the type-level index `I`, for a formation of
+/// capacity `C`.
+#[diagnostic::on_unimplemented(
+    message = "`{T}` cannot be fed to this formation",
     label = "not an input or router of this formation",
     note = "inputs are fed by value and routers by reference; derived signals are computed by the formation and cannot be fed"
 )]
-pub trait Absent: sealed::Sealed {
-    /// Consumes the value.
-    fn absent(self);
-}
+pub trait Feed<T, I, C: Supported>: FeedImpl<T, I, C> {}
 
-/// Number of signals in the strata.
-pub trait Len {
-    /// The number of signals.
-    const LEN: usize;
-}
+impl<S: FeedImpl<T, I, C>, T, I, C: Supported> Feed<T, I, C> for S {}
 
-impl Len for Nil {
+/// Strata whose every signal can be reported to the visitor `V`.
+pub trait Report<V>: ReportImpl<V> {}
+
+impl<S: ReportImpl<V>, V> Report<V> for S {}
+
+impl StrataImpl for Nil {
     const LEN: usize = 0;
+
+    fn evaluate<Fl: Flags>(&mut self, _: &mut Fl) {}
 }
 
-impl<T, Tail: Len> Len for Stratum<Input<T>, Tail> {
+impl<T, Tail: StrataImpl> StrataImpl for Stratum<Input<T>, Tail> {
     const LEN: usize = Tail::LEN + 1;
+
+    fn evaluate<Fl: Flags>(&mut self, changed: &mut Fl) {
+        self.tail.evaluate(changed);
+    }
 }
 
-impl<F, M, O, Tail: Len> Len for Stratum<Derived<F, M, O>, Tail> {
-    const LEN: usize = Tail::LEN + 1;
-}
-
-impl<In: ?Sized, F, Tail: Len> Len for Stratum<Router<In, F>, Tail> {
+impl<In: ?Sized, F, Tail: StrataImpl> StrataImpl for Stratum<Router<In, F>, Tail> {
     const LEN: usize = Tail::LEN;
+
+    fn evaluate<Fl: Flags>(&mut self, changed: &mut Fl) {
+        self.tail.evaluate(changed);
+    }
 }
 
-/// A stratum holding a signal value.
-pub trait Value {
-    /// The signal.
-    type Signal;
+impl<F, M, O, Tail> StrataImpl for Stratum<Derived<F, M, O>, Tail>
+where
+    F: ComputeImpl<Tail, M, Output = O>,
+    O: PartialEq,
+    Tail: StrataImpl,
+{
+    const LEN: usize = Tail::LEN + 1;
 
-    /// Returns the current value of the signal.
-    fn value(&self) -> &Self::Signal;
+    fn evaluate<Fl: Flags>(&mut self, changed: &mut Fl) {
+        self.tail.evaluate(changed);
+        if F::dirty(changed) {
+            let value = self.entry.f.compute(&self.tail);
+            if value != self.entry.value {
+                self.entry.value = value;
+                changed.set(Tail::LEN);
+            }
+        }
+    }
 }
 
 impl<T> Value for Input<T> {
@@ -135,16 +169,7 @@ impl<F, M, O> Value for Derived<F, M, O> {
     }
 }
 
-/// Finds the signal `T` at the type-level index `I`.
-pub trait Select<T, I> {
-    /// The signal's position, counted from the first stratum.
-    const INDEX: usize;
-
-    /// Returns the current value of the signal.
-    fn select(&self) -> &T;
-}
-
-impl<E: Value, Tail: Len> Select<E::Signal, Here> for Stratum<E, Tail> {
+impl<E: Value, Tail: StrataImpl> Select<E::Signal, Here> for Stratum<E, Tail> {
     const INDEX: usize = Tail::LEN;
 
     fn select(&self) -> &E::Signal {
@@ -160,19 +185,10 @@ impl<T, I, E, Tail: Select<T, I>> Select<T, There<I>> for Stratum<E, Tail> {
     }
 }
 
-/// Accepts a `T` for the input or router at the type-level index `I`.
-#[diagnostic::on_unimplemented(
-    message = "`{T}` cannot be fed to this formation",
-    label = "not an input or router of this formation",
-    note = "inputs are fed by value and routers by reference; derived signals are computed by the formation and cannot be fed"
-)]
-pub trait Feed<T, I, B> {
-    /// Stores or routes `value`, marking every signal it changes.
-    fn feed(&mut self, changed: &mut B, value: T);
-}
-
-impl<T: PartialEq, B: Flags, Tail: Len> Feed<T, Here, B> for Stratum<Input<T>, Tail> {
-    fn feed(&mut self, changed: &mut B, value: T) {
+impl<T: PartialEq, C: Supported, Tail: StrataImpl> FeedImpl<T, Here, C>
+    for Stratum<Input<T>, Tail>
+{
+    fn feed(&mut self, changed: &mut <C as CapacityImpl>::Flags, value: T) {
         if self.entry.0 != value {
             self.entry.0 = value;
             changed.set(Tail::LEN);
@@ -180,11 +196,12 @@ impl<T: PartialEq, B: Flags, Tail: Len> Feed<T, Here, B> for Stratum<Input<T>, T
     }
 }
 
-impl<'a, In: ?Sized, F, B, Tail> Feed<&'a In, Here, B> for Stratum<Router<In, F>, Tail>
+impl<'a, In: ?Sized, F, C: Supported, Tail> FeedImpl<&'a In, Here, C>
+    for Stratum<Router<In, F>, Tail>
 where
-    F: FnMut(&In, &mut Sink<'_, Tail, B>),
+    F: FnMut(&In, &mut Sink<'_, Tail, C>),
 {
-    fn feed(&mut self, changed: &mut B, value: &'a In) {
+    fn feed(&mut self, changed: &mut <C as CapacityImpl>::Flags, value: &'a In) {
         (self.entry.f)(
             value,
             &mut Sink {
@@ -196,82 +213,36 @@ where
 }
 
 #[cfg_attr(coverage_nightly, coverage(off))]
-impl<T: Absent, B> Feed<T, Nowhere, B> for Nil {
-    fn feed(&mut self, _: &mut B, value: T) {
+impl<T: Absent, C: Supported> FeedImpl<T, Nowhere, C> for Nil {
+    fn feed(&mut self, _: &mut <C as CapacityImpl>::Flags, value: T) {
         value.absent();
     }
 }
 
-impl<T, I, B, E, Tail: Feed<T, I, B>> Feed<T, There<I>, B> for Stratum<E, Tail> {
-    fn feed(&mut self, changed: &mut B, value: T) {
+impl<T, I, C: Supported, E, Tail: FeedImpl<T, I, C>> FeedImpl<T, There<I>, C> for Stratum<E, Tail> {
+    fn feed(&mut self, changed: &mut <C as CapacityImpl>::Flags, value: T) {
         self.tail.feed(changed, value);
     }
 }
 
-/// Recomputes every derived signal whose dependencies changed, bottom up.
-pub trait Evaluate {
-    /// Recomputes the dirty derived signals and marks the ones that changed.
-    fn evaluate<B: Flags>(&mut self, changed: &mut B);
+impl<V> ReportImpl<V> for Nil {
+    fn report<Fl: Flags>(&self, _: &Fl, _: &mut V) {}
 }
 
-impl Evaluate for Nil {
-    fn evaluate<B: Flags>(&mut self, _: &mut B) {}
-}
-
-impl<T, Tail: Evaluate> Evaluate for Stratum<Input<T>, Tail> {
-    fn evaluate<B: Flags>(&mut self, changed: &mut B) {
-        self.tail.evaluate(changed);
+impl<V, In: ?Sized, F, Tail: ReportImpl<V>> ReportImpl<V> for Stratum<Router<In, F>, Tail> {
+    fn report<Fl: Flags>(&self, changed: &Fl, visitor: &mut V) {
+        self.tail.report(changed, visitor);
     }
 }
 
-impl<In: ?Sized, F, Tail: Evaluate> Evaluate for Stratum<Router<In, F>, Tail> {
-    fn evaluate<B: Flags>(&mut self, changed: &mut B) {
-        self.tail.evaluate(changed);
-    }
-}
-
-impl<F, M, O, Tail> Evaluate for Stratum<Derived<F, M, O>, Tail>
-where
-    F: Compute<Tail, M, Output = O>,
-    O: PartialEq,
-    Tail: Evaluate + Len,
-{
-    fn evaluate<B: Flags>(&mut self, changed: &mut B) {
-        self.tail.evaluate(changed);
-        if F::dirty(changed) {
-            let value = self.entry.f.compute(&self.tail);
-            if value != self.entry.value {
-                self.entry.value = value;
-                changed.set(Tail::LEN);
-            }
-        }
-    }
-}
-
-/// Reports every changed signal to a visitor `V`, bottom up.
-pub trait Drain<V> {
-    /// Visits the signals marked in `changed`.
-    fn drain<B: Flags>(&self, changed: &B, visitor: &mut V);
-}
-
-impl<V> Drain<V> for Nil {
-    fn drain<B: Flags>(&self, _: &B, _: &mut V) {}
-}
-
-impl<V, In: ?Sized, F, Tail: Drain<V>> Drain<V> for Stratum<Router<In, F>, Tail> {
-    fn drain<B: Flags>(&self, changed: &B, visitor: &mut V) {
-        self.tail.drain(changed, visitor);
-    }
-}
-
-impl<V, E, Tail> Drain<V> for Stratum<E, Tail>
+impl<V, E, Tail> ReportImpl<V> for Stratum<E, Tail>
 where
     E: Value,
     V: Visit<E::Signal>,
-    Tail: Drain<V> + Len,
+    Tail: ReportImpl<V> + StrataImpl,
 {
-    fn drain<B: Flags>(&self, changed: &B, visitor: &mut V) {
-        self.tail.drain(changed, visitor);
+    fn report<Fl: Flags>(&self, changed: &Fl, visitor: &mut V) {
+        self.tail.report(changed, visitor);
         if changed.get(Tail::LEN) {
             visitor.visit(self.entry.value());
         }
