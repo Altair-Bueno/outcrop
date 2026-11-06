@@ -1,0 +1,13 @@
+[package]
+name = "outcrop"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "Static, no_std, sans-IO incremental evaluation of context-dependent signals"
+keywords.workspace = true
+categories = ["no-std", "no-std::no-alloc", "embedded", "algorithms"]
+
+[dependencies]
+
+[lints]
+workspace = true
