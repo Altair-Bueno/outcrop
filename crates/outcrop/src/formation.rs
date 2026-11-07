@@ -1,6 +1,5 @@
 use core::marker::PhantomData;
 
-use crate::flags::Byte;
 use crate::plumbing::Bits as _;
 use crate::plumbing::Cursor as _;
 use crate::sink::Sink;
@@ -12,9 +11,8 @@ use crate::stratum::Derived;
 use crate::stratum::Input;
 use crate::stratum::Layered;
 use crate::stratum::Router;
-use crate::stratum::Stratum;
 
-type Deposited<E, S> = Formation<Stratum<E, S>>;
+type Deposited<E, S> = Formation<(E, S)>;
 
 /// A statically shaped graph of signals.
 ///
@@ -58,7 +56,7 @@ impl Formation {
     #[must_use]
     pub const fn new() -> Self {
         Self {
-            changed: Byte::EMPTY,
+            changed: 0,
             strata: (),
         }
     }
@@ -91,10 +89,7 @@ impl<S: Layered> Formation<S> {
         changed.set_top(S::LEN);
         Formation {
             changed,
-            strata: Stratum {
-                entry: Input(initial),
-                tail: self.strata,
-            },
+            strata: (Input(initial), self.strata),
         }
     }
 
@@ -115,14 +110,14 @@ impl<S: Layered> Formation<S> {
         changed.set_top(S::LEN);
         Formation {
             changed,
-            strata: Stratum {
-                entry: Derived {
+            strata: (
+                Derived {
                     f,
                     value,
                     marker: PhantomData,
                 },
-                tail: self.strata,
-            },
+                self.strata,
+            ),
         }
     }
 
@@ -151,13 +146,13 @@ impl<S: Layered> Formation<S> {
     {
         Formation {
             changed: self.changed,
-            strata: Stratum {
-                entry: Router {
+            strata: (
+                Router {
                     f,
                     marker: PhantomData,
                 },
-                tail: self.strata,
-            },
+                self.strata,
+            ),
         }
     }
 }

@@ -1,7 +1,7 @@
+use core::convert::Infallible;
 use core::fmt;
 use core::marker::PhantomData;
 
-use crate::flags::Byte;
 use crate::flags::Used;
 use crate::plumbing::Absent;
 use crate::plumbing::Bits;
@@ -16,13 +16,6 @@ use crate::strata::Feed;
 use crate::strata::Report;
 use crate::strata::Strata;
 use crate::visit::Visit;
-
-/// One stratum `E` deposited on top of the strata `Tail`.
-#[derive(Debug, Clone, Copy)]
-pub struct Stratum<E, Tail> {
-    pub(super) entry: E,
-    pub(super) tail: Tail,
-}
 
 /// An input signal fed by the caller.
 #[derive(Debug, Clone, Copy)]
@@ -67,18 +60,6 @@ impl<In: ?Sized, F: Clone> Clone for Router<In, F> {
 
 impl<In: ?Sized, F: Copy> Copy for Router<In, F> {}
 
-/// Type-level index of the topmost stratum.
-#[derive(Debug, Clone, Copy)]
-pub struct Here;
-
-/// Type-level index of a stratum beneath the topmost one.
-#[derive(Debug, Clone, Copy)]
-pub struct There<I>(PhantomData<I>);
-
-/// Type-level index past the bottom of the strata, where nothing is found.
-#[derive(Debug, Clone, Copy)]
-pub struct Nowhere;
-
 /// Strata built with [`Formation::input`](crate::Formation::input), `with`
 /// and `route`, which can be extended further.
 ///
@@ -102,11 +83,11 @@ type Grown<Tail> = <<Tail as LayeredImpl>::Cursor as Cursor>::Grow<<Tail as Stra
 type Next<Tail> = <<Tail as LayeredImpl>::Cursor as Cursor>::Next;
 
 impl Strata for () {
-    type Flags = Byte;
+    type Flags = u8;
 
-    const CHANGED: Byte = Byte::EMPTY;
+    const CHANGED: u8 = 0;
 
-    fn evaluate(&mut self, _: &mut Byte) {}
+    fn evaluate(&mut self, _: &mut u8) {}
 }
 
 impl LayeredImpl for () {
@@ -114,22 +95,22 @@ impl LayeredImpl for () {
     type Cursor = Used<0>;
 }
 
-impl<T, Tail: LayeredImpl> Strata for Stratum<Input<T>, Tail> {
+impl<T, Tail: LayeredImpl> Strata for (Input<T>, Tail) {
     type Flags = Grown<Tail>;
 
     const CHANGED: Self::Flags = <Self::Flags as Bits>::ALL;
 
     fn evaluate(&mut self, changed: &mut Self::Flags) {
-        self.tail.evaluate(Self::below_mut(changed));
+        self.1.evaluate(Self::below_mut(changed));
     }
 }
 
-impl<T, Tail: LayeredImpl> LayeredImpl for Stratum<Input<T>, Tail> {
+impl<T, Tail: LayeredImpl> LayeredImpl for (Input<T>, Tail) {
     const LEN: usize = Tail::LEN + 1;
     type Cursor = Next<Tail>;
 }
 
-impl<F, M, O, Tail> Strata for Stratum<Derived<F, M, O>, Tail>
+impl<F, M, O, Tail> Strata for (Derived<F, M, O>, Tail)
 where
     F: ComputeImpl<Tail, M, Output = O>,
     O: PartialEq,
@@ -140,18 +121,18 @@ where
     const CHANGED: Self::Flags = <Self::Flags as Bits>::ALL;
 
     fn evaluate(&mut self, changed: &mut Self::Flags) {
-        self.tail.evaluate(Self::below_mut(changed));
+        self.1.evaluate(Self::below_mut(changed));
         if F::dirty(changed) {
-            let value = self.entry.f.compute(&self.tail);
-            if value != self.entry.value {
-                self.entry.value = value;
+            let value = self.0.f.compute(&self.1);
+            if value != self.0.value {
+                self.0.value = value;
                 changed.set_top(Tail::LEN);
             }
         }
     }
 }
 
-impl<F, M, O, Tail> LayeredImpl for Stratum<Derived<F, M, O>, Tail>
+impl<F, M, O, Tail> LayeredImpl for (Derived<F, M, O>, Tail)
 where
     F: ComputeImpl<Tail, M, Output = O>,
     O: PartialEq,
@@ -161,22 +142,22 @@ where
     type Cursor = Next<Tail>;
 }
 
-impl<In: ?Sized, F, Tail: LayeredImpl> Strata for Stratum<Router<In, F>, Tail> {
+impl<In: ?Sized, F, Tail: LayeredImpl> Strata for (Router<In, F>, Tail) {
     type Flags = Tail::Flags;
 
     const CHANGED: Self::Flags = Tail::CHANGED;
 
     fn evaluate(&mut self, changed: &mut Self::Flags) {
-        self.tail.evaluate(changed);
+        self.1.evaluate(changed);
     }
 }
 
-impl<In: ?Sized, F, Tail: LayeredImpl> LayeredImpl for Stratum<Router<In, F>, Tail> {
+impl<In: ?Sized, F, Tail: LayeredImpl> LayeredImpl for (Router<In, F>, Tail) {
     const LEN: usize = Tail::LEN;
     type Cursor = Tail::Cursor;
 }
 
-impl<E: Value, Tail: LayeredImpl> Stack for Stratum<E, Tail>
+impl<E: Value, Tail: LayeredImpl> Stack for (E, Tail)
 where
     Self: LayeredImpl<Flags = Grown<Tail>>,
 {
@@ -191,7 +172,7 @@ where
     }
 }
 
-impl<In: ?Sized, F, Tail: LayeredImpl> Stack for Stratum<Router<In, F>, Tail> {
+impl<In: ?Sized, F, Tail: LayeredImpl> Stack for (Router<In, F>, Tail) {
     type Tail = Tail;
 
     fn below(flags: &Self::Flags) -> &Tail::Flags {
@@ -219,70 +200,70 @@ impl<F, M, O> Value for Derived<F, M, O> {
     }
 }
 
-impl<E: Value, Tail: LayeredImpl> Select<E::Signal, Here> for Stratum<E, Tail> {
+impl<E: Value, Tail: LayeredImpl> Select<E::Signal, ()> for (E, Tail) {
     const INDEX: usize = Tail::LEN;
 
     fn select(&self) -> &E::Signal {
-        self.entry.value()
+        self.0.value()
     }
 }
 
-impl<T, I, E, Tail: Select<T, I>> Select<T, There<I>> for Stratum<E, Tail> {
+impl<T, I, E, Tail: Select<T, I>> Select<T, (I,)> for (E, Tail) {
     const INDEX: usize = Tail::INDEX;
 
     fn select(&self) -> &T {
-        self.tail.select()
+        self.1.select()
     }
 }
 
-impl<T: PartialEq, Tail: LayeredImpl> Feed<T, Here> for Stratum<Input<T>, Tail> {
+impl<T: PartialEq, Tail: LayeredImpl> Feed<T, ()> for (Input<T>, Tail) {
     fn feed(&mut self, changed: &mut Self::Flags, value: T) {
-        if self.entry.0 != value {
-            self.entry.0 = value;
+        if self.0.0 != value {
+            self.0.0 = value;
             changed.set_top(Tail::LEN);
         }
     }
 }
 
-impl<'a, In: ?Sized, F, Tail> Feed<&'a In, Here> for Stratum<Router<In, F>, Tail>
+impl<'a, In: ?Sized, F, Tail> Feed<&'a In, ()> for (Router<In, F>, Tail)
 where
     F: FnMut(&In, &mut Sink<'_, Tail>),
     Tail: LayeredImpl,
 {
     fn feed(&mut self, changed: &mut Self::Flags, value: &'a In) {
-        (self.entry.f)(value, &mut Sink::new(&mut self.tail, changed));
+        (self.0.f)(value, &mut Sink::new(&mut self.1, changed));
     }
 }
 
 #[cfg_attr(coverage_nightly, coverage(off))]
-impl<T: Absent> Feed<T, Nowhere> for () {
-    fn feed(&mut self, _: &mut Byte, _: T) {}
+impl<T: Absent> Feed<T, Infallible> for () {
+    fn feed(&mut self, _: &mut u8, _: T) {}
 }
 
-impl<T, I, E, Tail> Feed<T, There<I>> for Stratum<E, Tail>
+impl<T, I, E, Tail> Feed<T, (I,)> for (E, Tail)
 where
     Self: Stack<Tail = Tail>,
     Tail: Feed<T, I>,
 {
     fn feed(&mut self, changed: &mut Self::Flags, value: T) {
-        self.tail.feed(Self::below_mut(changed), value);
+        self.1.feed(Self::below_mut(changed), value);
     }
 }
 
 impl<V> Report<V> for () {
-    fn report(&self, _: &Byte, _: &mut V) {}
+    fn report(&self, _: &u8, _: &mut V) {}
 }
 
-impl<V, In: ?Sized, F, Tail> Report<V> for Stratum<Router<In, F>, Tail>
+impl<V, In: ?Sized, F, Tail> Report<V> for (Router<In, F>, Tail)
 where
     Tail: LayeredImpl + Report<V>,
 {
     fn report(&self, changed: &Self::Flags, visitor: &mut V) {
-        self.tail.report(Self::below(changed), visitor);
+        self.1.report(Self::below(changed), visitor);
     }
 }
 
-impl<V, E, Tail> Report<V> for Stratum<E, Tail>
+impl<V, E, Tail> Report<V> for (E, Tail)
 where
     Self: Stack<Tail = Tail>,
     E: Value,
@@ -290,9 +271,9 @@ where
     Tail: LayeredImpl + Report<V>,
 {
     fn report(&self, changed: &Self::Flags, visitor: &mut V) {
-        self.tail.report(Self::below(changed), visitor);
+        self.1.report(Self::below(changed), visitor);
         if changed.get(Tail::LEN) {
-            visitor.visit(self.entry.value());
+            visitor.visit(self.0.value());
         }
     }
 }
