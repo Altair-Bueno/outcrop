@@ -51,7 +51,7 @@ macro_rules! modbus_formation {
                     out.feed(&decode(chunk));
                 }
             })
-            .with(|aa: &Register<0xAA>, ab: &Register<0xAB>| Version {
+            .memo(|aa: &Register<0xAA>, ab: &Register<0xAB>| Version {
                 major: aa.0,
                 minor: ab.0,
             })

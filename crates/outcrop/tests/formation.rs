@@ -47,7 +47,7 @@ fn first_poll_reports_every_initial_value() {
     let mut formation = Formation::new()
         .input(Temperature(20))
         .input(Setpoint(18))
-        .with(heating);
+        .memo(heating);
 
     assert_eq!(
         poll(&mut formation),
@@ -66,7 +66,7 @@ fn default_formation_accepts_strata_like_a_new_one() {
 fn poll_without_feeds_reports_nothing() {
     let mut formation = Formation::new()
         .input(Temperature(20))
-        .with(|t: &Temperature| AntiFreeze(t.0 < 10));
+        .memo(|t: &Temperature| AntiFreeze(t.0 < 10));
     poll(&mut formation);
 
     assert_eq!(poll(&mut formation), Vec::<String>::new());
@@ -77,7 +77,7 @@ fn feeding_an_input_reports_it_and_its_changed_dependents() {
     let mut formation = Formation::new()
         .input(Temperature(20))
         .input(Setpoint(18))
-        .with(heating);
+        .memo(heating);
     poll(&mut formation);
 
     formation.feed(Temperature(15));
@@ -89,7 +89,7 @@ fn feeding_an_input_reports_it_and_its_changed_dependents() {
 fn feeding_the_current_value_reports_nothing() {
     let mut formation = Formation::new()
         .input(Temperature(20))
-        .with(|t: &Temperature| AntiFreeze(t.0 < 10));
+        .memo(|t: &Temperature| AntiFreeze(t.0 < 10));
     poll(&mut formation);
 
     formation.feed(Temperature(20));
@@ -102,8 +102,8 @@ fn unchanged_derived_value_stops_propagation() {
     let downstream = Cell::new(0);
     let mut formation = Formation::new()
         .input(Temperature(20))
-        .with(|t: &Temperature| AntiFreeze(t.0 < 10))
-        .with(|a: &AntiFreeze| {
+        .memo(|t: &Temperature| AntiFreeze(t.0 < 10))
+        .memo(|a: &AntiFreeze| {
             downstream.set(downstream.get() + 1);
             Heating(a.0)
         });
@@ -122,7 +122,7 @@ fn signals_without_changed_dependencies_are_not_recomputed() {
     let mut formation = Formation::new()
         .input(Temperature(20))
         .input(Setpoint(18))
-        .with(|s: &Setpoint| {
+        .memo(|s: &Setpoint| {
             calls.set(calls.get() + 1);
             Heating(s.0 > 0)
         });
@@ -141,7 +141,7 @@ fn several_changed_dependencies_recompute_once() {
     let mut formation = Formation::new()
         .input(Temperature(20))
         .input(Setpoint(18))
-        .with(|t: &Temperature, s: &Setpoint| {
+        .memo(|t: &Temperature, s: &Setpoint| {
             calls.set(calls.get() + 1);
             heating(t, s)
         });
@@ -159,8 +159,8 @@ fn several_changed_dependencies_recompute_once() {
 fn derived_signals_see_values_derived_in_the_same_poll() {
     let mut formation = Formation::new()
         .input(Temperature(20))
-        .with(|t: &Temperature| AntiFreeze(t.0 < 10))
-        .with(|a: &AntiFreeze| Heating(a.0));
+        .memo(|t: &Temperature| AntiFreeze(t.0 < 10))
+        .memo(|a: &AntiFreeze| Heating(a.0));
     poll(&mut formation);
 
     formation.feed(Temperature(0));
@@ -187,7 +187,7 @@ fn derived_signals_accept_up_to_eight_dependencies() {
         .input(Bit::<5>(false))
         .input(Bit::<6>(false))
         .input(Bit::<7>(false))
-        .with(
+        .memo(
             |b0: &Bit<0>,
              b1: &Bit<1>,
              b2: &Bit<2>,
@@ -228,7 +228,7 @@ fn unit_discards_reported_signals() {
     let mut formation = Formation::new()
         .input(Temperature(20))
         .input(Setpoint(18))
-        .with(heating);
+        .memo(heating);
 
     formation.poll(&mut ());
 
@@ -253,7 +253,7 @@ fn references_forward_to_their_visitor() {
 fn tuples_fan_out_in_order() {
     let mut formation = Formation::new()
         .input(Temperature(20))
-        .with(|t: &Temperature| AntiFreeze(t.0 < 10));
+        .memo(|t: &Temperature| AntiFreeze(t.0 < 10));
     let mut recorder = Recorder::default();
     let mut count = Count(0);
 
@@ -278,14 +278,23 @@ struct Alarm(bool);
 fn derived_reads_are_stale_until_the_first_poll() {
     let mut formation = Formation::new()
         .input(Temperature(20))
-        .with(|t: &Temperature| AntiFreeze(t.0 < 10));
+        .memo(|t: &Temperature| AntiFreeze(t.0 < 10));
 
-    assert_eq!(formation.get(), Reading::Fresh(&Temperature(20)));
-    assert_eq!(formation.get(), Reading::Stale(&AntiFreeze(false)));
+    assert_eq!(
+        formation.get::<Temperature, _>(),
+        Reading::Fresh(&Temperature(20))
+    );
+    assert_eq!(
+        formation.get::<AntiFreeze, _>(),
+        Reading::Stale(&AntiFreeze(false))
+    );
 
     poll(&mut formation);
 
-    assert_eq!(formation.get(), Reading::Fresh(&AntiFreeze(false)));
+    assert_eq!(
+        formation.get::<AntiFreeze, _>(),
+        Reading::Fresh(&AntiFreeze(false))
+    );
 }
 
 #[test]
@@ -293,19 +302,31 @@ fn feeding_marks_only_dependents_stale_until_the_next_poll() {
     let mut formation = Formation::new()
         .input(Temperature(20))
         .input(Setpoint(18))
-        .with(heating)
-        .with(|t: &Temperature| AntiFreeze(t.0 < 10));
+        .memo(heating)
+        .memo(|t: &Temperature| AntiFreeze(t.0 < 10));
     poll(&mut formation);
 
     formation.feed(Setpoint(25));
 
-    assert_eq!(formation.get(), Reading::Fresh(&Setpoint(25)));
-    assert_eq!(formation.get(), Reading::Stale(&Heating(false)));
-    assert_eq!(formation.get(), Reading::Fresh(&AntiFreeze(false)));
+    assert_eq!(
+        formation.get::<Setpoint, _>(),
+        Reading::Fresh(&Setpoint(25))
+    );
+    assert_eq!(
+        formation.get::<Heating, _>(),
+        Reading::Stale(&Heating(false))
+    );
+    assert_eq!(
+        formation.get::<AntiFreeze, _>(),
+        Reading::Fresh(&AntiFreeze(false))
+    );
 
     poll(&mut formation);
 
-    assert_eq!(formation.get(), Reading::Fresh(&Heating(true)));
+    assert_eq!(
+        formation.get::<Heating, _>(),
+        Reading::Fresh(&Heating(true))
+    );
 }
 
 #[test]
@@ -313,20 +334,20 @@ fn staleness_follows_derived_dependencies() {
     let mut formation = Formation::new()
         .input(Temperature(20))
         .input(Setpoint(18))
-        .with(heating)
-        .with(|h: &Heating| Alarm(h.0));
+        .memo(heating)
+        .memo(|h: &Heating| Alarm(h.0));
     poll(&mut formation);
 
     formation.feed(Temperature(10));
 
-    assert_eq!(formation.get(), Reading::Stale(&Alarm(false)));
+    assert_eq!(formation.get::<Alarm, _>(), Reading::Stale(&Alarm(false)));
 }
 
 #[test]
 fn feeding_the_current_value_keeps_dependents_fresh() {
     let mut formation = Formation::new()
         .input(Temperature(20))
-        .with(|t: &Temperature| AntiFreeze(t.0 < 10));
+        .memo(|t: &Temperature| AntiFreeze(t.0 < 10));
     poll(&mut formation);
 
     formation.feed(Temperature(20));
@@ -341,7 +362,7 @@ fn strata_deposited_after_a_poll_are_reported_by_the_next() {
 
     let mut formation = formation
         .input(Setpoint(18))
-        .with(|t: &Temperature| AntiFreeze(t.0 < 10));
+        .memo(|t: &Temperature| AntiFreeze(t.0 < 10));
 
     assert_eq!(poll(&mut formation), ["Setpoint(18)", "AntiFreeze(false)"]);
 }

@@ -2,10 +2,17 @@
 //! signals.
 //!
 //! A [`Formation`] is a dependency graph of signals built at compile time,
-//! one stratum at a time. Inputs are fed by the caller, derived signals are
-//! computed from the signals beneath them, and [`Formation::poll`] reports
-//! every signal whose value changed. Nothing allocates: the whole graph lives
-//! in a single value whose type encodes its shape.
+//! one stratum at a time. Every signal is one of:
+//!
+//! - an **input**, fed by the caller;
+//! - a **memo**, computed from the signals beneath it and cached, for values
+//!   that are expensive to compute;
+//! - a **view**, computed from the signals beneath it every time it is read,
+//!   for values cheap enough not to be stored.
+//!
+//! [`Formation::poll`] reports every signal whose value changed. Nothing
+//! allocates: the whole graph lives in a single value whose type encodes its
+//! shape.
 //!
 //! ```
 //! use core::fmt::Debug;
@@ -26,7 +33,7 @@
 //!
 //! let mut formation = Formation::new()
 //!     .input(Temperature(20))
-//!     .with(|t: &Temperature| AntiFreeze(t.0 < 10));
+//!     .view(|t: &Temperature| AntiFreeze(t.0 < 10));
 //!
 //! formation.poll(&mut Print); // Temperature(20), AntiFreeze(false)
 //! formation.feed(Temperature(0));

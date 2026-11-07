@@ -1,3 +1,4 @@
+use core::borrow::Borrow as _;
 use core::convert::Infallible;
 use core::fmt;
 use core::marker::PhantomData;
@@ -24,21 +25,44 @@ use crate::visit::Visit;
 #[derive(Debug, Clone, Copy)]
 pub struct Input<T>(pub(super) T);
 
-/// A signal derived from the strata beneath it by `F`.
+/// A signal computed by `F` from the strata beneath it, and cached.
 #[derive(Clone, Copy)]
-pub struct Derived<F, M, O> {
+pub struct Memo<F, M, O> {
     pub(super) f: F,
     pub(super) value: O,
     pub(super) marker: PhantomData<fn() -> M>,
 }
 
-impl<F, M, O: fmt::Debug> fmt::Debug for Derived<F, M, O> {
+impl<F, M, O: fmt::Debug> fmt::Debug for Memo<F, M, O> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Derived")
+        f.debug_struct("Memo")
             .field("value", &self.value)
             .finish_non_exhaustive()
     }
 }
+
+/// A signal computed by `F` from the strata beneath it whenever it is read.
+pub struct View<F, M, O> {
+    pub(super) f: F,
+    pub(super) marker: PhantomData<fn() -> (M, O)>,
+}
+
+impl<F, M, O> fmt::Debug for View<F, M, O> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("View").finish_non_exhaustive()
+    }
+}
+
+impl<F: Clone, M, O> Clone for View<F, M, O> {
+    fn clone(&self) -> Self {
+        Self {
+            f: self.f.clone(),
+            marker: PhantomData,
+        }
+    }
+}
+
+impl<F: Copy, M, O> Copy for View<F, M, O> {}
 
 /// A router that turns a fed `&In` into feeds of the strata beneath it.
 pub struct Router<In: ?Sized, F> {
@@ -63,15 +87,15 @@ impl<In: ?Sized, F: Clone> Clone for Router<In, F> {
 
 impl<In: ?Sized, F: Copy> Copy for Router<In, F> {}
 
-/// Strata built with [`Formation::input`](crate::Formation::input), `with`
-/// and `route`, which can be extended further.
+/// Strata built with [`Formation::input`](crate::Formation::input), `memo`,
+/// `view` and `route`, which can be extended further.
 ///
 /// This trait is sealed.
 pub trait Layered: LayeredImpl {}
 
 impl<S: LayeredImpl> Layered for S {}
 
-/// A function deriving a signal from the strata `S`.
+/// A function computing a signal from the strata `S`.
 ///
 /// Implemented for every function and closure taking one to eight references
 /// to distinct signals, such as `fn(&A, &B) -> O`. The marker `M` records the
@@ -113,7 +137,7 @@ impl<T, Tail: LayeredImpl> LayeredImpl for (Input<T>, Tail) {
     type Cursor = Next<Tail>;
 }
 
-impl<F, M, O, Tail> Strata for (Derived<F, M, O>, Tail)
+impl<F, M, O, Tail> Strata for (Memo<F, M, O>, Tail)
 where
     F: ComputeImpl<Tail, M, Output = O>,
     O: PartialEq,
@@ -135,7 +159,40 @@ where
     }
 }
 
-impl<F, M, O, Tail> LayeredImpl for (Derived<F, M, O>, Tail)
+impl<F, M, O, Tail> LayeredImpl for (Memo<F, M, O>, Tail)
+where
+    F: ComputeImpl<Tail, M, Output = O>,
+    O: PartialEq,
+    Tail: LayeredImpl,
+{
+    const LEN: usize = Tail::LEN + 1;
+    type Cursor = Next<Tail>;
+}
+
+impl<F, M, O, Tail> Strata for (View<F, M, O>, Tail)
+where
+    F: ComputeImpl<Tail, M, Output = O>,
+    O: PartialEq,
+    Tail: LayeredImpl,
+{
+    type Flags = Grown<Tail>;
+
+    const CHANGED: Self::Flags = <Self::Flags as Bits>::ALL;
+
+    fn evaluate(&mut self, changed: &mut Self::Flags) {
+        if changed.get(Tail::LEN) || !F::pending(Self::below(changed)) {
+            self.1.evaluate(Self::below_mut(changed));
+            return;
+        }
+        let before = self.0.f.compute(&self.1);
+        self.1.evaluate(Self::below_mut(changed));
+        if self.0.f.compute(&self.1) != before {
+            changed.set_top(Tail::LEN);
+        }
+    }
+}
+
+impl<F, M, O, Tail> LayeredImpl for (View<F, M, O>, Tail)
 where
     F: ComputeImpl<Tail, M, Output = O>,
     O: PartialEq,
@@ -189,37 +246,100 @@ impl<In: ?Sized, F, Tail: LayeredImpl> Stack for (Router<In, F>, Tail) {
 
 impl<T> Value for Input<T> {
     type Signal = T;
-
-    fn value(&self) -> &T {
-        &self.0
-    }
 }
 
-impl<F, M, O> Value for Derived<F, M, O> {
+impl<F, M, O> Value for Memo<F, M, O> {
     type Signal = O;
+}
 
-    fn value(&self) -> &O {
-        &self.value
-    }
+impl<F, M, O> Value for View<F, M, O> {
+    type Signal = O;
 }
 
 impl<T, Tail> Settle<Tail> for Input<T> {
+    type Ref<'a>
+        = &'a T
+    where
+        Self: 'a,
+        Tail: 'a;
+    type Snapshot = ();
+
+    fn value<'a>(&'a self, _: &'a Tail) -> &'a T {
+        &self.0
+    }
+
     fn stale<Fl: Bits>(_: &Fl) -> bool {
+        false
+    }
+
+    fn snapshot(&self, _: &Tail) {}
+
+    fn differs(&self, _: &Tail, (): ()) -> bool {
         false
     }
 }
 
-impl<F: ComputeImpl<Tail, M>, M, O, Tail> Settle<Tail> for Derived<F, M, O> {
+impl<F: ComputeImpl<Tail, M>, M, O, Tail> Settle<Tail> for Memo<F, M, O> {
+    type Ref<'a>
+        = &'a O
+    where
+        Self: 'a,
+        Tail: 'a;
+    type Snapshot = ();
+
+    fn value<'a>(&'a self, _: &'a Tail) -> &'a O {
+        &self.value
+    }
+
     fn stale<Fl: Bits>(changed: &Fl) -> bool {
-        F::stale(changed)
+        F::dirty(changed) || F::pending(changed)
+    }
+
+    fn snapshot(&self, _: &Tail) {}
+
+    fn differs(&self, _: &Tail, (): ()) -> bool {
+        false
     }
 }
 
-impl<E: Value + Settle<Tail>, Tail: LayeredImpl> Select<E::Signal, ()> for (E, Tail) {
-    const INDEX: usize = Tail::LEN;
+impl<F, M, O, Tail> Settle<Tail> for View<F, M, O>
+where
+    F: ComputeImpl<Tail, M, Output = O>,
+    O: PartialEq,
+{
+    type Ref<'a>
+        = O
+    where
+        Self: 'a,
+        Tail: 'a;
+    type Snapshot = O;
 
-    fn select(&self) -> &E::Signal {
-        self.0.value()
+    fn value<'a>(&'a self, tail: &'a Tail) -> O {
+        self.f.compute(tail)
+    }
+
+    fn stale<Fl: Bits>(changed: &Fl) -> bool {
+        F::pending(changed)
+    }
+
+    fn snapshot(&self, tail: &Tail) -> O {
+        self.f.compute(tail)
+    }
+
+    fn differs(&self, tail: &Tail, snapshot: O) -> bool {
+        self.f.compute(tail) != snapshot
+    }
+}
+
+impl<E: Settle<Tail>, Tail: LayeredImpl> Select<E::Signal, ()> for (E, Tail) {
+    const INDEX: usize = Tail::LEN;
+    type Ref<'a>
+        = E::Ref<'a>
+    where
+        Self: 'a;
+
+    fn select(&self) -> E::Ref<'_> {
+        self.0.value(&self.1)
     }
 
     fn stale<Fl: Bits>(changed: &Fl) -> bool {
@@ -229,8 +349,12 @@ impl<E: Value + Settle<Tail>, Tail: LayeredImpl> Select<E::Signal, ()> for (E, T
 
 impl<T, I, E, Tail: Select<T, I>> Select<T, (I,)> for (E, Tail) {
     const INDEX: usize = Tail::INDEX;
+    type Ref<'a>
+        = Tail::Ref<'a>
+    where
+        Self: 'a;
 
-    fn select(&self) -> &T {
+    fn select(&self) -> Tail::Ref<'_> {
         self.1.select()
     }
 
@@ -240,7 +364,12 @@ impl<T, I, E, Tail: Select<T, I>> Select<T, (I,)> for (E, Tail) {
 }
 
 impl<T, I, S: LayeredImpl + Select<T, I>> Get<T, I> for S {
-    fn get(&self, changed: &Self::Flags) -> Reading<&T> {
+    type Ref<'a>
+        = <S as Select<T, I>>::Ref<'a>
+    where
+        Self: 'a;
+
+    fn get(&self, changed: &Self::Flags) -> Reading<Self::Ref<'_>> {
         let value = self.select();
         if Self::stale(changed) {
             Reading::Stale(value)
@@ -277,10 +406,28 @@ impl<T: Absent> Feed<T, Infallible> for () {
 impl<T, I, E, Tail> Feed<T, (I,)> for (E, Tail)
 where
     Self: Stack<Tail = Tail>,
-    Tail: Feed<T, I>,
+    E: Settle<Tail>,
+    Tail: LayeredImpl + Feed<T, I>,
 {
     fn feed(&mut self, changed: &mut Self::Flags, value: T) {
+        let snapshot = (!changed.get(Tail::LEN)).then(|| self.0.snapshot(&self.1));
+        let below = *Self::below(changed);
         self.1.feed(Self::below_mut(changed), value);
+        if let Some(snapshot) = snapshot
+            && *Self::below(changed) != below
+            && self.0.differs(&self.1, snapshot)
+        {
+            changed.set_top(Tail::LEN);
+        }
+    }
+}
+
+impl<T, I, In: ?Sized, F, Tail> Feed<T, (I,)> for (Router<In, F>, Tail)
+where
+    Tail: LayeredImpl + Feed<T, I>,
+{
+    fn feed(&mut self, changed: &mut Self::Flags, value: T) {
+        self.1.feed(changed, value);
     }
 }
 
@@ -300,14 +447,14 @@ where
 impl<V, E, Tail> Report<V> for (E, Tail)
 where
     Self: Stack<Tail = Tail>,
-    E: Value,
+    E: Settle<Tail>,
     V: Visit<E::Signal>,
     Tail: LayeredImpl + Report<V>,
 {
     fn report(&self, changed: &Self::Flags, visitor: &mut V) {
         self.1.report(Self::below(changed), visitor);
         if changed.get(Tail::LEN) {
-            visitor.visit(self.0.value());
+            visitor.visit(self.0.value(&self.1).borrow());
         }
     }
 }

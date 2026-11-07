@@ -27,12 +27,24 @@ struct Signal {
     field: Ident,
     byte: TokenStream,
     mask: TokenStream,
-    sources: Vec<usize>,
+    view: Option<View>,
+    stale: Vec<usize>,
+    ancestors: Vec<usize>,
+}
+
+#[derive(Clone)]
+struct View {
+    helper: Ident,
+    deps: Vec<usize>,
 }
 
 impl Signal {
     fn local(&self) -> Ident {
         format_ident!("__outcrop_{}", self.field, span = Span::mixed_site())
+    }
+
+    fn before(&self) -> Ident {
+        format_ident!("__outcrop_before_{}", self.field, span = Span::mixed_site())
     }
 }
 
@@ -69,6 +81,8 @@ struct Expansion<'d> {
     fields: Vec<TokenStream>,
     defaults: Vec<TokenStream>,
     helpers: Vec<TokenStream>,
+    inputs: Vec<(usize, Type, TokenStream)>,
+    memos: Vec<(usize, Ident, Vec<usize>, TokenStream)>,
     evaluations: Vec<TokenStream>,
     impls: Vec<TokenStream>,
     reports: Vec<TokenStream>,
@@ -96,20 +110,15 @@ impl Declaration {
             fields: Vec::new(),
             defaults: Vec::new(),
             helpers: Vec::new(),
+            inputs: Vec::new(),
+            memos: Vec::new(),
             evaluations: Vec::new(),
             impls: Vec::new(),
             reports: Vec::new(),
             visits: Vec::new(),
             errors: reject_default(&self.attrs),
         };
-        for (position, entry) in self.entries.iter().enumerate() {
-            let field = Field::from(entry);
-            match &entry.kind {
-                Kind::Input { ty, init } => expansion.input(&field, ty, init),
-                Kind::Derived { ty, deps, f } => expansion.derived(&field, ty, deps, f),
-                Kind::Router { ty, f } => expansion.router(&entry.cfgs, position, ty, f),
-            }
-        }
+        expansion.entries(&self.entries);
         if let Some(errors) = expansion.errors {
             return errors.to_compile_error();
         }
@@ -130,10 +139,13 @@ impl Declaration {
             signals,
             ..
         } = expansion;
-        let names = signals.iter().map(|signal| {
-            let (cfgs, field, local) = (&signal.cfgs, &signal.field, signal.local());
-            quote!(#(#cfgs)* #field: #local)
-        });
+        let names = signals
+            .iter()
+            .filter(|signal| signal.view.is_none())
+            .map(|signal| {
+                let (cfgs, field, local) = (&signal.cfgs, &signal.field, signal.local());
+                quote!(#(#cfgs)* #field: #local)
+            });
         let changed_flags = if evaluations.is_empty() {
             quote!(_)
         } else {
@@ -194,6 +206,20 @@ impl Declaration {
 }
 
 impl Expansion<'_> {
+    fn entries(&mut self, entries: &[Entry]) {
+        for (position, entry) in entries.iter().enumerate() {
+            let field = Field::from(entry);
+            match &entry.kind {
+                Kind::Input { ty, init } => self.input(&field, ty, init),
+                Kind::Memo { ty, deps, f } => self.memo(&field, ty, deps, f),
+                Kind::View { ty, deps, f } => self.view(&field, ty, deps, f),
+                Kind::Router { ty, f } => self.router(&entry.cfgs, position, ty, f),
+            }
+        }
+        self.feeds();
+        self.evaluations();
+    }
+
     fn error(&mut self, error: Error) {
         match &mut self.errors {
             Some(errors) => errors.combine(error),
@@ -201,7 +227,7 @@ impl Expansion<'_> {
         }
     }
 
-    fn signal(&mut self, field: &Field<'_>, ty: &Type) -> Option<usize> {
+    fn signal(&mut self, field: &Field<'_>, ty: &Type, view: Option<View>) -> Option<usize> {
         let Field { cfgs, attrs, name } = *field;
         let key = key(ty);
         if self.signals.iter().any(|signal| signal.key == key) {
@@ -224,13 +250,26 @@ impl Expansion<'_> {
         };
         let byte = quote!(#bit / 8);
         let mask = quote!(1 << (#bit % 8));
-        self.fields.push(quote!(#(#cfgs)* #(#attrs)* #field: #ty));
+        if view.is_none() {
+            self.fields.push(quote!(#(#cfgs)* #(#attrs)* #field: #ty));
+        }
+        self.signals.push(Signal {
+            cfgs: cfgs.to_vec(),
+            key,
+            field,
+            byte: byte.clone(),
+            mask: mask.clone(),
+            view,
+            stale: Vec::new(),
+            ancestors: Vec::new(),
+        });
         let krate = self.krate;
         let visit = quote!(#krate::Visit<#ty>);
+        let value = self.value(index, false);
         self.reports.push(quote! {
             #(#cfgs)*
             if changed[#byte] & #mask != 0 {
-                <__OutcropVisitor as #visit>::visit(visitor, &self.#field);
+                <__OutcropVisitor as #visit>::visit(visitor, &#value);
             }
         });
         if cfgs.is_empty() {
@@ -250,15 +289,106 @@ impl Expansion<'_> {
             });
             self.visits.push(bound.into_token_stream());
         }
-        self.signals.push(Signal {
-            cfgs: cfgs.to_vec(),
-            key,
-            field,
-            byte,
-            mask,
-            sources: Vec::new(),
-        });
         Some(index)
+    }
+
+    fn value(&self, index: usize, local: bool) -> TokenStream {
+        let signal = &self.signals[index];
+        match &signal.view {
+            Some(View { helper, deps }) => {
+                let arguments = deps.iter().map(|dep| self.value(*dep, local));
+                quote!(#helper(#(&#arguments),*))
+            }
+            None if local => signal.local().into_token_stream(),
+            None => {
+                let field = &signal.field;
+                quote!(self.#field)
+            }
+        }
+    }
+
+    fn dependencies(&mut self, deps: &Type) -> (Vec<Type>, Vec<usize>) {
+        let deps = dependencies(deps);
+        let mut indices = Vec::new();
+        for dep in &deps {
+            let key = key(dep);
+            if let Some(index) = self.signals.iter().position(|signal| signal.key == key) {
+                indices.push(index);
+            } else {
+                self.error(Error::new(
+                    dep.span(),
+                    format_args!("`{key}` is not a signal declared above"),
+                ));
+            }
+        }
+        (deps, indices)
+    }
+
+    fn helper(&mut self, cfgs: &[Attribute], helper: &Ident, deps: &[Type], ty: &Type, f: &Expr) {
+        let parameters = deps.iter().map(|dep| quote!(&#dep)).collect::<Vec<_>>();
+        match function(helper, &parameters, &quote!(-> #ty), f) {
+            Ok(function) => self.helpers.push(quote!(#(#cfgs)* #function)),
+            Err(error) => self.error(error),
+        }
+    }
+
+    fn link(&mut self, index: usize, deps: &[usize]) {
+        let mut stale = Vec::new();
+        let mut ancestors = Vec::new();
+        let memo = self.signals[index].view.is_none();
+        for &dep in deps {
+            let signal = &self.signals[dep];
+            stale.extend_from_slice(&signal.stale);
+            ancestors.extend_from_slice(&signal.ancestors);
+            ancestors.push(dep);
+            if memo {
+                stale.push(dep);
+            }
+        }
+        for list in [&mut stale, &mut ancestors] {
+            list.sort_unstable();
+            list.dedup();
+        }
+        let signal = &mut self.signals[index];
+        signal.stale = stale;
+        signal.ancestors = ancestors;
+    }
+
+    fn observe(&self, source: usize, change: &TokenStream) -> TokenStream {
+        let views = self
+            .signals
+            .iter()
+            .enumerate()
+            .filter(|(_, signal)| signal.view.is_some() && signal.ancestors.contains(&source))
+            .map(|(index, signal)| (signal, self.value(index, false)))
+            .collect::<Vec<_>>();
+        let befores = views.iter().map(|(signal, value)| {
+            let Signal {
+                cfgs, byte, mask, ..
+            } = signal;
+            let before = signal.before();
+            quote! {
+                #(#cfgs)*
+                let #before = (changed[#byte] & #mask == 0).then(|| #value);
+            }
+        });
+        let afters = views.iter().map(|(signal, value)| {
+            let Signal {
+                cfgs, byte, mask, ..
+            } = signal;
+            let before = signal.before();
+            quote! {
+                #(#cfgs)*
+                if #before.is_some_and(|before| before != #value) {
+                    changed[#byte] |= #mask;
+                }
+            }
+        });
+        quote! {
+            #(#befores)*
+            #change
+            #(#afters)*
+        }
     }
 
     fn fed(&mut self, cfgs: &[Attribute], ty: &Type) -> Option<Fed> {
@@ -279,109 +409,141 @@ impl Expansion<'_> {
 
     fn input(&mut self, field: &Field<'_>, ty: &Type, init: &Expr) {
         let cfgs = field.cfgs;
-        let (Some(index), Some(fed)) = (self.signal(field, ty), self.fed(cfgs, ty)) else {
+        let (Some(index), Some(fed)) = (self.signal(field, ty, None), self.fed(cfgs, ty)) else {
             return;
         };
-        let signal = self.signals[index].clone();
-        let Signal {
-            field, byte, mask, ..
-        } = &signal;
-        let local = signal.local();
-        let (ident, krate, flags) = (self.ident, self.krate, &self.flags);
-        let fed_ty = &fed.ty;
-        let differs = quote_spanned!(ty.span()=> self.#field != value);
-        let implementation = quote! {
-            #(#cfgs)*
-            impl #krate::Feed<#fed_ty, ()> for #ident {
-                fn feed(&mut self, changed: &mut #flags, value: #fed_ty) {
-                    if #differs {
-                        self.#field = value;
-                        changed[#byte] |= #mask;
-                    }
-                }
-            }
-        };
-        self.impls.push(implementation);
+        let signal = &self.signals[index];
+        let (field, local) = (&signal.field, signal.local());
+        let differs = quote_spanned!(ty.span()=> ::core::cmp::PartialEq::ne(&self.#field, &value));
+        self.inputs.push((index, fed.ty.clone(), differs));
         self.defaults
             .push(quote!(#(#cfgs)* let #local: #ty = #init;));
         self.fed.push(fed);
-        self.signals[index].sources.push(index);
-        self.get(index, ty, &[]);
+        self.get(index, ty);
     }
 
-    fn derived(&mut self, field: &Field<'_>, ty: &Type, deps: &Type, f: &Expr) {
-        let cfgs = field.cfgs;
-        let deps = dependencies(deps);
-        let mut dirty = Vec::new();
-        let mut arguments = Vec::new();
-        let mut values = Vec::new();
-        let mut sources = Vec::new();
-        for dep in &deps {
-            let key = key(dep);
-            if let Some(index) = self.signals.iter().position(|signal| signal.key == key) {
-                let signal = &self.signals[index];
-                let (byte, mask) = (&signal.byte, &signal.mask);
-                dirty.push(quote!(changed[#byte] & #mask != 0));
-                sources.extend_from_slice(&signal.sources);
-                let (field, local) = (&signal.field, signal.local());
-                arguments.push(quote!(&self.#field));
-                values.push(quote!(&#local));
-            } else {
-                self.error(Error::new(
-                    dep.span(),
-                    format_args!("`{key}` is not a signal declared above"),
-                ));
-            }
-        }
-        let Some(index) = self.signal(field, ty) else {
-            return;
-        };
-        let helper = format_ident!("__outcrop_derive_{index}");
-        let parameters = deps.iter().map(|dep| quote!(&#dep)).collect::<Vec<_>>();
-        match function(&helper, &parameters, &quote!(-> #ty), f) {
-            Ok(function) => self.helpers.push(quote!(#(#cfgs)* #function)),
-            Err(error) => self.error(error),
-        }
-        let signal = self.signals[index].clone();
-        let Signal {
-            field, byte, mask, ..
-        } = &signal;
-        let local = signal.local();
-        self.defaults
-            .push(quote!(#(#cfgs)* let #local: #ty = #helper(#(#values),*);));
-        let differs = quote_spanned!(ty.span()=> value != self.#field);
-        self.evaluations.push(quote! {
-            #(#cfgs)*
-            if #(#dirty)||* {
-                let value = #helper(#(#arguments),*);
-                if #differs {
-                    self.#field = value;
-                    changed[#byte] |= #mask;
+    fn feeds(&mut self) {
+        let (ident, krate, flags) = (self.ident, self.krate, &self.flags);
+        let feeds = self.inputs.iter().map(|(index, fed_ty, differs)| {
+            let Signal {
+                cfgs,
+                field,
+                byte,
+                mask,
+                ..
+            } = &self.signals[*index];
+            let change = quote! {
+                self.#field = value;
+                changed[#byte] |= #mask;
+            };
+            let change = self.observe(*index, &change);
+            quote! {
+                #(#cfgs)*
+                impl #krate::Feed<#fed_ty, ()> for #ident {
+                    fn feed(&mut self, changed: &mut #flags, value: #fed_ty) {
+                        if #differs {
+                            #change
+                        }
+                    }
                 }
             }
         });
-        sources.sort_unstable();
-        sources.dedup();
-        self.get(index, ty, &sources);
-        self.signals[index].sources = sources;
+        let feeds = feeds.collect::<Vec<_>>();
+        self.impls.extend(feeds);
     }
 
-    fn get(&mut self, index: usize, ty: &Type, sources: &[usize]) {
+    fn memo(&mut self, field: &Field<'_>, ty: &Type, deps: &Type, f: &Expr) {
+        let cfgs = field.cfgs;
+        let (types, deps) = self.dependencies(deps);
+        let Some(index) = self.signal(field, ty, None) else {
+            return;
+        };
+        let helper = format_ident!("__outcrop_memo_{index}");
+        self.helper(cfgs, &helper, &types, ty, f);
+        self.link(index, &deps);
+        let local = self.signals[index].local();
+        let values = deps.iter().map(|dep| self.value(*dep, true));
+        let default = quote!(#(#cfgs)* let #local: #ty = #helper(#(&#values),*););
+        self.defaults.push(default);
+        let field = &self.signals[index].field;
+        let differs = quote_spanned!(ty.span()=> ::core::cmp::PartialEq::ne(&value, &self.#field));
+        self.memos.push((index, helper, deps, differs));
+        self.get(index, ty);
+    }
+
+    fn evaluations(&mut self) {
+        let evaluations = self.memos.iter().map(|(index, helper, deps, differs)| {
+            let Signal {
+                cfgs,
+                field,
+                byte,
+                mask,
+                ..
+            } = &self.signals[*index];
+            let dirty = deps.iter().map(|dep| {
+                let Signal { byte, mask, .. } = &self.signals[*dep];
+                quote!(changed[#byte] & #mask != 0)
+            });
+            let arguments = deps.iter().map(|dep| self.value(*dep, false));
+            let change = quote! {
+                self.#field = value;
+                changed[#byte] |= #mask;
+            };
+            let change = self.observe(*index, &change);
+            quote! {
+                #(#cfgs)*
+                if #(#dirty)||* {
+                    let value = #helper(#(&#arguments),*);
+                    if #differs {
+                        #change
+                    }
+                }
+            }
+        });
+        let evaluations = evaluations.collect::<Vec<_>>();
+        self.evaluations.extend(evaluations);
+    }
+
+    fn view(&mut self, field: &Field<'_>, ty: &Type, deps: &Type, f: &Expr) {
+        let cfgs = field.cfgs;
+        let (types, deps) = self.dependencies(deps);
+        let helper = format_ident!("__outcrop_view_{}", self.signals.len());
+        self.helper(cfgs, &helper, &types, ty, f);
+        let view = View {
+            helper,
+            deps: deps.clone(),
+        };
+        let Some(index) = self.signal(field, ty, Some(view)) else {
+            return;
+        };
+        self.link(index, &deps);
+        self.get(index, ty);
+    }
+
+    fn get(&mut self, index: usize, ty: &Type) {
         let (ident, krate, flags) = (self.ident, self.krate, &self.flags);
-        let Signal { cfgs, field, .. } = &self.signals[index];
+        let Signal {
+            cfgs, stale, view, ..
+        } = &self.signals[index];
         let reading = quote!(#krate::Reading);
-        let (changed, body) = if sources.is_empty() {
-            (quote!(_), quote!(#reading::Fresh(&self.#field)))
+        let (output, value) = if view.is_some() {
+            (quote!(#ty), self.value(index, false))
         } else {
-            let stale = sources.iter().map(|source| {
+            let value = self.value(index, false);
+            (quote!(&'a #ty), quote!(&#value))
+        };
+        let (changed, body) = if stale.is_empty() {
+            (quote!(_), quote!(#reading::Fresh(#value)))
+        } else {
+            let stale = stale.iter().map(|source| {
                 let Signal { byte, mask, .. } = &self.signals[*source];
                 quote!(changed[#byte] & #mask != 0)
             });
             let body = quote! {
                 if #(#stale)||* {
-                    #reading::Stale(&self.#field)
+                    #reading::Stale(#value)
                 } else {
-                    #reading::Fresh(&self.#field)
+                    #reading::Fresh(#value)
                 }
             };
             (quote!(changed), body)
@@ -389,7 +551,9 @@ impl Expansion<'_> {
         let implementation = quote! {
             #(#cfgs)*
             impl #krate::Get<#ty, ()> for #ident {
-                fn get(&self, #changed: &#flags) -> #reading<&#ty> {
+                type Ref<'a> = #output where Self: 'a;
+
+                fn get(&self, #changed: &#flags) -> #reading<Self::Ref<'_>> {
                     #body
                 }
             }
@@ -560,7 +724,7 @@ mod tests {
 
     #[test]
     fn rejects_duplicate_signals() -> syn::Result<()> {
-        let output = expand(quote!(struct S { A = A(0), A = A(1), A = A => f }))?;
+        let output = expand(quote!(struct S { a: A = A(0), b: A = A(1), A = A => f }))?;
         assert!(
             output.contains("`A` is already a signal of this formation"),
             "{output}"
@@ -580,7 +744,7 @@ mod tests {
 
     #[test]
     fn rejects_dependencies_not_declared_above() -> syn::Result<()> {
-        let output = expand(quote!(struct S { B = A => f, A = A(0) }))?;
+        let output = expand(quote!(struct S { B = A => f, a: A = A(0) }))?;
         assert!(
             output.contains("`A` is not a signal declared above"),
             "{output}"
@@ -601,29 +765,51 @@ mod tests {
     #[test]
     fn forwards_signal_attributes_to_their_field_only() -> syn::Result<()> {
         let output = expand(quote!(struct S {
-            #[serde(rename = "a")] A = A(0),
-            #[serde(skip)] B = A => f,
+            #[serde(rename = "a")] a: A = A(0),
+            #[serde(skip)] b: B = A => f,
         }))?;
         assert!(
-            output.contains("# [serde (rename = \"a\")] s0 : A"),
+            output.contains("# [serde (rename = \"a\")] a : A"),
             "{output}"
         );
-        assert!(output.contains("# [serde (skip)] s1 : B"), "{output}");
+        assert!(output.contains("# [serde (skip)] b : B"), "{output}");
         assert_eq!(output.matches("# [serde").count(), 2, "{output}");
         Ok(())
     }
 
     #[test]
-    fn names_fields_when_asked_and_by_position_otherwise() -> syn::Result<()> {
+    fn stores_named_signals_and_views_the_rest() -> syn::Result<()> {
         let output = expand(quote!(struct S {
             a: A = A(0),
-            B = A => f,
-            c: outcrop::C = (A, B) => g,
+            b: outcrop::B = A => f,
+            C = (A, outcrop::B) => g,
         }))?;
         assert!(output.contains("a : A"), "{output}");
-        assert!(output.contains("s1 : B"), "{output}");
-        assert!(output.contains("c : outcrop :: C"), "{output}");
+        assert!(output.contains("b : outcrop :: B"), "{output}");
+        assert!(!output.contains(": C"), "{output}");
         Ok(())
+    }
+
+    #[test]
+    fn rejects_unnamed_inputs() {
+        let error = expand(quote!(struct S { A = A(0) }))
+            .err()
+            .map(|error| error.to_string());
+        assert_eq!(
+            error.as_deref(),
+            Some("inputs are stored, so they need a field name: `name: Type = initial`")
+        );
+    }
+
+    #[test]
+    fn rejects_attributes_other_than_cfg_on_views() {
+        let error = expand(quote!(struct S { a: A = A(0), #[serde(skip)] B = A => f }))
+            .err()
+            .map(|error| error.to_string());
+        assert_eq!(
+            error.as_deref(),
+            Some("views have no field, so only `cfg` attributes are allowed on them")
+        );
     }
 
     #[test]
@@ -650,7 +836,9 @@ mod tests {
 
     #[test]
     fn negates_every_cfg_of_an_entry_for_its_absent_bound() -> syn::Result<()> {
-        let output = expand(quote!(struct S { #[cfg(a)] #[cfg(b)] A = A(0) }))?;
+        let output = expand(quote!(
+            struct S { #[cfg(a)] #[cfg(b)] a: A = A(0) }
+        ))?;
         assert!(output.contains("# [cfg (not (all (a , b)))]"), "{output}");
         Ok(())
     }
@@ -658,7 +846,7 @@ mod tests {
     #[test]
     fn rejects_closures_of_the_wrong_arity() -> syn::Result<()> {
         let output =
-            expand(quote!(struct S { A = A(0), B = A => |a, b| B(a.0), &[u8] => |frame| {} }))?;
+            expand(quote!(struct S { a: A = A(0), B = A => |a, b| B(a.0), &[u8] => |frame| {} }))?;
         assert!(
             output.contains("expected 1 closure parameters, found 2"),
             "{output}"
@@ -687,7 +875,7 @@ mod tests {
     fn uses_the_given_crate_path() -> syn::Result<()> {
         let output = expand(quote!(
             #[strata(crate = layers)]
-            struct S { A = A(0), B = A => f, &[u8] => g }
+            struct S { a: A = A(0), b: B = A => f, &[u8] => g }
         ))?;
         assert!(output.contains("impl layers :: Strata for S"), "{output}");
         assert!(output.contains("layers :: Sink"), "{output}");
@@ -710,7 +898,11 @@ mod tests {
 
     #[test]
     fn forwards_cfg_attributes_to_the_generated_items() -> syn::Result<()> {
-        let output = expand(quote!(#[cfg(feature = "x")] #[derive(Debug)] struct S { A = A(0) }))?;
+        let output = expand(quote!(
+            #[cfg(feature = "x")]
+            #[derive(Debug)]
+            struct S { a: A = A(0) }
+        ))?;
         assert_eq!(
             output.matches("# [cfg (feature = \"x\")]").count(),
             2,

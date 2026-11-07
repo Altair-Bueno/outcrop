@@ -63,18 +63,34 @@ impl Parse for Entry {
         } else {
             None
         };
-        let kind = input.parse()?;
-        if let Kind::Router { .. } = kind {
+        let kind = match (input.parse()?, &name) {
+            (Kind::Memo { ty, deps, f }, None) => Kind::View { ty, deps, f },
+            (Kind::Input { ty, .. }, None) => {
+                return Err(syn::Error::new_spanned(
+                    ty,
+                    "inputs are stored, so they need a field name: `name: Type = initial`",
+                ));
+            }
+            (kind, _) => kind,
+        };
+        let fieldless = match kind {
+            Kind::Router { .. } => Some("routers"),
+            Kind::View { .. } => Some("views"),
+            Kind::Input { .. } | Kind::Memo { .. } => None,
+        };
+        if let Some(fieldless) = fieldless {
             if let Some(attr) = attrs.first() {
                 return Err(syn::Error::new_spanned(
                     attr,
-                    "routers have no field, so only `cfg` attributes are allowed on them",
+                    format_args!(
+                        "{fieldless} have no field, so only `cfg` attributes are allowed on them"
+                    ),
                 ));
             }
-            if let Some(name) = name {
+            if let Some(name) = &name {
                 return Err(syn::Error::new(
                     name.span(),
-                    "routers have no field, so they cannot be named",
+                    format_args!("{fieldless} have no field, so they cannot be named"),
                 ));
             }
         }
@@ -104,7 +120,7 @@ impl Parse for Kind {
         {
             input.advance_to(&fork);
             input.parse::<Token![=>]>()?;
-            return Ok(Self::Derived {
+            return Ok(Self::Memo {
                 ty,
                 deps: Box::new(deps),
                 f: input.parse()?,

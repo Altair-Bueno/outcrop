@@ -9,17 +9,19 @@ use crate::strata::Get;
 use crate::strata::Report;
 use crate::strata::Strata;
 use crate::stratum::Compute;
-use crate::stratum::Derived;
 use crate::stratum::Input;
 use crate::stratum::Layered;
+use crate::stratum::Memo;
 use crate::stratum::Router;
+use crate::stratum::View;
 
 type Deposited<E, S> = Formation<(E, S)>;
 
 /// A statically shaped graph of signals.
 ///
-/// Each [`input`](Self::input), [`with`](Self::with) or
-/// [`route`](Self::route) deposits a stratum on top of the previous ones, and
+/// Each [`input`](Self::input), [`memo`](Self::memo), [`view`](Self::view)
+/// or [`route`](Self::route) deposits a stratum on top of the previous ones,
+/// and
 /// a stratum can only depend on the strata beneath it, so cycles cannot be
 /// written. Every signal has a value from the moment it is declared, and the
 /// formation tracks changes in one bit per signal, sized from its strata.
@@ -33,10 +35,10 @@ type Deposited<E, S> = Formation<(E, S)>;
 /// struct A(u8);
 /// #[derive(PartialEq)]
 /// struct B(u8);
-/// let formation = Formation::new().with(|a: &A| B(a.0));
+/// let formation = Formation::new().memo(|a: &A| B(a.0));
 /// ```
 ///
-/// And feeding a derived signal:
+/// And feeding a memo or a view:
 ///
 /// ```compile_fail,E0277
 /// # use outcrop::Formation;
@@ -44,7 +46,7 @@ type Deposited<E, S> = Formation<(E, S)>;
 /// struct A(u8);
 /// #[derive(PartialEq)]
 /// struct B(u8);
-/// let mut formation = Formation::new().input(A(0)).with(|a: &A| B(a.0));
+/// let mut formation = Formation::new().input(A(0)).view(|a: &A| B(a.0));
 /// formation.feed(B(1));
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -95,14 +97,16 @@ impl<S: Layered> Formation<S> {
         }
     }
 
-    /// Deposits a signal derived by `f` from the signals beneath it.
+    /// Deposits a memo: a signal computed by `f` from the signals beneath it
+    /// and cached, for values that are expensive to compute.
     ///
     /// The dependencies are the argument types of `f`, so
-    /// `|a: &A, b: &B| C(..)` derives a `C` from an `A` and a `B`. Its initial
-    /// value is computed immediately and reported by the next
-    /// [`poll`](Self::poll).
+    /// `|a: &A, b: &B| C(..)` computes a `C` from an `A` and a `B`, which may
+    /// be inputs, memos or views. The initial value is computed immediately
+    /// and reported by the next [`poll`](Self::poll), which recomputes it
+    /// whenever a dependency changed.
     #[must_use]
-    pub fn with<F, M>(self, mut f: F) -> Deposited<Derived<F, M, F::Output>, S>
+    pub fn memo<F, M>(self, f: F) -> Deposited<Memo<F, M, F::Output>, S>
     where
         F: Compute<S, M>,
         F::Output: PartialEq,
@@ -113,9 +117,37 @@ impl<S: Layered> Formation<S> {
         Formation {
             changed,
             strata: (
-                Derived {
+                Memo {
                     f,
                     value,
+                    marker: PhantomData,
+                },
+                self.strata,
+            ),
+        }
+    }
+
+    /// Deposits a view: a signal computed by `f` from the signals beneath it
+    /// every time it is read, for values cheap enough not to be stored.
+    ///
+    /// The dependencies are inferred as for [`memo`](Self::memo). A view
+    /// takes no memory of its own, but is computed again on every
+    /// [`get`](Self::get), report and computation of the signals above it,
+    /// and twice whenever a signal beneath it might have changed it, so that
+    /// [`poll`](Self::poll) only reports it when its value changed.
+    #[must_use]
+    pub fn view<F, M>(self, f: F) -> Deposited<View<F, M, F::Output>, S>
+    where
+        F: Compute<S, M>,
+        F::Output: PartialEq,
+    {
+        let mut changed = S::Cursor::grow(self.changed);
+        changed.set_top(S::LEN);
+        Formation {
+            changed,
+            strata: (
+                View {
+                    f,
                     marker: PhantomData,
                 },
                 self.strata,
@@ -170,24 +202,28 @@ impl<S: Strata> Formation<S> {
         self.strata.feed(&mut self.changed, value);
     }
 
-    /// Reads the signal `T` without recomputing anything.
+    /// Reads the signal `T` without recomputing any memo.
     ///
-    /// Inputs are always [`Fresh`](Reading::Fresh). A derived signal is
+    /// Inputs and memos are read by reference, while views are computed on
+    /// the spot and returned by value.
+    ///
+    /// Inputs are always [`Fresh`](Reading::Fresh). A memo is
     /// [`Stale`](Reading::Stale) until the first [`poll`](Self::poll), and
-    /// afterwards whenever an input it depends on, directly or through other
-    /// derived signals, changed since the last one.
-    pub fn get<T, I>(&self) -> Reading<&T>
+    /// afterwards whenever a signal it depends on, directly or through other
+    /// signals, changed since the last one. A view is stale whenever a memo it
+    /// is computed from is.
+    pub fn get<T, I>(&self) -> Reading<<S as Get<T, I>>::Ref<'_>>
     where
         S: Get<T, I>,
     {
         self.strata.get(&self.changed)
     }
 
-    /// Recomputes the derived signals whose dependencies changed and reports
-    /// every changed signal, inputs included, to `visitor`.
+    /// Recomputes the memos whose dependencies changed and reports every
+    /// changed signal, inputs and views included, to `visitor`.
     ///
-    /// A recomputed signal equal to its previous value is neither reported
-    /// nor propagated to its dependents.
+    /// A memo or view whose value did not change is neither reported nor
+    /// propagated to its dependents.
     pub fn poll<V>(&mut self, visitor: &mut V)
     where
         S: Report<V>,

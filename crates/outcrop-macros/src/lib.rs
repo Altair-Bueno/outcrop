@@ -34,7 +34,8 @@ struct Entry {
 
 enum Kind {
     Input { ty: Type, init: Expr },
-    Derived { ty: Type, deps: Box<Type>, f: Expr },
+    Memo { ty: Type, deps: Box<Type>, f: Expr },
+    View { ty: Type, deps: Box<Type>, f: Expr },
     Router { ty: Type, f: Expr },
 }
 
@@ -43,12 +44,20 @@ enum Kind {
 ///
 /// Each entry is one of:
 ///
-/// - `Signal = initial`: an input with its initial value.
-/// - `Signal = Deps => f`: a signal computed by `f` from `Deps`, a signal
-///   declared above or a tuple of them. `f` is a path to a function or a
-///   closure that captures nothing, taking each dependency by reference.
+/// - `name: Signal = initial`: an input with its initial value, stored in the
+///   field `name`.
+/// - `name: Signal = Deps => f`: a memo, computed by `f` from `Deps` and
+///   stored in the field `name`. `Deps` is a signal declared above or a tuple
+///   of them, and `f` is a path to a function or a closure that captures
+///   nothing, taking each dependency by reference.
+/// - `Signal = Deps => f`: a view, computed by `f` from `Deps` every time it
+///   is read. It has no name because it has no field: it takes no memory.
 /// - `In => f`: a router, called with every fed `In` and an [`outcrop::Sink`](https://docs.rs/outcrop)
 ///   feeding the inputs and routers declared above it.
+///
+/// So the struct's fields are exactly the stored signals. Views and routers
+/// have no field and accept only `cfg` attributes; the attributes of inputs
+/// and memos are forwarded to their field.
 ///
 /// Attributes are kept, so the struct can derive `Clone`, `PartialEq` and
 /// other traits its signals implement. `Default` is implemented from the
@@ -70,7 +79,7 @@ enum Kind {
 /// outcrop::strata! {
 ///     #[derive(Debug, Clone, PartialEq)]
 ///     struct Thermostat {
-///         Temperature = Temperature(20),
+///         temperature: Temperature = Temperature(20),
 ///         AntiFreeze = Temperature => |t| AntiFreeze(t.0 < 10),
 ///         &[i16] => |samples, sink| {
 ///             if let Some(last) = samples.last() {

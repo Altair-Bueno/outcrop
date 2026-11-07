@@ -51,18 +51,18 @@ fn decode(chunk: [u8; 4]) -> ModbusRegister {
 outcrop::strata! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
     struct Thermostat {
-        Temperature = Temperature(20),
-        Setpoint = Setpoint(18),
-        Heating = (Temperature, Setpoint) => heating,
-        AntiFreeze = Temperature => |t| AntiFreeze(t.0 < 10),
-        Alarm = (Heating, AntiFreeze) => |h: &Heating, a| Alarm(h.0 && a.0),
+        temperature: Temperature = Temperature(20),
+        setpoint: Setpoint = Setpoint(18),
+        heating: Heating = (Temperature, Setpoint) => heating,
+        anti_freeze: AntiFreeze = Temperature => |t| AntiFreeze(t.0 < 10),
+        alarm: Alarm = (Heating, AntiFreeze) => |h: &Heating, a| Alarm(h.0 && a.0),
     }
 }
 
 outcrop::strata! {
     struct Modbus {
-        Register<0xAA> = Register(0),
-        Register<0xAB> = Register(0),
+        aa: Register<0xAA> = Register(0),
+        ab: Register<0xAB> = Register(0),
         &ModbusRegister => |r, sink| match r.address {
             0xAA => sink.feed(Register::<0xAA>(r.value)),
             0xAB => sink.feed(Register::<0xAB>(r.value)),
@@ -78,33 +78,33 @@ outcrop::strata! {
 
 outcrop::strata! {
     struct Bits {
-        Register<0> = Register(0),
-        Register<1> = Register(0),
-        Register<2> = Register(0),
-        Register<3> = Register(0),
-        Register<4> = Register(0),
-        Register<5> = Register(0),
-        Register<6> = Register(0),
-        Register<7> = Register(0),
-        Register<8> = Register(0),
-        Setpoint = (Register<8>) => |high| Setpoint(i16::from(high.0 != 0)),
+        r0: Register<0> = Register(0),
+        r1: Register<1> = Register(0),
+        r2: Register<2> = Register(0),
+        r3: Register<3> = Register(0),
+        r4: Register<4> = Register(0),
+        r5: Register<5> = Register(0),
+        r6: Register<6> = Register(0),
+        r7: Register<7> = Register(0),
+        r8: Register<8> = Register(0),
+        setpoint: Setpoint = (Register<8>) => |high| Setpoint(i16::from(high.0 != 0)),
     }
 }
 
 outcrop::strata! {
     struct Shifted {
         #[cfg(any())]
-        Missing = Missing,
-        Register<0> = Register(0),
-        Register<1> = Register(0),
-        Register<2> = Register(0),
-        Register<3> = Register(0),
+        missing: Missing = Missing,
+        r0: Register<0> = Register(0),
+        r1: Register<1> = Register(0),
+        r2: Register<2> = Register(0),
+        r3: Register<3> = Register(0),
         #[cfg(any())]
-        Missing2 = Missing2,
-        Register<4> = Register(0),
-        Register<5> = Register(0),
-        Register<6> = Register(0),
-        Setpoint = (Register<6>) => |r| Setpoint(r.0.cast_signed()),
+        missing2: Missing2 = Missing2,
+        r4: Register<4> = Register(0),
+        r5: Register<5> = Register(0),
+        r6: Register<6> = Register(0),
+        setpoint: Setpoint = (Register<6>) => |r| Setpoint(r.0.cast_signed()),
     }
 }
 
@@ -112,9 +112,32 @@ outcrop::strata! {
     #[derive(Debug)]
     struct Named {
         temperature: Temperature = Temperature(20),
-        Setpoint = Setpoint(18),
+        setpoint: Setpoint = Setpoint(18),
         #[cfg(all())]
         anti_freeze: AntiFreeze = Temperature => |t| AntiFreeze(t.0 < 10),
+        Heating = (Temperature, Setpoint) => heating,
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct AntiFreezeSupported(bool);
+
+outcrop::strata! {
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+    struct ModbusMap {
+        r42: Register<0x42> = Register(0x22),
+        r43: Register<0x43> = Register(0),
+        AntiFreezeSupported = Register<0x42> => |r| AntiFreezeSupported(r.0 & 0x01 != 0),
+        Setpoint = (Register<0x42>, Register<0x43>) => |a, b| {
+            Setpoint(i16::from_be_bytes([a.0.to_be_bytes()[1], b.0.to_be_bytes()[1]]))
+        },
+        alarm: Alarm = (AntiFreezeSupported, Setpoint) => |a, s| Alarm(a.0 && s.0 > 0x2300),
+        Heating = Alarm => |a| Heating(!a.0),
+        &ModbusRegister => |r, sink| match r.address {
+            0x42 => sink.feed(Register::<0x42>(r.value)),
+            0x43 => sink.feed(Register::<0x43>(r.value)),
+            _ => {}
+        },
     }
 }
 
@@ -137,27 +160,27 @@ fn a0(t: &Temperature) -> V {
 
 outcrop::strata! {
     struct Hygiene {
-        Setpoint = Setpoint(18),
-        Temperature = s0,
-        V = Temperature => a0,
+        setpoint: Setpoint = Setpoint(18),
+        s0: Temperature = s0,
+        a0: V = Temperature => a0,
     }
 }
 
 outcrop::strata! {
     struct AbsentSignal {
         #[cfg(any())]
-        Temperature = Temperature(0),
+        temperature: Temperature = Temperature(0),
     }
 }
 
 outcrop::strata! {
     struct Gated {
         #[cfg(all())]
-        Temperature = Temperature(20),
+        temperature: Temperature = Temperature(20),
         #[cfg(any())]
-        Missing = Missing,
+        missing: Missing = Missing,
         #[cfg(all())]
-        AntiFreeze = Temperature => |t| AntiFreeze(t.0 < 10),
+        anti_freeze: AntiFreeze = Temperature => |t| AntiFreeze(t.0 < 10),
         #[cfg(any())]
         Alarm = Missing => |_| Alarm(true),
         #[cfg(any())]
@@ -170,7 +193,7 @@ outcrop::strata! {
 outcrop::strata! {
     #[cfg(any())]
     struct Absent {
-        Temperature = Temperature(0),
+        temperature: Temperature = Temperature(0),
     }
 }
 
@@ -178,7 +201,7 @@ outcrop::strata! {
     #[strata(crate = layers)]
     #[derive(Debug)]
     struct Renamed {
-        Temperature = Temperature(7),
+        temperature: Temperature = Temperature(7),
     }
 }
 
@@ -199,7 +222,7 @@ fn poll<S: Report<Recorder>>(formation: &mut Formation<S>) -> Vec<String> {
 
 outcrop::strata! {
     struct UnitType {
-        () = (),
+        unit: () = (),
         u32 = () => |_| 10,
     }
 }
@@ -260,10 +283,10 @@ fn equal_recomputations_stop_propagation() {
 }
 
 #[test]
-fn named_fields_show_in_field_derives() {
+fn only_stored_signals_show_in_field_derives() {
     assert_eq!(
         format!("{:?}", Named::default()),
-        "Named { temperature: Temperature(20), s1: Setpoint(18), anti_freeze: AntiFreeze(false) }"
+        "Named { temperature: Temperature(20), setpoint: Setpoint(18), anti_freeze: AntiFreeze(false) }"
     );
 }
 
@@ -365,12 +388,15 @@ fn generated_code_uses_the_given_crate_path() {
 fn derived_reads_are_stale_until_the_first_poll() {
     let mut formation = Formation::from(Thermostat::default());
 
-    assert_eq!(formation.get(), Reading::Fresh(&Temperature(20)));
-    assert_eq!(formation.get(), Reading::Stale(&Alarm(false)));
+    assert_eq!(
+        formation.get::<Temperature, _>(),
+        Reading::Fresh(&Temperature(20))
+    );
+    assert_eq!(formation.get::<Alarm, _>(), Reading::Stale(&Alarm(false)));
 
     poll(&mut formation);
 
-    assert_eq!(formation.get(), Reading::Fresh(&Alarm(false)));
+    assert_eq!(formation.get::<Alarm, _>(), Reading::Fresh(&Alarm(false)));
 }
 
 #[test]
@@ -380,15 +406,27 @@ fn feeding_marks_transitive_dependents_stale_until_the_next_poll() {
 
     formation.feed(Setpoint(25));
 
-    assert_eq!(formation.get(), Reading::Fresh(&Setpoint(25)));
-    assert_eq!(formation.get(), Reading::Stale(&Heating(false)));
-    assert_eq!(formation.get(), Reading::Fresh(&AntiFreeze(false)));
-    assert_eq!(formation.get(), Reading::Stale(&Alarm(false)));
+    assert_eq!(
+        formation.get::<Setpoint, _>(),
+        Reading::Fresh(&Setpoint(25))
+    );
+    assert_eq!(
+        formation.get::<Heating, _>(),
+        Reading::Stale(&Heating(false))
+    );
+    assert_eq!(
+        formation.get::<AntiFreeze, _>(),
+        Reading::Fresh(&AntiFreeze(false))
+    );
+    assert_eq!(formation.get::<Alarm, _>(), Reading::Stale(&Alarm(false)));
 
     poll(&mut formation);
 
-    assert_eq!(formation.get(), Reading::Fresh(&Heating(true)));
-    assert_eq!(formation.get(), Reading::Fresh(&Alarm(false)));
+    assert_eq!(
+        formation.get::<Heating, _>(),
+        Reading::Fresh(&Heating(true))
+    );
+    assert_eq!(formation.get::<Alarm, _>(), Reading::Fresh(&Alarm(false)));
 }
 
 #[test]
@@ -398,6 +436,96 @@ fn signals_fed_through_routers_mark_dependents_stale() {
 
     formation.feed(3_i16);
 
-    assert_eq!(formation.get(), Reading::Fresh(&Temperature(3)));
-    assert_eq!(formation.get(), Reading::Stale(&AntiFreeze(false)));
+    assert_eq!(
+        formation.get::<Temperature, _>(),
+        Reading::Fresh(&Temperature(3))
+    );
+    assert_eq!(
+        formation.get::<AntiFreeze, _>(),
+        Reading::Stale(&AntiFreeze(false))
+    );
+}
+
+#[test]
+fn views_take_no_field() {
+    assert_eq!(
+        size_of::<ModbusMap>(),
+        size_of::<(Register<0x42>, Register<0x43>, Alarm)>()
+    );
+}
+
+#[test]
+fn views_are_reported_only_when_their_value_changes() {
+    let mut formation = Formation::from(ModbusMap::default());
+    assert_eq!(
+        poll(&mut formation),
+        [
+            "Register(34)",
+            "Register(0)",
+            "AntiFreezeSupported(false)",
+            "Setpoint(8704)",
+            "Alarm(false)",
+            "Heating(true)"
+        ]
+    );
+
+    formation.feed(Register::<0x42>(0x1122));
+    assert_eq!(poll(&mut formation), ["Register(4386)"]);
+
+    formation.feed(Register::<0x42>(0x23));
+    assert_eq!(
+        poll(&mut formation),
+        [
+            "Register(35)",
+            "AntiFreezeSupported(true)",
+            "Setpoint(8960)"
+        ]
+    );
+}
+
+#[test]
+fn memos_and_views_build_on_each_other() {
+    let mut formation = Formation::from(ModbusMap::default());
+    poll(&mut formation);
+
+    formation.feed(&ModbusRegister {
+        address: 0x42,
+        value: 0x23,
+    });
+    formation.feed(&ModbusRegister {
+        address: 0x43,
+        value: 0x01,
+    });
+
+    assert_eq!(
+        formation.get::<Setpoint, _>(),
+        Reading::Fresh(Setpoint(0x2301))
+    );
+    assert_eq!(formation.get::<Alarm, _>(), Reading::Stale(&Alarm(false)));
+    assert_eq!(formation.get::<Heating, _>(), Reading::Stale(Heating(true)));
+    assert_eq!(
+        poll(&mut formation),
+        [
+            "Register(35)",
+            "Register(1)",
+            "AntiFreezeSupported(true)",
+            "Setpoint(8961)",
+            "Alarm(true)",
+            "Heating(false)"
+        ]
+    );
+    assert_eq!(
+        formation.get::<Heating, _>(),
+        Reading::Fresh(Heating(false))
+    );
+}
+
+#[test]
+fn unchanged_views_keep_memos_fresh() {
+    let mut formation = Formation::from(ModbusMap::default());
+    poll(&mut formation);
+
+    formation.feed(Register::<0x42>(0x1122));
+
+    assert_eq!(formation.get::<Alarm, _>(), Reading::Fresh(&Alarm(false)));
 }

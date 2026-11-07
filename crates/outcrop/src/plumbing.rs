@@ -1,3 +1,4 @@
+use core::borrow::Borrow;
 use core::fmt::Debug;
 use core::hash::Hash;
 
@@ -24,7 +25,7 @@ pub trait Cursor {
 }
 
 #[diagnostic::on_unimplemented(
-    message = "`{Self}` is not built by `Formation::input`, `with` and `route`",
+    message = "`{Self}` is not built by `Formation::input`, `memo`, `view` and `route`",
     note = "strata declared with `strata!` are complete and cannot be extended"
 )]
 pub trait LayeredImpl: Strata<Flags: Bits> {
@@ -42,18 +43,31 @@ pub trait Stack: LayeredImpl {
 
 pub trait Value {
     type Signal;
-
-    fn value(&self) -> &Self::Signal;
 }
 
-pub trait Settle<Tail> {
+pub trait Settle<Tail>: Value {
+    type Ref<'a>: Borrow<Self::Signal>
+    where
+        Self: 'a,
+        Tail: 'a;
+    type Snapshot;
+
+    fn value<'a>(&'a self, tail: &'a Tail) -> Self::Ref<'a>;
+
     fn stale<Fl: Bits>(changed: &Fl) -> bool;
+
+    fn snapshot(&self, tail: &Tail) -> Self::Snapshot;
+
+    fn differs(&self, tail: &Tail, snapshot: Self::Snapshot) -> bool;
 }
 
 pub trait Select<T, I> {
     const INDEX: usize;
+    type Ref<'a>: Borrow<T>
+    where
+        Self: 'a;
 
-    fn select(&self) -> &T;
+    fn select(&self) -> Self::Ref<'_>;
 
     fn stale<Fl: Bits>(changed: &Fl) -> bool;
 }
@@ -61,21 +75,21 @@ pub trait Select<T, I> {
 #[diagnostic::on_unimplemented(
     message = "`{Self}` cannot derive a signal from the strata beneath it",
     label = "not a function of signals already in the formation",
-    note = "every argument must be a reference `&T` to a distinct signal deposited earlier with `input` or `with`, with at most eight arguments"
+    note = "every argument must be a reference `&T` to a distinct signal deposited earlier with `input`, `memo` or `view`, with at most eight arguments"
 )]
 pub trait ComputeImpl<S, M> {
     type Output;
 
     fn dirty<Fl: Bits>(changed: &Fl) -> bool;
 
-    fn stale<Fl: Bits>(changed: &Fl) -> bool;
+    fn pending<Fl: Bits>(changed: &Fl) -> bool;
 
-    fn compute(&mut self, strata: &S) -> Self::Output;
+    fn compute(&self, strata: &S) -> Self::Output;
 }
 
 #[diagnostic::on_unimplemented(
     message = "`{Self}` cannot be fed to this formation",
     label = "not an input or router of this formation",
-    note = "inputs are fed by value and routers by reference; derived signals are computed by the formation and cannot be fed"
+    note = "inputs are fed by value and routers by reference; memos and views are computed by the formation and cannot be fed"
 )]
 pub trait Absent {}
