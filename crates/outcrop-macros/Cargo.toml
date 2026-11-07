@@ -1,0 +1,29 @@
+[package]
+name = "outcrop-macros"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "The strata! macro declaring named outcrop formations"
+keywords.workspace = true
+categories = ["no-std", "embedded", "rust-patterns"]
+
+[lib]
+proc-macro = true
+
+[dependencies]
+proc-macro2 = { workspace = true, features = ["proc-macro"] }
+quote = { workspace = true, features = ["proc-macro"] }
+syn = { workspace = true, features = [
+  "clone-impls",
+  "full",
+  "parsing",
+  "printing",
+  "proc-macro",
+  "visit-mut",
+] }
+
+[dev-dependencies]
+outcrop = { workspace = true, features = ["macros"] }
+
+[lints]
+workspace = true

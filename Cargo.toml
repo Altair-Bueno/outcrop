@@ -10,7 +10,11 @@ keywords = ["incremental", "reactive", "signals", "sans-io", "no-std"]
 
 [workspace.dependencies]
 outcrop = { path = "crates/outcrop", default-features = false }
+outcrop-macros = { path = "crates/outcrop-macros", default-features = false }
 
+proc-macro2 = { version = "1.0.107", default-features = false }
+quote = { version = "1.0.47", default-features = false }
+syn = { version = "3.0.9", default-features = false }
 
 [workspace.lints.rust]
 unsafe_code = "warn"

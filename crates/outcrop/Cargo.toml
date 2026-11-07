@@ -7,5 +7,15 @@ description = "Static, no_std, sans-IO incremental evaluation of context-depende
 keywords.workspace = true
 categories = ["no-std", "no-std::no-alloc", "embedded", "algorithms"]
 
+[features]
+macros = ["dep:outcrop-macros"]
+
+[dependencies]
+outcrop-macros = { workspace = true, optional = true }
+
+[[test]]
+name = "strata"
+required-features = ["macros"]
+
 [lints]
 workspace = true

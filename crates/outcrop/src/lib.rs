@@ -32,6 +32,10 @@
 //! formation.feed(Temperature(0));
 //! formation.poll(&mut Print); // Temperature(0), AntiFreeze(true)
 //! ```
+//!
+//! A formation built this way has a type that cannot be written out. Where a
+//! named type is needed, such as in a `static`, the `macros` feature provides
+//! `strata!`, which declares one.
 #![no_std]
 #![forbid(unsafe_code)]
 #![cfg_attr(coverage_nightly, feature(coverage_attribute))]
@@ -58,6 +62,8 @@ mod stratum;
 mod visit;
 
 pub use formation::Formation;
+#[cfg(feature = "macros")]
+pub use outcrop_macros::strata;
 pub use sink::Sink;
 pub use strata::Feed;
 pub use strata::Report;
