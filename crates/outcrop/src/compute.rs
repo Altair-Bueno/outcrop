@@ -1,5 +1,5 @@
+use crate::plumbing::Bits;
 use crate::plumbing::ComputeImpl;
-use crate::plumbing::Flags;
 use crate::plumbing::Select;
 
 macro_rules! impl_compute {
@@ -11,7 +11,7 @@ macro_rules! impl_compute {
         {
             type Output = O;
 
-            fn dirty<Fl: Flags>(changed: &Fl) -> bool {
+            fn dirty<Fl: Bits>(changed: &Fl) -> bool {
                 false $(|| changed.get(<S as Select<$dep, $index>>::INDEX))+
             }
 

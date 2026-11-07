@@ -11,10 +11,10 @@ struct ModbusRegister {
     value: u16,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 struct Register<const ADDRESS: u16>(u16);
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 struct Version {
     major: u16,
     minor: u16,
@@ -126,4 +126,29 @@ fn routers_chain_from_borrowed_bytes_to_typed_signals() {
             "Version { major: 1, minor: 4 }"
         ]
     );
+}
+
+#[test]
+fn clones_keep_what_their_routers_captured() {
+    let allowed = Vec::from([0xAA]);
+    let mut formation =
+        Formation::new()
+            .input(Register::<0xAA>(0))
+            .route(move |r: &ModbusRegister, out| {
+                if allowed.contains(&r.address) {
+                    out.feed(Register::<0xAA>(r.value));
+                }
+            });
+    formation.poll(&mut Recorder::default());
+    let mut clone = formation.clone();
+    let mut recorder = Recorder::default();
+
+    clone.feed(&ModbusRegister {
+        address: 0xAA,
+        value: 7,
+    });
+    clone.poll(&mut recorder);
+    formation.poll(&mut recorder);
+
+    assert_eq!(recorder.0, ["Register(7)"]);
 }

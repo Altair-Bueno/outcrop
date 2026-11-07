@@ -1,7 +1,11 @@
 use core::fmt::Debug;
+use core::hash::Hash;
 
-pub trait Flags: Debug + Default {
+use crate::strata::Strata;
+
+pub trait Bits: Copy + Eq + Hash + Debug + Default {
     const BYTES: usize;
+    const ALL: Self;
 
     fn get(&self, index: usize) -> bool;
 
@@ -10,33 +14,30 @@ pub trait Flags: Debug + Default {
 
 pub trait Cursor {
     type Next: Cursor;
-    type Grow<F: Flags>: Flags;
+    type Grow<F: Bits>: Bits;
 
-    fn grow<F: Flags>(flags: F) -> Self::Grow<F>;
+    fn grow<F: Bits>(flags: F) -> Self::Grow<F>;
 
-    fn below<F: Flags>(flags: &Self::Grow<F>) -> &F;
+    fn below<F: Bits>(flags: &Self::Grow<F>) -> &F;
 
-    fn below_mut<F: Flags>(flags: &mut Self::Grow<F>) -> &mut F;
+    fn below_mut<F: Bits>(flags: &mut Self::Grow<F>) -> &mut F;
 }
 
 #[diagnostic::on_unimplemented(
-    message = "`{Self}` is not a stack of strata",
-    note = "strata are built with `Formation::input`, `with` and `route`; `Strata` is sealed"
+    message = "`{Self}` is not built by `Formation::input`, `with` and `route`",
+    note = "strata declared with `strata!` are complete and cannot be extended"
 )]
-pub trait StrataImpl {
+pub trait LayeredImpl: Strata<Flags: Bits> {
     const LEN: usize;
-    type Flags: Flags;
     type Cursor: Cursor;
-
-    fn evaluate(&mut self, changed: &mut Self::Flags);
 }
 
-pub trait Stack: StrataImpl {
-    type Tail: StrataImpl;
+pub trait Stack: LayeredImpl {
+    type Tail: LayeredImpl;
 
-    fn below(flags: &Self::Flags) -> &<Self::Tail as StrataImpl>::Flags;
+    fn below(flags: &Self::Flags) -> &<Self::Tail as Strata>::Flags;
 
-    fn below_mut(flags: &mut Self::Flags) -> &mut <Self::Tail as StrataImpl>::Flags;
+    fn below_mut(flags: &mut Self::Flags) -> &mut <Self::Tail as Strata>::Flags;
 }
 
 pub trait Value {
@@ -59,17 +60,9 @@ pub trait Select<T, I> {
 pub trait ComputeImpl<S, M> {
     type Output;
 
-    fn dirty<Fl: Flags>(changed: &Fl) -> bool;
+    fn dirty<Fl: Bits>(changed: &Fl) -> bool;
 
     fn compute(&mut self, strata: &S) -> Self::Output;
-}
-
-pub trait FeedImpl<T, I>: StrataImpl {
-    fn feed(&mut self, changed: &mut Self::Flags, value: T);
-}
-
-pub trait ReportImpl<V>: StrataImpl {
-    fn report(&self, changed: &Self::Flags, visitor: &mut V);
 }
 
 #[diagnostic::on_unimplemented(

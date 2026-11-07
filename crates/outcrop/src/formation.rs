@@ -1,17 +1,18 @@
 use core::marker::PhantomData;
 
 use crate::flags::Byte;
+use crate::plumbing::Bits as _;
 use crate::plumbing::Cursor as _;
-use crate::plumbing::Flags as _;
 use crate::sink::Sink;
+use crate::strata::Feed;
+use crate::strata::Report;
+use crate::strata::Strata;
 use crate::stratum::Compute;
 use crate::stratum::Derived;
-use crate::stratum::Feed;
 use crate::stratum::Input;
+use crate::stratum::Layered;
 use crate::stratum::Nil;
-use crate::stratum::Report;
 use crate::stratum::Router;
-use crate::stratum::Strata;
 use crate::stratum::Stratum;
 
 type Deposited<E, S> = Formation<Stratum<E, S>>;
@@ -47,7 +48,7 @@ type Deposited<E, S> = Formation<Stratum<E, S>>;
 /// let mut formation = Formation::new().input(A(0)).with(|a: &A| B(a.0));
 /// formation.feed(B(1));
 /// ```
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Formation<S: Strata = Nil> {
     changed: S::Flags,
     strata: S,
@@ -70,7 +71,18 @@ impl Default for Formation {
     }
 }
 
-impl<S: Strata> Formation<S> {
+impl<S: Strata> From<S> for Formation<S> {
+    /// Wraps `strata` with every signal marked as changed, so that the first
+    /// [`poll`](Self::poll) reports every initial value.
+    fn from(strata: S) -> Self {
+        Self {
+            changed: S::CHANGED,
+            strata,
+        }
+    }
+}
+
+impl<S: Layered> Formation<S> {
     /// Deposits an input signal with its initial value.
     ///
     /// The value is reported by the next [`poll`](Self::poll).
@@ -149,7 +161,9 @@ impl<S: Strata> Formation<S> {
             },
         }
     }
+}
 
+impl<S: Strata> Formation<S> {
     /// Feeds an input by value, or a router by reference.
     ///
     /// Feeding an input its current value changes nothing.

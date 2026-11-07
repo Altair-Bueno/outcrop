@@ -45,10 +45,11 @@ mod flags;
 mod formation;
 #[expect(
     unnameable_types,
-    reason = "sealed supertraits of the public bounds, unnameable so they cannot be implemented downstream"
+    reason = "builder machinery behind the sealed `Compute` and `Layered` bounds"
 )]
 mod plumbing;
 mod sink;
+mod strata;
 #[expect(
     unnameable_types,
     reason = "strata only appear in inferred formation types, so they can change without breaking users"
@@ -58,8 +59,9 @@ mod visit;
 
 pub use formation::Formation;
 pub use sink::Sink;
+pub use strata::Feed;
+pub use strata::Report;
+pub use strata::Strata;
 pub use stratum::Compute;
-pub use stratum::Feed;
-pub use stratum::Report;
-pub use stratum::Strata;
+pub use stratum::Layered;
 pub use visit::Visit;
