@@ -1,0 +1,26 @@
+[package]
+name = "size"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+workload.workspace = true
+
+[[bin]]
+name = "size-empty"
+path = "src/empty.rs"
+test = false
+bench = false
+
+[[bin]]
+name = "size-builder"
+path = "src/builder.rs"
+test = false
+bench = false
+
+[[bin]]
+name = "size-macro"
+path = "src/macro.rs"
+test = false
+bench = false

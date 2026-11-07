@@ -1,0 +1,12 @@
+[workspace]
+members = ["workload", "size", "instr", "stack"]
+resolver = "3"
+
+[workspace.dependencies]
+outcrop = { path = "@OUTCROP@/crates/outcrop", features = ["macros"] }
+workload = { path = "workload" }
+
+[profile.release]
+lto = true
+codegen-units = 1
+panic = "abort"
