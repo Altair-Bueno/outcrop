@@ -559,3 +559,29 @@ fn views_need_no_partial_eq() {
     assert_eq!(formation.get::<Label, _>().into_inner().0, "on");
     assert_eq!(poll(&mut formation), ["Register(35)", "Label(\"on\")"]);
 }
+
+#[test]
+fn views_see_the_last_of_several_feeds() {
+    let mut formation = Formation::from(ModbusMap::default());
+    poll(&mut formation);
+
+    formation.feed(&ModbusRegister {
+        address: 0x42,
+        value: 0x24,
+    });
+    formation.feed(&ModbusRegister {
+        address: 0x42,
+        value: 0x25,
+    });
+
+    assert_eq!(
+        poll(&mut formation),
+        [
+            "Register(37)",
+            "AntiFreezeSupported(true)",
+            "Setpoint(9472)",
+            "Alarm(true)",
+            "Heating(false)"
+        ]
+    );
+}

@@ -226,3 +226,36 @@ fn views_need_no_partial_eq() {
     assert_eq!(formation.get::<Label, _>().into_inner().0, "on");
     assert_eq!(poll(&mut formation), ["Register(35)", "Label(\"on\")"]);
 }
+
+#[test]
+fn views_see_the_last_of_several_feeds() {
+    let mut formation = Formation::new()
+        .input(Register::<0x42>(0x22))
+        .view(anti_freeze);
+    poll(&mut formation);
+
+    formation.feed(Register::<0x42>(0x24));
+    formation.feed(Register::<0x42>(0x25));
+
+    assert_eq!(
+        poll(&mut formation),
+        ["Register(37)", "AntiFreezeSupported(true)"]
+    );
+}
+
+#[test]
+fn views_above_routers_see_the_last_of_several_routed_values() {
+    let mut formation = Formation::new()
+        .input(Register::<0x42>(0x22))
+        .route(|value: &u16, out| out.feed(Register::<0x42>(*value)))
+        .view(anti_freeze);
+    poll(&mut formation);
+
+    formation.feed(&0x24);
+    formation.feed(&0x25);
+
+    assert_eq!(
+        poll(&mut formation),
+        ["Register(37)", "AntiFreezeSupported(true)"]
+    );
+}
