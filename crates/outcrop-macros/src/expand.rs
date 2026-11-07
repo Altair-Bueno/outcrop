@@ -44,22 +44,6 @@ impl Signal {
     }
 }
 
-struct Field<'e> {
-    cfgs: &'e [Attribute],
-    attrs: &'e [Attribute],
-    name: Option<&'e Ident>,
-}
-
-impl<'e> From<&'e Entry> for Field<'e> {
-    fn from(entry: &'e Entry) -> Self {
-        Self {
-            cfgs: &entry.cfgs,
-            attrs: &entry.attrs,
-            name: entry.name.as_ref(),
-        }
-    }
-}
-
 struct Derived {
     index: usize,
     deps: Vec<usize>,
@@ -208,12 +192,11 @@ impl Declaration {
 impl Expansion<'_> {
     fn entries(&mut self, entries: &[Entry]) {
         for (position, entry) in entries.iter().enumerate() {
-            let field = Field::from(entry);
             match &entry.kind {
-                Kind::Input { ty, init } => self.input(&field, ty, init),
-                Kind::Memo { ty, deps, f } => self.memo(&field, ty, deps, f),
-                Kind::View { ty, deps, f } => self.view(&field, ty, deps, f),
-                Kind::Router { ty, f } => self.router(&field, position, ty, f),
+                Kind::Input { ty, init } => self.input(entry, ty, init),
+                Kind::Memo { ty, deps, f } => self.memo(entry, ty, deps, f),
+                Kind::View { ty, deps, f } => self.view(entry, ty, deps, f),
+                Kind::Router { ty, f } => self.router(entry, position, ty, f),
             }
         }
         self.evaluations();
@@ -226,8 +209,10 @@ impl Expansion<'_> {
         }
     }
 
-    fn signal(&mut self, field: &Field<'_>, ty: &Type, view: Option<View>) -> Option<usize> {
-        let Field { cfgs, attrs, name } = *field;
+    fn signal(&mut self, entry: &Entry, ty: &Type, view: Option<View>) -> Option<usize> {
+        let Entry {
+            cfgs, attrs, name, ..
+        } = entry;
         let key = key(ty);
         if self.signals.iter().any(|signal| signal.key == key) {
             self.error(Error::new(
@@ -237,7 +222,7 @@ impl Expansion<'_> {
             return None;
         }
         let index = self.signals.len();
-        let field = name.cloned().unwrap_or_else(|| format_ident!("s{index}"));
+        let field = name.clone().unwrap_or_else(|| format_ident!("s{index}"));
         let bit = format_ident!("__OUTCROP_BIT{index}", span = Span::mixed_site());
         let next = &self.next;
         self.bits.push(quote!(const #bit: usize = #next;));
@@ -253,7 +238,7 @@ impl Expansion<'_> {
             self.fields.push(quote!(#(#cfgs)* #(#attrs)* #field: #ty));
         }
         self.signals.push(Signal {
-            cfgs: cfgs.to_vec(),
+            cfgs: cfgs.clone(),
             key,
             field,
             byte: byte.clone(),
@@ -325,22 +310,30 @@ impl Expansion<'_> {
 
     fn helper(
         &mut self,
-        field: &Field<'_>,
+        cfgs: &[Attribute],
+        attrs: &[Attribute],
         name: &Ident,
         parameters: &[TokenStream],
         output: &TokenStream,
         f: &Expr,
     ) {
-        let Field { cfgs, attrs, .. } = field;
         match function(name, parameters, output, f) {
             Ok(function) => self.helpers.push(quote!(#(#cfgs)* #(#attrs)* #function)),
             Err(error) => self.error(error),
         }
     }
 
-    fn derivation(&mut self, field: &Field<'_>, name: &Ident, deps: &[Type], ty: &Type, f: &Expr) {
+    fn derivation(
+        &mut self,
+        cfgs: &[Attribute],
+        attrs: &[Attribute],
+        name: &Ident,
+        deps: &[Type],
+        ty: &Type,
+        f: &Expr,
+    ) {
         let parameters = deps.iter().map(|dep| quote!(&#dep)).collect::<Vec<_>>();
-        self.helper(field, name, &parameters, &quote!(-> #ty), f);
+        self.helper(cfgs, attrs, name, &parameters, &quote!(-> #ty), f);
     }
 
     fn link(&mut self, index: usize, deps: &[usize]) {
@@ -384,9 +377,9 @@ impl Expansion<'_> {
         })
     }
 
-    fn input(&mut self, field: &Field<'_>, ty: &Type, init: &Expr) {
-        let cfgs = field.cfgs;
-        let (Some(index), Some(fed)) = (self.signal(field, ty, None), self.fed(cfgs, ty)) else {
+    fn input(&mut self, entry: &Entry, ty: &Type, init: &Expr) {
+        let cfgs = &entry.cfgs;
+        let (Some(index), Some(fed)) = (self.signal(entry, ty, None), self.fed(cfgs, ty)) else {
             return;
         };
         let (ident, krate, flags) = (self.ident, self.krate, &self.flags);
@@ -411,23 +404,14 @@ impl Expansion<'_> {
         self.get(index, ty);
     }
 
-    fn memo(&mut self, field: &Field<'_>, ty: &Type, deps: &Type, f: &Expr) {
-        let cfgs = field.cfgs;
+    fn memo(&mut self, entry: &Entry, ty: &Type, deps: &Type, f: &Expr) {
+        let cfgs = &entry.cfgs;
         let (types, deps) = self.dependencies(deps);
-        let Some(index) = self.signal(field, ty, None) else {
+        let Some(index) = self.signal(entry, ty, None) else {
             return;
         };
         let helper = format_ident!("__outcrop_memo_{index}");
-        self.derivation(
-            &Field {
-                attrs: &[],
-                ..*field
-            },
-            &helper,
-            &types,
-            ty,
-            f,
-        );
+        self.derivation(cfgs, &[], &helper, &types, ty, f);
         self.link(index, &deps);
         let local = self.signals[index].local();
         let values = deps.iter().map(|dep| self.value(*dep, true));
@@ -480,15 +464,15 @@ impl Expansion<'_> {
         self.evaluations.extend(evaluations);
     }
 
-    fn view(&mut self, field: &Field<'_>, ty: &Type, deps: &Type, f: &Expr) {
+    fn view(&mut self, entry: &Entry, ty: &Type, deps: &Type, f: &Expr) {
         let (types, deps) = self.dependencies(deps);
         let helper = format_ident!("__outcrop_view_{}", self.signals.len());
-        self.derivation(field, &helper, &types, ty, f);
+        self.derivation(&entry.cfgs, &entry.attrs, &helper, &types, ty, f);
         let view = View {
             helper,
             deps: deps.clone(),
         };
-        let Some(index) = self.signal(field, ty, Some(view)) else {
+        let Some(index) = self.signal(entry, ty, Some(view)) else {
             return;
         };
         self.link(index, &deps);
@@ -541,8 +525,8 @@ impl Expansion<'_> {
         self.impls.push(implementation);
     }
 
-    fn router(&mut self, field: &Field<'_>, position: usize, ty: &Type, f: &Expr) {
-        let cfgs = field.cfgs;
+    fn router(&mut self, entry: &Entry, position: usize, ty: &Type, f: &Expr) {
+        let cfgs = &entry.cfgs;
         let Some(fed) = self.fed(cfgs, ty) else {
             return;
         };
@@ -550,7 +534,14 @@ impl Expansion<'_> {
         let view = format_ident!("__OutcropBelow{position}");
         let helper = format_ident!("__outcrop_route_{position}");
         let sink = quote!(&mut #krate::Sink<'_, #view<'_>>);
-        self.helper(field, &helper, &[quote!(#ty), sink], &TokenStream::new(), f);
+        self.helper(
+            cfgs,
+            &entry.attrs,
+            &helper,
+            &[quote!(#ty), sink],
+            &TokenStream::new(),
+            f,
+        );
         let below = self.fed.iter().map(
             |Fed {
                  cfgs: fed_cfgs, ty, ..
