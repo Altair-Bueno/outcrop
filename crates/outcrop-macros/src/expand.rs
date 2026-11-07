@@ -83,7 +83,6 @@ struct Expansion<'d> {
     fields: Vec<TokenStream>,
     defaults: Vec<TokenStream>,
     helpers: Vec<TokenStream>,
-    inputs: Vec<(usize, Type, TokenStream)>,
     derived: Vec<Derived>,
     evaluations: Vec<TokenStream>,
     impls: Vec<TokenStream>,
@@ -112,7 +111,6 @@ impl Declaration {
             fields: Vec::new(),
             defaults: Vec::new(),
             helpers: Vec::new(),
-            inputs: Vec::new(),
             derived: Vec::new(),
             evaluations: Vec::new(),
             impls: Vec::new(),
@@ -218,7 +216,6 @@ impl Expansion<'_> {
                 Kind::Router { ty, f } => self.router(&field, position, ty, f),
             }
         }
-        self.feeds();
         self.evaluations();
     }
 
@@ -392,40 +389,26 @@ impl Expansion<'_> {
         let (Some(index), Some(fed)) = (self.signal(field, ty, None), self.fed(cfgs, ty)) else {
             return;
         };
-        let signal = &self.signals[index];
-        let (field, local) = (&signal.field, signal.local());
-        let differs = quote_spanned!(ty.span()=> ::core::cmp::PartialEq::ne(&self.#field, &value));
-        self.inputs.push((index, fed.ty.clone(), differs));
-        self.defaults
-            .push(quote!(#(#cfgs)* let #local: #ty = #init;));
-        self.fed.push(fed);
-        self.get(index, ty);
-    }
-
-    fn feeds(&mut self) {
         let (ident, krate, flags) = (self.ident, self.krate, &self.flags);
-        let feeds = self.inputs.iter().map(|(index, fed_ty, differs)| {
-            let Signal {
-                cfgs,
-                field,
-                byte,
-                mask,
-                ..
-            } = &self.signals[*index];
-            quote! {
-                #(#cfgs)*
-                impl #krate::Feed<#fed_ty, ()> for #ident {
-                    fn feed(&mut self, changed: &mut #flags, value: #fed_ty) {
-                        if #differs {
-                            self.#field = value;
-                            changed[#byte] |= #mask;
-                        }
+        let signal = &self.signals[index];
+        let (field, local, byte, mask) =
+            (&signal.field, signal.local(), &signal.byte, &signal.mask);
+        let differs = quote_spanned!(ty.span()=> ::core::cmp::PartialEq::ne(&self.#field, &value));
+        self.impls.push(quote! {
+            #(#cfgs)*
+            impl #krate::Feed<#ty, ()> for #ident {
+                fn feed(&mut self, changed: &mut #flags, value: #ty) {
+                    if #differs {
+                        self.#field = value;
+                        changed[#byte] |= #mask;
                     }
                 }
             }
         });
-        let feeds = feeds.collect::<Vec<_>>();
-        self.impls.extend(feeds);
+        self.defaults
+            .push(quote!(#(#cfgs)* let #local: #ty = #init;));
+        self.fed.push(fed);
+        self.get(index, ty);
     }
 
     fn memo(&mut self, field: &Field<'_>, ty: &Type, deps: &Type, f: &Expr) {
