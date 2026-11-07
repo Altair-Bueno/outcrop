@@ -5,7 +5,6 @@ use core::fmt::Debug;
 
 use outcrop::Formation;
 use outcrop::Report;
-use outcrop::Strata;
 use outcrop::Visit;
 
 #[derive(Debug, PartialEq)]
@@ -31,7 +30,7 @@ impl<T: Debug> Visit<T> for Recorder {
 
 fn poll<S>(formation: &mut Formation<S>) -> Vec<String>
 where
-    S: Strata + Report<Recorder>,
+    S: Report<Recorder>,
 {
     let mut recorder = Recorder::default();
     formation.poll(&mut recorder);

@@ -11,7 +11,7 @@ impl Byte {
 #[derive(Debug, Default)]
 pub struct Chunk<Tail> {
     tail: Tail,
-    byte: u8,
+    byte: Byte,
 }
 
 #[derive(Debug)]
@@ -21,11 +21,11 @@ impl Flags for Byte {
     const BYTES: usize = 1;
 
     fn get(&self, index: usize) -> bool {
-        self.0 & (1 << index) != 0
+        self.0 & (1 << (index % 8)) != 0
     }
 
     fn set_top(&mut self, index: usize) {
-        self.0 |= 1 << index;
+        self.0 |= 1 << (index % 8);
     }
 }
 
@@ -36,12 +36,12 @@ impl<Tail: Flags> Flags for Chunk<Tail> {
         if index < 8 * Tail::BYTES {
             self.tail.get(index)
         } else {
-            self.byte & (1 << (index % 8)) != 0
+            self.byte.get(index)
         }
     }
 
     fn set_top(&mut self, index: usize) {
-        self.byte |= 1 << (index % 8);
+        self.byte.set_top(index);
     }
 }
 
@@ -75,7 +75,7 @@ impl Cursor for Used<8> {
     fn grow<F: Flags>(flags: F) -> Chunk<F> {
         Chunk {
             tail: flags,
-            byte: 0,
+            byte: Byte::EMPTY,
         }
     }
 

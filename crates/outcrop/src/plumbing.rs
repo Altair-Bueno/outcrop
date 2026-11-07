@@ -64,11 +64,6 @@ pub trait ComputeImpl<S, M> {
     fn compute(&mut self, strata: &S) -> Self::Output;
 }
 
-#[diagnostic::on_unimplemented(
-    message = "`{T}` cannot be fed to this formation",
-    label = "not an input or router of this formation",
-    note = "inputs are fed by value and routers by reference; derived signals are computed by the formation and cannot be fed"
-)]
 pub trait FeedImpl<T, I>: StrataImpl {
     fn feed(&mut self, changed: &mut Self::Flags, value: T);
 }
@@ -82,6 +77,4 @@ pub trait ReportImpl<V>: StrataImpl {
     label = "not an input or router of this formation",
     note = "inputs are fed by value and routers by reference; derived signals are computed by the formation and cannot be fed"
 )]
-pub trait Absent {
-    fn absent(self);
-}
+pub trait Absent {}

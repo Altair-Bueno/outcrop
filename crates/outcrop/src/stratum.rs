@@ -162,23 +162,9 @@ impl<In: ?Sized, F, Tail: StrataImpl> StrataImpl for Stratum<Router<In, F>, Tail
     }
 }
 
-impl<T, Tail: StrataImpl> Stack for Stratum<Input<T>, Tail> {
-    type Tail = Tail;
-
-    fn below(flags: &Self::Flags) -> &Tail::Flags {
-        Tail::Cursor::below(flags)
-    }
-
-    fn below_mut(flags: &mut Self::Flags) -> &mut Tail::Flags {
-        Tail::Cursor::below_mut(flags)
-    }
-}
-
-impl<F, M, O, Tail> Stack for Stratum<Derived<F, M, O>, Tail>
+impl<E: Value, Tail: StrataImpl> Stack for Stratum<E, Tail>
 where
-    F: ComputeImpl<Tail, M, Output = O>,
-    O: PartialEq,
-    Tail: StrataImpl,
+    Self: StrataImpl<Flags = Grown<Tail>>,
 {
     type Tail = Tail;
 
@@ -262,9 +248,7 @@ where
 
 #[cfg_attr(coverage_nightly, coverage(off))]
 impl<T: Absent> FeedImpl<T, Nowhere> for Nil {
-    fn feed(&mut self, _: &mut Byte, value: T) {
-        value.absent();
-    }
+    fn feed(&mut self, _: &mut Byte, _: T) {}
 }
 
 impl<T, I, E, Tail> FeedImpl<T, There<I>> for Stratum<E, Tail>
