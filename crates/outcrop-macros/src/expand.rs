@@ -137,7 +137,7 @@ impl Declaration {
             #(#bits)*
             const #count: usize = #next;
 
-            type #flags = [u8; #count.div_ceil(8)];
+            type #flags = [::core::primitive::u8; #count.div_ceil(8)];
 
             #(#helpers)*
 
@@ -151,15 +151,7 @@ impl Declaration {
             impl #krate::Strata for #ident {
                 type Flags = #flags;
 
-                const CHANGED: #flags = {
-                    let mut flags = [0; #count.div_ceil(8)];
-                    let mut bit = 0;
-                    while bit < #count {
-                        flags[bit / 8] |= 1 << (bit % 8);
-                        bit += 1;
-                    }
-                    flags
-                };
+                const CHANGED: #flags = [::core::primitive::u8::MAX; #count.div_ceil(8)];
 
                 fn evaluate(&mut self, #changed_flags: &mut #flags) {
                     #(#evaluations)*
