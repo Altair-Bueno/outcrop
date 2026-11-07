@@ -15,18 +15,22 @@ use crate::Entry;
 
 impl Parse for Declaration {
     fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
-        let mut krate = parse_quote!(::outcrop);
+        let mut krate = None;
         let mut attrs = input.call(Attribute::parse_outer)?;
         for attr in attrs.iter().filter(|attr| attr.path().is_ident("strata")) {
             attr.parse_nested_meta(|meta| {
-                if meta.path.is_ident("crate") {
-                    krate = meta.value()?.parse()?;
-                    return Ok(());
+                if !meta.path.is_ident("crate") {
+                    return Err(meta.error("expected `crate = path::to::outcrop`"));
                 }
-                Err(meta.error("expected `crate = path::to::outcrop`"))
+                if krate.is_some() {
+                    return Err(meta.error("`crate` is given more than once"));
+                }
+                krate = Some(meta.value()?.parse()?);
+                Ok(())
             })?;
         }
         attrs.retain(|attr| !attr.path().is_ident("strata"));
+        let krate = krate.unwrap_or_else(|| parse_quote!(::outcrop));
         let vis = input.parse()?;
         input.parse::<Token![struct]>()?;
         let ident = input.parse()?;

@@ -21,12 +21,18 @@ use syn::spanned::Spanned as _;
 use crate::Declaration;
 use crate::Entry;
 
+#[derive(Clone)]
 struct Signal {
     key: String,
     field: Ident,
-    local: Ident,
     byte: Literal,
     mask: Literal,
+}
+
+impl Signal {
+    fn local(&self) -> Ident {
+        format_ident!("__outcrop_{}", self.field, span = Span::mixed_site())
+    }
 }
 
 struct Fed {
@@ -95,6 +101,7 @@ impl Declaration {
             Literal::u8_unsuffixed(u8::MAX >> (8 - bits))
         });
         let Self { attrs, vis, .. } = self;
+        let cfgs = attrs.iter().filter(|attr| attr.path().is_ident("cfg"));
         let Expansion {
             ident,
             krate,
@@ -109,9 +116,10 @@ impl Declaration {
             signals,
             ..
         } = expansion;
-        let names = signals
-            .iter()
-            .map(|Signal { field, local, .. }| quote!(#field: #local));
+        let names = signals.iter().map(|signal| {
+            let (field, local) = (&signal.field, signal.local());
+            quote!(#field: #local)
+        });
         let changed_flags = if evaluations.is_empty() {
             quote!(_)
         } else {
@@ -123,6 +131,7 @@ impl Declaration {
                 #(#fields,)*
             }
 
+            #(#cfgs)*
             const _: () = {
             #(#helpers)*
 
@@ -177,7 +186,6 @@ impl Expansion<'_> {
         }
         let index = self.signals.len();
         let field = format_ident!("s{index}");
-        let local = format_ident!("__outcrop_s{index}", span = Span::mixed_site());
         let byte = Literal::usize_unsuffixed(index / 8);
         let mask = Literal::u8_unsuffixed(1 << (index % 8));
         self.fields.push(quote!(#field: #ty));
@@ -191,7 +199,6 @@ impl Expansion<'_> {
         self.signals.push(Signal {
             key,
             field,
-            local,
             byte,
             mask,
         });
@@ -217,14 +224,11 @@ impl Expansion<'_> {
         let (Some(index), Some(fed)) = (self.signal(ty), self.fed(ty)) else {
             return;
         };
+        let signal = self.signals[index].clone();
         let Signal {
-            field,
-            local,
-            byte,
-            mask,
-            ..
-        } = &self.signals[index];
-        let (field, local, byte, mask) = (field.clone(), local.clone(), byte.clone(), mask.clone());
+            field, byte, mask, ..
+        } = &signal;
+        let local = signal.local();
         let (ident, krate, flags) = (self.ident, self.krate, &self.flags);
         let fed_ty = &fed.ty;
         let differs = quote_spanned!(ty.span()=> self.#field != value);
@@ -252,7 +256,8 @@ impl Expansion<'_> {
             let key = key(dep);
             if let Some(index) = self.signals.iter().position(|signal| signal.key == key) {
                 *masks.entry(index / 8).or_default() |= 1 << (index % 8);
-                let Signal { field, local, .. } = &self.signals[index];
+                let signal = &self.signals[index];
+                let (field, local) = (&signal.field, signal.local());
                 arguments.push(quote!(&self.#field));
                 values.push(quote!(&#local));
             } else {
@@ -277,14 +282,11 @@ impl Expansion<'_> {
             Ok(function) => self.helpers.push(function),
             Err(error) => self.error(error),
         }
+        let signal = self.signals[index].clone();
         let Signal {
-            field,
-            local,
-            byte,
-            mask,
-            ..
-        } = &self.signals[index];
-        let (field, local, byte, mask) = (field.clone(), local.clone(), byte.clone(), mask.clone());
+            field, byte, mask, ..
+        } = &signal;
+        let local = signal.local();
         let dirty = masks.iter().map(|(byte, mask)| {
             let byte = Literal::usize_unsuffixed(*byte);
             let mask = Literal::u8_unsuffixed(*mask);
@@ -309,7 +311,7 @@ impl Expansion<'_> {
             return;
         };
         let (ident, krate, flags) = (self.ident, self.krate, self.flags.clone());
-        let view = format_ident!("{ident}Below{position}");
+        let view = format_ident!("__OutcropBelow{position}");
         let helper = format_ident!("__outcrop_route_{position}");
         let sink = quote!(&mut #krate::Sink<'_, #view<'_>>);
         match function(&helper, &[quote!(#ty), sink], &TokenStream::new(), f) {
@@ -512,10 +514,38 @@ mod tests {
 
     #[test]
     fn uses_the_given_crate_path() -> syn::Result<()> {
-        let output = expand(quote!(#[strata(crate = layers)] struct S { A = A(0) }))?;
+        let output = expand(quote!(
+            #[strata(crate = layers)]
+            struct S { A = A(0), B = A => f, &[u8] => g }
+        ))?;
         assert!(output.contains("impl layers :: Strata for S"), "{output}");
+        assert!(output.contains("layers :: Sink"), "{output}");
         assert!(!output.contains("outcrop ::"), "{output}");
         assert!(!output.contains("# [strata"), "{output}");
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_repeated_crate_options() {
+        let error = expand(quote!(
+            #[strata(crate = a)]
+            #[strata(crate = b)]
+            struct S {}
+        ))
+        .err()
+        .map(|error| error.to_string());
+        assert_eq!(error.as_deref(), Some("`crate` is given more than once"));
+    }
+
+    #[test]
+    fn forwards_cfg_attributes_to_the_generated_items() -> syn::Result<()> {
+        let output = expand(quote!(#[cfg(feature = "x")] #[derive(Debug)] struct S { A = A(0) }))?;
+        assert_eq!(
+            output.matches("# [cfg (feature = \"x\")]").count(),
+            2,
+            "{output}"
+        );
+        assert_eq!(output.matches("# [derive (Debug)]").count(), 1, "{output}");
         Ok(())
     }
 

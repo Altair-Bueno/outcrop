@@ -115,6 +115,13 @@ outcrop::strata! {
 }
 
 outcrop::strata! {
+    #[cfg(any())]
+    struct Absent {
+        Temperature = Temperature(0),
+    }
+}
+
+outcrop::strata! {
     #[strata(crate = layers)]
     #[derive(Debug)]
     struct Renamed {
