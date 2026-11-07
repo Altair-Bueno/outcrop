@@ -191,6 +191,16 @@ outcrop::strata! {
 }
 
 outcrop::strata! {
+    struct Empty {}
+}
+
+outcrop::strata! {
+    struct RouterOnly {
+        u8 => |_, _| {},
+    }
+}
+
+outcrop::strata! {
     #[cfg(any())]
     struct Absent {
         temperature: Temperature = Temperature(0),
@@ -339,6 +349,19 @@ fn cfg_removes_absent_signals() {
     let mut formation = Formation::from(AbsentSignal::default());
 
     assert_eq!(poll(&mut formation), Vec::<String>::new());
+}
+
+#[test]
+fn formations_without_signals_take_no_bits() {
+    assert_eq!(size_of::<<Empty as Strata>::Flags>(), 0);
+    assert_eq!(size_of::<<RouterOnly as Strata>::Flags>(), 0);
+
+    let mut empty = Formation::from(Empty::default());
+    let mut router = Formation::from(RouterOnly::default());
+    router.feed(1_u8);
+
+    assert_eq!(poll(&mut empty), Vec::<String>::new());
+    assert_eq!(poll(&mut router), Vec::<String>::new());
 }
 
 #[test]

@@ -105,7 +105,7 @@ impl Declaration {
             ident: &self.ident,
             krate: &self.krate,
             flags: flags.to_token_stream(),
-            next: quote!(0),
+            next: quote!(0usize),
             bits: Vec::new(),
             signals: Vec::new(),
             fed: Vec::new(),
