@@ -7,6 +7,7 @@ use syn::braced;
 use syn::parse::Parse;
 use syn::parse::ParseStream;
 use syn::parse::discouraged::Speculative as _;
+use syn::parse_quote;
 use syn::punctuated::Punctuated;
 
 use crate::Declaration;
@@ -14,7 +15,18 @@ use crate::Entry;
 
 impl Parse for Declaration {
     fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
-        let attrs = input.call(Attribute::parse_outer)?;
+        let mut krate = parse_quote!(::outcrop);
+        let mut attrs = input.call(Attribute::parse_outer)?;
+        for attr in attrs.iter().filter(|attr| attr.path().is_ident("strata")) {
+            attr.parse_nested_meta(|meta| {
+                if meta.path.is_ident("crate") {
+                    krate = meta.value()?.parse()?;
+                    return Ok(());
+                }
+                Err(meta.error("expected `crate = path::to::outcrop`"))
+            })?;
+        }
+        attrs.retain(|attr| !attr.path().is_ident("strata"));
         let vis = input.parse()?;
         input.parse::<Token![struct]>()?;
         let ident = input.parse()?;
@@ -23,6 +35,7 @@ impl Parse for Declaration {
         let entries = Punctuated::<Entry, Token![,]>::parse_terminated(&content)?;
         Ok(Self {
             attrs,
+            krate,
             vis,
             ident,
             entries: entries.into_iter().collect(),

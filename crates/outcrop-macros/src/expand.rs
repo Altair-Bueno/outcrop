@@ -3,6 +3,7 @@ use alloc::string::String;
 use alloc::vec::Vec;
 
 use proc_macro2::Literal;
+use proc_macro2::Span;
 use proc_macro2::TokenStream;
 use quote::ToTokens;
 use quote::format_ident;
@@ -13,6 +14,7 @@ use syn::Error;
 use syn::Expr;
 use syn::Ident;
 use syn::Pat;
+use syn::Path;
 use syn::Type;
 use syn::spanned::Spanned as _;
 
@@ -22,6 +24,7 @@ use crate::Entry;
 struct Signal {
     key: String,
     field: Ident,
+    local: Ident,
     byte: Literal,
     mask: Literal,
 }
@@ -33,6 +36,7 @@ struct Fed {
 
 struct Expansion<'d> {
     ident: &'d Ident,
+    krate: &'d Path,
     flags: TokenStream,
     signals: Vec<Signal>,
     fed: Vec<Fed>,
@@ -63,6 +67,7 @@ impl Declaration {
         let length = Literal::usize_unsuffixed(bytes);
         let mut expansion = Expansion {
             ident: &self.ident,
+            krate: &self.krate,
             flags: quote!([u8; #length]),
             signals: Vec::new(),
             fed: Vec::new(),
@@ -92,6 +97,7 @@ impl Declaration {
         let Self { attrs, vis, .. } = self;
         let Expansion {
             ident,
+            krate,
             flags,
             fields,
             defaults,
@@ -103,7 +109,9 @@ impl Declaration {
             signals,
             ..
         } = expansion;
-        let names = signals.iter().map(|signal| &signal.field);
+        let names = signals
+            .iter()
+            .map(|Signal { field, local, .. }| quote!(#field: #local));
         let changed_flags = if evaluations.is_empty() {
             quote!(_)
         } else {
@@ -115,9 +123,8 @@ impl Declaration {
                 #(#fields,)*
             }
 
-            impl #ident {
-                #(#helpers)*
-            }
+            const _: () = {
+            #(#helpers)*
 
             impl ::core::default::Default for #ident {
                 fn default() -> Self {
@@ -126,7 +133,7 @@ impl Declaration {
                 }
             }
 
-            impl ::outcrop::Strata for #ident {
+            impl #krate::Strata for #ident {
                 type Flags = #flags;
 
                 const CHANGED: #flags = [#(#changed),*];
@@ -136,16 +143,17 @@ impl Declaration {
                 }
             }
 
-            impl<V> ::outcrop::Report<V> for #ident
+            impl<__OutcropVisitor> #krate::Report<__OutcropVisitor> for #ident
             where
-                V: #(#visits)+*,
+                __OutcropVisitor: #(#visits)+*,
             {
-                fn report(&self, changed: &#flags, visitor: &mut V) {
+                fn report(&self, changed: &#flags, visitor: &mut __OutcropVisitor) {
                     #(#reports)*
                 }
             }
 
             #(#impls)*
+            };
         }
     }
 }
@@ -169,18 +177,21 @@ impl Expansion<'_> {
         }
         let index = self.signals.len();
         let field = format_ident!("s{index}");
+        let local = format_ident!("__outcrop_s{index}", span = Span::mixed_site());
         let byte = Literal::usize_unsuffixed(index / 8);
         let mask = Literal::u8_unsuffixed(1 << (index % 8));
         self.fields.push(quote!(#field: #ty));
-        self.visits.push(quote!(::outcrop::Visit<#ty>));
+        let krate = self.krate;
+        self.visits.push(quote!(#krate::Visit<#ty>));
         self.reports.push(quote! {
             if changed[#byte] & #mask != 0 {
-                <V as ::outcrop::Visit<#ty>>::visit(visitor, &self.#field);
+                <__OutcropVisitor as #krate::Visit<#ty>>::visit(visitor, &self.#field);
             }
         });
         self.signals.push(Signal {
             key,
             field,
+            local,
             byte,
             mask,
         });
@@ -207,14 +218,18 @@ impl Expansion<'_> {
             return;
         };
         let Signal {
-            field, byte, mask, ..
+            field,
+            local,
+            byte,
+            mask,
+            ..
         } = &self.signals[index];
-        let (field, byte, mask) = (field.clone(), byte.clone(), mask.clone());
-        let (ident, flags) = (self.ident, &self.flags);
+        let (field, local, byte, mask) = (field.clone(), local.clone(), byte.clone(), mask.clone());
+        let (ident, krate, flags) = (self.ident, self.krate, &self.flags);
         let fed_ty = &fed.ty;
         let differs = quote_spanned!(ty.span()=> self.#field != value);
         let implementation = quote! {
-            impl ::outcrop::Feed<#fed_ty, ()> for #ident {
+            impl #krate::Feed<#fed_ty, ()> for #ident {
                 fn feed(&mut self, changed: &mut #flags, value: #fed_ty) {
                     if #differs {
                         self.#field = value;
@@ -224,7 +239,7 @@ impl Expansion<'_> {
             }
         };
         self.impls.push(implementation);
-        self.defaults.push(quote!(let #field: #ty = #init;));
+        self.defaults.push(quote!(let #local: #ty = #init;));
         self.fed.push(fed);
     }
 
@@ -237,9 +252,9 @@ impl Expansion<'_> {
             let key = key(dep);
             if let Some(index) = self.signals.iter().position(|signal| signal.key == key) {
                 *masks.entry(index / 8).or_default() |= 1 << (index % 8);
-                let field = self.signals[index].field.clone();
+                let Signal { field, local, .. } = &self.signals[index];
                 arguments.push(quote!(&self.#field));
-                values.push(quote!(&#field));
+                values.push(quote!(&#local));
             } else {
                 self.error(Error::new(
                     dep.span(),
@@ -263,20 +278,24 @@ impl Expansion<'_> {
             Err(error) => self.error(error),
         }
         let Signal {
-            field, byte, mask, ..
+            field,
+            local,
+            byte,
+            mask,
+            ..
         } = &self.signals[index];
-        let (field, byte, mask) = (field.clone(), byte.clone(), mask.clone());
+        let (field, local, byte, mask) = (field.clone(), local.clone(), byte.clone(), mask.clone());
         let dirty = masks.iter().map(|(byte, mask)| {
             let byte = Literal::usize_unsuffixed(*byte);
             let mask = Literal::u8_unsuffixed(*mask);
             quote!(changed[#byte] & #mask != 0)
         });
         self.defaults
-            .push(quote!(let #field: #ty = Self::#helper(#(#values),*);));
+            .push(quote!(let #local: #ty = #helper(#(#values),*);));
         let differs = quote_spanned!(ty.span()=> value != self.#field);
         self.evaluations.push(quote! {
             if #(#dirty)||* {
-                let value = Self::#helper(#(#arguments),*);
+                let value = #helper(#(#arguments),*);
                 if #differs {
                     self.#field = value;
                     changed[#byte] |= #mask;
@@ -289,19 +308,19 @@ impl Expansion<'_> {
         let Some(fed) = self.fed(ty) else {
             return;
         };
-        let (ident, flags) = (self.ident, self.flags.clone());
+        let (ident, krate, flags) = (self.ident, self.krate, self.flags.clone());
         let view = format_ident!("{ident}Below{position}");
         let helper = format_ident!("__outcrop_route_{position}");
-        let sink = quote!(&mut ::outcrop::Sink<'_, #view<'_>>);
+        let sink = quote!(&mut #krate::Sink<'_, #view<'_>>);
         match function(&helper, &[quote!(#ty), sink], &TokenStream::new(), f) {
             Ok(function) => self.helpers.push(function),
             Err(error) => self.error(error),
         }
         let below = self.fed.iter().map(|Fed { ty, .. }| {
             quote! {
-                impl ::outcrop::Feed<#ty, ()> for #view<'_> {
+                impl #krate::Feed<#ty, ()> for #view<'_> {
                     fn feed(&mut self, changed: &mut #flags, value: #ty) {
-                        <#ident as ::outcrop::Feed<#ty, ()>>::feed(self.0, changed, value);
+                        <#ident as #krate::Feed<#ty, ()>>::feed(self.0, changed, value);
                     }
                 }
             }
@@ -310,19 +329,19 @@ impl Expansion<'_> {
         self.impls.push(quote! {
             struct #view<'s>(&'s mut #ident);
 
-            impl ::outcrop::Strata for #view<'_> {
+            impl #krate::Strata for #view<'_> {
                 type Flags = #flags;
 
-                const CHANGED: #flags = <#ident as ::outcrop::Strata>::CHANGED;
+                const CHANGED: #flags = <#ident as #krate::Strata>::CHANGED;
 
                 fn evaluate(&mut self, _: &mut #flags) {}
             }
 
             #(#below)*
 
-            impl ::outcrop::Feed<#fed_ty, ()> for #ident {
+            impl #krate::Feed<#fed_ty, ()> for #ident {
                 fn feed(&mut self, changed: &mut #flags, value: #fed_ty) {
-                    Self::#helper(value, &mut ::outcrop::Sink::new(&mut #view(self), changed));
+                    #helper(value, &mut #krate::Sink::new(&mut #view(self), changed));
                 }
             }
         });
@@ -376,7 +395,7 @@ fn function(
         });
     }
     let arguments = (0..parameters.len())
-        .map(|index| format_ident!("a{index}"))
+        .map(|index| format_ident!("__outcrop_a{index}", span = Span::mixed_site()))
         .collect::<Vec<_>>();
     Ok(quote! {
         fn #name(#(#arguments: #parameters),*) #output {
@@ -489,5 +508,28 @@ mod tests {
             "{output}"
         );
         Ok(())
+    }
+
+    #[test]
+    fn uses_the_given_crate_path() -> syn::Result<()> {
+        let output = expand(quote!(#[strata(crate = layers)] struct S { A = A(0) }))?;
+        assert!(output.contains("impl layers :: Strata for S"), "{output}");
+        assert!(!output.contains("outcrop ::"), "{output}");
+        assert!(!output.contains("# [strata"), "{output}");
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_unknown_options() {
+        let error = expand(quote!(
+            #[strata(krate = layers)]
+            struct S {}
+        ))
+        .err()
+        .map(|error| error.to_string());
+        assert_eq!(
+            error.as_deref(),
+            Some("expected `crate = path::to::outcrop`")
+        );
     }
 }

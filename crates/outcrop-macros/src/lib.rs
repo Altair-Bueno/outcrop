@@ -13,11 +13,13 @@ use quote::ToTokens as _;
 use syn::Attribute;
 use syn::Expr;
 use syn::Ident;
+use syn::Path;
 use syn::Type;
 use syn::Visibility;
 
 struct Declaration {
     attrs: Vec<Attribute>,
+    krate: Path,
     vis: Visibility,
     ident: Ident,
     entries: Vec<Entry>,
@@ -45,6 +47,9 @@ enum Entry {
 /// other traits its signals implement. `Default` is implemented from the
 /// initial values, and wrapping the struct in a `Formation` marks every signal
 /// as changed.
+///
+/// The generated code refers to `::outcrop`. Where the dependency is renamed
+/// or re-exported, pass its path with `#[strata(crate = path::to::outcrop)]`.
 ///
 /// ```
 /// use core::fmt::Debug;

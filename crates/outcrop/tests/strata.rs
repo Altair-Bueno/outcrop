@@ -2,6 +2,7 @@
 
 use core::fmt::Debug;
 
+use outcrop as layers;
 use outcrop::Formation;
 use outcrop::Report;
 use outcrop::Visit;
@@ -85,6 +86,39 @@ outcrop::strata! {
         Register<7> = Register(0),
         Register<8> = Register(0),
         Setpoint = (Register<8>) => |high| Setpoint(i16::from(high.0 != 0)),
+    }
+}
+
+#[derive(Debug, PartialEq)]
+struct V(i16);
+
+#[expect(
+    non_upper_case_globals,
+    reason = "named like the temporaries `strata!` declares, which must not capture it"
+)]
+const s0: Temperature = Temperature(5);
+
+#[expect(
+    clippy::trivially_copy_pass_by_ref,
+    reason = "derived signals receive their dependencies by reference"
+)]
+fn a0(t: &Temperature) -> V {
+    V(t.0)
+}
+
+outcrop::strata! {
+    struct Hygiene {
+        Setpoint = Setpoint(18),
+        Temperature = s0,
+        V = Temperature => a0,
+    }
+}
+
+outcrop::strata! {
+    #[strata(crate = layers)]
+    #[derive(Debug)]
+    struct Renamed {
+        Temperature = Temperature(7),
     }
 }
 
@@ -190,4 +224,21 @@ fn signals_past_the_first_byte_are_tracked() {
     formation.feed(Register::<8>(1));
 
     assert_eq!(poll(&mut formation), ["Register(1)", "Setpoint(1)"]);
+}
+
+#[test]
+fn generated_names_do_not_capture_user_code() {
+    let mut formation = Formation::from(Hygiene::default());
+
+    assert_eq!(
+        poll(&mut formation),
+        ["Setpoint(18)", "Temperature(5)", "V(5)"]
+    );
+}
+
+#[test]
+fn generated_code_uses_the_given_crate_path() {
+    let mut formation = Formation::from(Renamed::default());
+
+    assert_eq!(poll(&mut formation), ["Temperature(7)"]);
 }
