@@ -275,6 +275,19 @@ fn the_empty_formation_is_nameable() {
 struct Alarm(bool);
 
 #[test]
+fn memos_declared_after_a_poll_over_settled_signals_are_fresh() {
+    let mut formation = Formation::new().input(Temperature(20));
+    poll(&mut formation);
+    let mut formation = formation.memo(|t: &Temperature| AntiFreeze(t.0 < 10));
+
+    assert_eq!(
+        formation.get::<AntiFreeze, _>(),
+        Reading::Fresh(&AntiFreeze(false))
+    );
+    assert_eq!(poll(&mut formation), ["AntiFreeze(false)"]);
+}
+
+#[test]
 fn derived_reads_are_stale_until_the_first_poll() {
     let mut formation = Formation::new()
         .input(Temperature(20))

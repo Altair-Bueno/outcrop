@@ -208,10 +208,11 @@ impl<S: Strata> Formation<S> {
     /// the spot and returned by value.
     ///
     /// Inputs are always [`Fresh`](Reading::Fresh). A memo is
-    /// [`Stale`](Reading::Stale) until the first [`poll`](Self::poll), and
-    /// afterwards whenever a signal it depends on, directly or through other
-    /// signals, changed since the last one. A view is stale whenever a memo it
-    /// is computed from is.
+    /// [`Stale`](Reading::Stale) whenever a signal it depends on, directly or
+    /// through other signals, changed since the last [`poll`](Self::poll).
+    /// Signals declared since then count as changed, so memos over them are
+    /// stale until the next poll. A view is stale whenever a memo it is
+    /// computed from is.
     pub fn get<T, I>(&self) -> Reading<<S as Get<T, I>>::Ref<'_>>
     where
         S: Get<T, I>,
