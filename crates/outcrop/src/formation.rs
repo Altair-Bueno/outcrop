@@ -11,7 +11,6 @@ use crate::stratum::Compute;
 use crate::stratum::Derived;
 use crate::stratum::Input;
 use crate::stratum::Layered;
-use crate::stratum::Nil;
 use crate::stratum::Router;
 use crate::stratum::Stratum;
 
@@ -49,7 +48,7 @@ type Deposited<E, S> = Formation<Stratum<E, S>>;
 /// formation.feed(B(1));
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct Formation<S: Strata = Nil> {
+pub struct Formation<S: Strata = ()> {
     changed: S::Flags,
     strata: S,
 }
@@ -60,7 +59,7 @@ impl Formation {
     pub const fn new() -> Self {
         Self {
             changed: Byte::EMPTY,
-            strata: Nil,
+            strata: (),
         }
     }
 }

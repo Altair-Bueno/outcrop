@@ -17,10 +17,6 @@ use crate::strata::Report;
 use crate::strata::Strata;
 use crate::visit::Visit;
 
-/// The empty bottom of every formation.
-#[derive(Debug, Clone, Copy)]
-pub struct Nil;
-
 /// One stratum `E` deposited on top of the strata `Tail`.
 #[derive(Debug, Clone, Copy)]
 pub struct Stratum<E, Tail> {
@@ -105,7 +101,7 @@ type Grown<Tail> = <<Tail as LayeredImpl>::Cursor as Cursor>::Grow<<Tail as Stra
 
 type Next<Tail> = <<Tail as LayeredImpl>::Cursor as Cursor>::Next;
 
-impl Strata for Nil {
+impl Strata for () {
     type Flags = Byte;
 
     const CHANGED: Byte = Byte::EMPTY;
@@ -113,7 +109,7 @@ impl Strata for Nil {
     fn evaluate(&mut self, _: &mut Byte) {}
 }
 
-impl LayeredImpl for Nil {
+impl LayeredImpl for () {
     const LEN: usize = 0;
     type Cursor = Used<0>;
 }
@@ -259,7 +255,7 @@ where
 }
 
 #[cfg_attr(coverage_nightly, coverage(off))]
-impl<T: Absent> Feed<T, Nowhere> for Nil {
+impl<T: Absent> Feed<T, Nowhere> for () {
     fn feed(&mut self, _: &mut Byte, _: T) {}
 }
 
@@ -273,7 +269,7 @@ where
     }
 }
 
-impl<V> Report<V> for Nil {
+impl<V> Report<V> for () {
     fn report(&self, _: &Byte, _: &mut V) {}
 }
 

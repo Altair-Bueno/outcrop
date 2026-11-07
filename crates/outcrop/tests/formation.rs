@@ -213,3 +213,59 @@ fn derived_signals_accept_up_to_eight_dependencies() {
         ["Bit(true)", "Bit(true)", "Byte(129)"]
     );
 }
+
+struct Count(usize);
+
+impl<T> Visit<T> for Count {
+    fn visit(&mut self, _: &T) {
+        self.0 += 1;
+    }
+}
+
+#[test]
+fn unit_discards_reported_signals() {
+    let mut formation = Formation::new()
+        .input(Temperature(20))
+        .input(Setpoint(18))
+        .with(heating);
+
+    formation.poll(&mut ());
+
+    assert_eq!(poll(&mut formation), Vec::<String>::new());
+}
+
+fn settle<S: Report<V>, V>(formation: &mut Formation<S>, mut visitor: V) {
+    formation.poll(&mut visitor);
+}
+
+#[test]
+fn references_forward_to_their_visitor() {
+    let mut formation = Formation::new().input(Temperature(20));
+    let mut count = Count(0);
+
+    settle(&mut formation, &mut count);
+
+    assert_eq!(count.0, 1);
+}
+
+#[test]
+fn tuples_fan_out_in_order() {
+    let mut formation = Formation::new()
+        .input(Temperature(20))
+        .with(|t: &Temperature| AntiFreeze(t.0 < 10));
+    let mut recorder = Recorder::default();
+    let mut count = Count(0);
+
+    formation.poll(&mut (&mut recorder, &mut count, ()));
+
+    assert_eq!(recorder.0, ["Temperature(20)", "AntiFreeze(false)"]);
+    assert_eq!(count.0, 2);
+}
+
+#[test]
+fn the_empty_formation_is_nameable() {
+    let mut formation: Formation<()> = Formation::from(());
+
+    formation.poll(&mut Count(0));
+    assert_eq!(poll(&mut formation), Vec::<String>::new());
+}
