@@ -201,6 +201,18 @@ outcrop::strata! {
 }
 
 outcrop::strata! {
+    struct Annotated {
+        temperature: Temperature = Temperature(20),
+        /// A view whose closure ignores its dependency.
+        #[expect(unused_variables, reason = "the attribute applies to the view's closure")]
+        Alarm = Temperature => |t| Alarm(true),
+        /// A router whose closure ignores the fed value.
+        #[expect(unused_variables, reason = "the attribute applies to the router's closure")]
+        i16 => |value, sink| sink.feed(Temperature(0)),
+    }
+}
+
+outcrop::strata! {
     #[cfg(any())]
     struct Absent {
         temperature: Temperature = Temperature(0),
@@ -362,6 +374,14 @@ fn formations_without_signals_take_no_bits() {
 
     assert_eq!(poll(&mut empty), Vec::<String>::new());
     assert_eq!(poll(&mut router), Vec::<String>::new());
+}
+
+#[test]
+fn views_and_routers_accept_attributes() {
+    let mut formation = Formation::from(Annotated::default());
+    formation.feed(3_i16);
+
+    assert_eq!(poll(&mut formation), ["Temperature(0)", "Alarm(true)"]);
 }
 
 #[test]

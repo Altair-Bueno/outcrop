@@ -215,7 +215,7 @@ impl Expansion<'_> {
                 Kind::Input { ty, init } => self.input(&field, ty, init),
                 Kind::Memo { ty, deps, f } => self.memo(&field, ty, deps, f),
                 Kind::View { ty, deps, f } => self.view(&field, ty, deps, f),
-                Kind::Router { ty, f } => self.router(&entry.cfgs, position, ty, f),
+                Kind::Router { ty, f } => self.router(&field, position, ty, f),
             }
         }
         self.feeds();
@@ -326,12 +326,24 @@ impl Expansion<'_> {
         (deps, indices)
     }
 
-    fn helper(&mut self, cfgs: &[Attribute], helper: &Ident, deps: &[Type], ty: &Type, f: &Expr) {
-        let parameters = deps.iter().map(|dep| quote!(&#dep)).collect::<Vec<_>>();
-        match function(helper, &parameters, &quote!(-> #ty), f) {
-            Ok(function) => self.helpers.push(quote!(#(#cfgs)* #function)),
+    fn helper(
+        &mut self,
+        field: &Field<'_>,
+        name: &Ident,
+        parameters: &[TokenStream],
+        output: &TokenStream,
+        f: &Expr,
+    ) {
+        let Field { cfgs, attrs, .. } = field;
+        match function(name, parameters, output, f) {
+            Ok(function) => self.helpers.push(quote!(#(#cfgs)* #(#attrs)* #function)),
             Err(error) => self.error(error),
         }
+    }
+
+    fn derivation(&mut self, field: &Field<'_>, name: &Ident, deps: &[Type], ty: &Type, f: &Expr) {
+        let parameters = deps.iter().map(|dep| quote!(&#dep)).collect::<Vec<_>>();
+        self.helper(field, name, &parameters, &quote!(-> #ty), f);
     }
 
     fn link(&mut self, index: usize, deps: &[usize]) {
@@ -423,7 +435,16 @@ impl Expansion<'_> {
             return;
         };
         let helper = format_ident!("__outcrop_memo_{index}");
-        self.helper(cfgs, &helper, &types, ty, f);
+        self.derivation(
+            &Field {
+                attrs: &[],
+                ..*field
+            },
+            &helper,
+            &types,
+            ty,
+            f,
+        );
         self.link(index, &deps);
         let local = self.signals[index].local();
         let values = deps.iter().map(|dep| self.value(*dep, true));
@@ -477,10 +498,9 @@ impl Expansion<'_> {
     }
 
     fn view(&mut self, field: &Field<'_>, ty: &Type, deps: &Type, f: &Expr) {
-        let cfgs = field.cfgs;
         let (types, deps) = self.dependencies(deps);
         let helper = format_ident!("__outcrop_view_{}", self.signals.len());
-        self.helper(cfgs, &helper, &types, ty, f);
+        self.derivation(field, &helper, &types, ty, f);
         let view = View {
             helper,
             deps: deps.clone(),
@@ -538,7 +558,8 @@ impl Expansion<'_> {
         self.impls.push(implementation);
     }
 
-    fn router(&mut self, cfgs: &[Attribute], position: usize, ty: &Type, f: &Expr) {
+    fn router(&mut self, field: &Field<'_>, position: usize, ty: &Type, f: &Expr) {
+        let cfgs = field.cfgs;
         let Some(fed) = self.fed(cfgs, ty) else {
             return;
         };
@@ -546,10 +567,7 @@ impl Expansion<'_> {
         let view = format_ident!("__OutcropBelow{position}");
         let helper = format_ident!("__outcrop_route_{position}");
         let sink = quote!(&mut #krate::Sink<'_, #view<'_>>);
-        match function(&helper, &[quote!(#ty), sink], &TokenStream::new(), f) {
-            Ok(function) => self.helpers.push(quote!(#(#cfgs)* #function)),
-            Err(error) => self.error(error),
-        }
+        self.helper(field, &helper, &[quote!(#ty), sink], &TokenStream::new(), f);
         let below = self.fed.iter().map(
             |Fed {
                  cfgs: fed_cfgs, ty, ..
@@ -779,14 +797,21 @@ mod tests {
     }
 
     #[test]
-    fn rejects_attributes_other_than_cfg_on_views() {
-        let error = expand(quote!(struct S { a: A = A(0), #[serde(skip)] B = A => f }))
-            .err()
-            .map(|error| error.to_string());
-        assert_eq!(
-            error.as_deref(),
-            Some("views have no field, so only `cfg` attributes are allowed on them")
+    fn forwards_view_attributes_to_their_function() -> syn::Result<()> {
+        let output = expand(quote!(struct S { a: A = A(0), #[inline] B = A => f }))?;
+        assert!(
+            output.contains("# [inline] fn __outcrop_view_1"),
+            "{output}"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn keeps_memo_attributes_on_their_field() -> syn::Result<()> {
+        let output = expand(quote!(struct S { a: A = A(0), #[inline] b: B = A => f }))?;
+        assert!(output.contains("# [inline] b : B"), "{output}");
+        assert_eq!(output.matches("# [inline]").count(), 1, "{output}");
+        Ok(())
     }
 
     #[test]
@@ -801,14 +826,13 @@ mod tests {
     }
 
     #[test]
-    fn rejects_attributes_other_than_cfg_on_routers() {
-        let error = expand(quote!(struct S { #[serde(skip)] &[u8] => f }))
-            .err()
-            .map(|error| error.to_string());
-        assert_eq!(
-            error.as_deref(),
-            Some("routers have no field, so only `cfg` attributes are allowed on them")
+    fn forwards_router_attributes_to_their_function() -> syn::Result<()> {
+        let output = expand(quote!(struct S { #[inline] &[u8] => f }))?;
+        assert!(
+            output.contains("# [inline] fn __outcrop_route_0"),
+            "{output}"
         );
+        Ok(())
     }
 
     #[test]

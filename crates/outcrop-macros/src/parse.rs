@@ -78,21 +78,11 @@ impl Parse for Entry {
             Kind::View { .. } => Some("views"),
             Kind::Input { .. } | Kind::Memo { .. } => None,
         };
-        if let Some(fieldless) = fieldless {
-            if let Some(attr) = attrs.first() {
-                return Err(syn::Error::new_spanned(
-                    attr,
-                    format_args!(
-                        "{fieldless} have no field, so only `cfg` attributes are allowed on them"
-                    ),
-                ));
-            }
-            if let Some(name) = &name {
-                return Err(syn::Error::new(
-                    name.span(),
-                    format_args!("{fieldless} have no field, so they cannot be named"),
-                ));
-            }
+        if let (Some(fieldless), Some(name)) = (fieldless, &name) {
+            return Err(syn::Error::new(
+                name.span(),
+                format_args!("{fieldless} have no field, so they cannot be named"),
+            ));
         }
         Ok(Self {
             cfgs,

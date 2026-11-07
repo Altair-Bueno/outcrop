@@ -55,9 +55,11 @@ enum Kind {
 /// - `In => f`: a router, called with every fed `In` and an [`outcrop::Sink`](https://docs.rs/outcrop)
 ///   feeding the inputs and routers declared above it.
 ///
-/// So the struct's fields are exactly the stored signals. Views and routers
-/// have no field and accept only `cfg` attributes; the attributes of inputs
-/// and memos are forwarded to their field.
+/// So the struct's fields are exactly the stored signals. The attributes of
+/// inputs and memos are forwarded to their field. Views and routers have no
+/// field, so their attributes, such as `#[expect]`, go on the function
+/// generated from `f`. `cfg` attributes apply to everything an entry
+/// generates.
 ///
 /// Attributes are kept, so the struct can derive `Clone`, `PartialEq` and
 /// other traits its signals implement. `Default` is implemented from the
