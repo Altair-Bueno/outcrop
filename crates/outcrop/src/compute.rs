@@ -21,6 +21,10 @@ macro_rules! impl_compute {
                 false $(|| <S as Select<$dep, $index>>::stale(changed))+
             }
 
+            fn moved<Fl: Bits>(changed: &Fl) -> bool {
+                false $(|| <S as Select<$dep, $index>>::moved(changed))+
+            }
+
             fn compute(&self, strata: &S) -> O {
                 $(let $value = <S as Select<$dep, $index>>::select(strata);)+
                 self($(Borrow::<$dep>::borrow(&$value)),+)

@@ -131,15 +131,15 @@ impl<S: Layered> Formation<S> {
     /// every time it is read, for values cheap enough not to be stored.
     ///
     /// The dependencies are inferred as for [`memo`](Self::memo). A view
-    /// takes no memory of its own, but is computed again on every
-    /// [`get`](Self::get), report and computation of the signals above it,
-    /// and twice whenever a signal beneath it might have changed it, so that
-    /// [`poll`](Self::poll) only reports it when its value changed.
+    /// takes no memory of its own and is computed again on every
+    /// [`get`](Self::get), report and computation of the signals above it.
+    /// Its value is never compared, so it needs no `PartialEq`:
+    /// [`poll`](Self::poll) reports it whenever a dependency changed, even if
+    /// its own value did not, and memos above it are then recomputed.
     #[must_use]
     pub fn view<F, M>(self, f: F) -> Deposited<View<F, M, F::Output>, S>
     where
         F: Compute<S, M>,
-        F::Output: PartialEq,
     {
         let mut changed = S::Cursor::grow(self.changed);
         changed.set_top(S::LEN);
@@ -222,8 +222,9 @@ impl<S: Strata> Formation<S> {
     /// Recomputes the memos whose dependencies changed and reports every
     /// changed signal, inputs and views included, to `visitor`.
     ///
-    /// A memo or view whose value did not change is neither reported nor
-    /// propagated to its dependents.
+    /// A memo whose value did not change is neither reported nor propagated
+    /// to its dependents. A view is reported and propagated whenever one of
+    /// its dependencies changed, whether or not its own value did.
     pub fn poll<V>(&mut self, visitor: &mut V)
     where
         S: Report<V>,

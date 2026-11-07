@@ -23,7 +23,7 @@ pub trait Strata {
     const CHANGED: Self::Flags;
 
     /// Recomputes the memos whose dependencies changed, and marks the memos
-    /// and views whose value changed.
+    /// whose value changed and the views whose dependencies changed.
     fn evaluate(&mut self, changed: &mut Self::Flags);
 }
 

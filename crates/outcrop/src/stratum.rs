@@ -172,7 +172,6 @@ where
 impl<F, M, O, Tail> Strata for (View<F, M, O>, Tail)
 where
     F: ComputeImpl<Tail, M, Output = O>,
-    O: PartialEq,
     Tail: LayeredImpl,
 {
     type Flags = Grown<Tail>;
@@ -180,13 +179,8 @@ where
     const CHANGED: Self::Flags = <Self::Flags as Bits>::ALL;
 
     fn evaluate(&mut self, changed: &mut Self::Flags) {
-        if changed.get(Tail::LEN) || !F::pending(Self::below(changed)) {
-            self.1.evaluate(Self::below_mut(changed));
-            return;
-        }
-        let before = self.0.f.compute(&self.1);
         self.1.evaluate(Self::below_mut(changed));
-        if self.0.f.compute(&self.1) != before {
+        if F::dirty(changed) {
             changed.set_top(Tail::LEN);
         }
     }
@@ -195,7 +189,6 @@ where
 impl<F, M, O, Tail> LayeredImpl for (View<F, M, O>, Tail)
 where
     F: ComputeImpl<Tail, M, Output = O>,
-    O: PartialEq,
     Tail: LayeredImpl,
 {
     const LEN: usize = Tail::LEN + 1;
@@ -262,7 +255,6 @@ impl<T, Tail> Settle<Tail> for Input<T> {
     where
         Self: 'a,
         Tail: 'a;
-    type Snapshot = ();
 
     fn value<'a>(&'a self, _: &'a Tail) -> &'a T {
         &self.0
@@ -272,9 +264,7 @@ impl<T, Tail> Settle<Tail> for Input<T> {
         false
     }
 
-    fn snapshot(&self, _: &Tail) {}
-
-    fn differs(&self, _: &Tail, (): ()) -> bool {
+    fn moved<Fl: Bits>(_: &Fl) -> bool {
         false
     }
 }
@@ -285,34 +275,29 @@ impl<F: ComputeImpl<Tail, M>, M, O, Tail> Settle<Tail> for Memo<F, M, O> {
     where
         Self: 'a,
         Tail: 'a;
-    type Snapshot = ();
 
     fn value<'a>(&'a self, _: &'a Tail) -> &'a O {
         &self.value
     }
 
     fn stale<Fl: Bits>(changed: &Fl) -> bool {
-        F::dirty(changed) || F::pending(changed)
+        F::moved(changed)
     }
 
-    fn snapshot(&self, _: &Tail) {}
-
-    fn differs(&self, _: &Tail, (): ()) -> bool {
-        false
+    fn moved<Fl: Bits>(changed: &Fl) -> bool {
+        F::moved(changed)
     }
 }
 
 impl<F, M, O, Tail> Settle<Tail> for View<F, M, O>
 where
     F: ComputeImpl<Tail, M, Output = O>,
-    O: PartialEq,
 {
     type Ref<'a>
         = O
     where
         Self: 'a,
         Tail: 'a;
-    type Snapshot = O;
 
     fn value<'a>(&'a self, tail: &'a Tail) -> O {
         self.f.compute(tail)
@@ -322,12 +307,8 @@ where
         F::pending(changed)
     }
 
-    fn snapshot(&self, tail: &Tail) -> O {
-        self.f.compute(tail)
-    }
-
-    fn differs(&self, tail: &Tail, snapshot: O) -> bool {
-        self.f.compute(tail) != snapshot
+    fn moved<Fl: Bits>(changed: &Fl) -> bool {
+        F::moved(changed)
     }
 }
 
@@ -345,6 +326,10 @@ impl<E: Settle<Tail>, Tail: LayeredImpl> Select<E::Signal, ()> for (E, Tail) {
     fn stale<Fl: Bits>(changed: &Fl) -> bool {
         E::stale(changed)
     }
+
+    fn moved<Fl: Bits>(changed: &Fl) -> bool {
+        changed.get(Tail::LEN) || E::moved(changed)
+    }
 }
 
 impl<T, I, E, Tail: Select<T, I>> Select<T, (I,)> for (E, Tail) {
@@ -360,6 +345,10 @@ impl<T, I, E, Tail: Select<T, I>> Select<T, (I,)> for (E, Tail) {
 
     fn stale<Fl: Bits>(changed: &Fl) -> bool {
         Tail::stale(changed)
+    }
+
+    fn moved<Fl: Bits>(changed: &Fl) -> bool {
+        Tail::moved(changed)
     }
 }
 
@@ -410,15 +399,7 @@ where
     Tail: LayeredImpl + Feed<T, I>,
 {
     fn feed(&mut self, changed: &mut Self::Flags, value: T) {
-        let snapshot = (!changed.get(Tail::LEN)).then(|| self.0.snapshot(&self.1));
-        let below = *Self::below(changed);
         self.1.feed(Self::below_mut(changed), value);
-        if let Some(snapshot) = snapshot
-            && *Self::below(changed) != below
-            && self.0.differs(&self.1, snapshot)
-        {
-            changed.set_top(Tail::LEN);
-        }
     }
 }
 

@@ -62,14 +62,20 @@ fn first_poll_reports_views() {
 }
 
 #[test]
-fn views_are_reported_only_when_their_value_changes() {
+fn views_are_reported_whenever_a_dependency_changes() {
     let mut formation = Formation::new()
         .input(Register::<0x42>(0x22))
         .view(anti_freeze);
     poll(&mut formation);
 
     formation.feed(Register::<0x42>(0x26));
-    assert_eq!(poll(&mut formation), ["Register(38)"]);
+    assert_eq!(
+        poll(&mut formation),
+        ["Register(38)", "AntiFreezeSupported(false)"]
+    );
+
+    formation.feed(Register::<0x42>(0x26));
+    assert_eq!(poll(&mut formation), Vec::<String>::new());
 
     formation.feed(Register::<0x42>(0x27));
     assert_eq!(
@@ -124,7 +130,7 @@ fn views_follow_memos_recomputed_by_the_poll() {
 }
 
 #[test]
-fn unchanged_views_stop_propagation_to_memos() {
+fn memos_above_views_recompute_but_stop_unchanged_values() {
     let calls = Cell::new(0);
     let mut formation = Formation::new()
         .input(Register::<0x42>(0x22))
@@ -137,15 +143,19 @@ fn unchanged_views_stop_propagation_to_memos() {
     let before = calls.get();
 
     formation.feed(Register::<0x42>(0x26));
-    poll(&mut formation);
-    assert_eq!(calls.get(), before);
+    assert_eq!(formation.get::<Even, _>(), Reading::Stale(&Even(false)));
+    assert_eq!(
+        poll(&mut formation),
+        ["Register(38)", "AntiFreezeSupported(false)"]
+    );
+    assert_eq!(calls.get(), before + 1);
 
     formation.feed(Register::<0x42>(0x27));
     assert_eq!(
         poll(&mut formation),
         ["Register(39)", "AntiFreezeSupported(true)", "Even(true)"]
     );
-    assert_eq!(calls.get(), before + 1);
+    assert_eq!(calls.get(), before + 2);
 }
 
 #[test]
@@ -159,11 +169,14 @@ fn views_build_on_views() {
     formation.feed(Register::<0x42>(0x23));
     assert_eq!(
         poll(&mut formation),
-        ["Register(35)", "AntiFreezeSupported(true)"]
+        ["Register(35)", "AntiFreezeSupported(true)", "Even(false)"]
     );
 
     formation.feed(Register::<0x42>(0x31));
-    assert_eq!(poll(&mut formation), ["Register(49)", "Even(true)"]);
+    assert_eq!(
+        poll(&mut formation),
+        ["Register(49)", "AntiFreezeSupported(true)", "Even(true)"]
+    );
 }
 
 #[test]
@@ -196,4 +209,20 @@ fn views_above_routers_see_routed_values() {
         poll(&mut formation),
         ["Register(35)", "AntiFreezeSupported(true)"]
     );
+}
+
+#[test]
+fn views_need_no_partial_eq() {
+    #[derive(Debug)]
+    struct Label(&'static str);
+
+    let mut formation = Formation::new()
+        .input(Register::<0x42>(0x22))
+        .view(|r: &Register<0x42>| Label(if r.0 & 0x01 != 0 { "on" } else { "off" }));
+    poll(&mut formation);
+
+    formation.feed(Register::<0x42>(0x23));
+
+    assert_eq!(formation.get::<Label, _>().into_inner().0, "on");
+    assert_eq!(poll(&mut formation), ["Register(35)", "Label(\"on\")"]);
 }

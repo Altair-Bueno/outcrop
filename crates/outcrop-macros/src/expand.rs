@@ -29,7 +29,7 @@ struct Signal {
     mask: TokenStream,
     view: Option<View>,
     stale: Vec<usize>,
-    ancestors: Vec<usize>,
+    moved: Vec<usize>,
 }
 
 #[derive(Clone)]
@@ -41,10 +41,6 @@ struct View {
 impl Signal {
     fn local(&self) -> Ident {
         format_ident!("__outcrop_{}", self.field, span = Span::mixed_site())
-    }
-
-    fn before(&self) -> Ident {
-        format_ident!("__outcrop_before_{}", self.field, span = Span::mixed_site())
     }
 }
 
@@ -62,6 +58,12 @@ impl<'e> From<&'e Entry> for Field<'e> {
             name: entry.name.as_ref(),
         }
     }
+}
+
+struct Derived {
+    index: usize,
+    deps: Vec<usize>,
+    memo: Option<(Ident, TokenStream)>,
 }
 
 struct Fed {
@@ -82,7 +84,7 @@ struct Expansion<'d> {
     defaults: Vec<TokenStream>,
     helpers: Vec<TokenStream>,
     inputs: Vec<(usize, Type, TokenStream)>,
-    memos: Vec<(usize, Ident, Vec<usize>, TokenStream)>,
+    derived: Vec<Derived>,
     evaluations: Vec<TokenStream>,
     impls: Vec<TokenStream>,
     reports: Vec<TokenStream>,
@@ -111,7 +113,7 @@ impl Declaration {
             defaults: Vec::new(),
             helpers: Vec::new(),
             inputs: Vec::new(),
-            memos: Vec::new(),
+            derived: Vec::new(),
             evaluations: Vec::new(),
             impls: Vec::new(),
             reports: Vec::new(),
@@ -261,7 +263,7 @@ impl Expansion<'_> {
             mask: mask.clone(),
             view,
             stale: Vec::new(),
-            ancestors: Vec::new(),
+            moved: Vec::from([index]),
         });
         let krate = self.krate;
         let visit = quote!(#krate::Visit<#ty>);
@@ -334,61 +336,27 @@ impl Expansion<'_> {
 
     fn link(&mut self, index: usize, deps: &[usize]) {
         let mut stale = Vec::new();
-        let mut ancestors = Vec::new();
+        let mut moved = Vec::from([index]);
         let memo = self.signals[index].view.is_none();
         for &dep in deps {
             let signal = &self.signals[dep];
-            stale.extend_from_slice(&signal.stale);
-            ancestors.extend_from_slice(&signal.ancestors);
-            ancestors.push(dep);
             if memo {
-                stale.push(dep);
+                stale.extend_from_slice(&signal.moved);
+            } else {
+                stale.extend_from_slice(&signal.stale);
+                moved.extend_from_slice(&signal.moved);
             }
         }
-        for list in [&mut stale, &mut ancestors] {
+        if memo {
+            moved.extend_from_slice(&stale);
+        }
+        for list in [&mut stale, &mut moved] {
             list.sort_unstable();
             list.dedup();
         }
         let signal = &mut self.signals[index];
         signal.stale = stale;
-        signal.ancestors = ancestors;
-    }
-
-    fn observe(&self, source: usize, change: &TokenStream) -> TokenStream {
-        let views = self
-            .signals
-            .iter()
-            .enumerate()
-            .filter(|(_, signal)| signal.view.is_some() && signal.ancestors.contains(&source))
-            .map(|(index, signal)| (signal, self.value(index, false)))
-            .collect::<Vec<_>>();
-        let befores = views.iter().map(|(signal, value)| {
-            let Signal {
-                cfgs, byte, mask, ..
-            } = signal;
-            let before = signal.before();
-            quote! {
-                #(#cfgs)*
-                let #before = (changed[#byte] & #mask == 0).then(|| #value);
-            }
-        });
-        let afters = views.iter().map(|(signal, value)| {
-            let Signal {
-                cfgs, byte, mask, ..
-            } = signal;
-            let before = signal.before();
-            quote! {
-                #(#cfgs)*
-                if #before.is_some_and(|before| before != #value) {
-                    changed[#byte] |= #mask;
-                }
-            }
-        });
-        quote! {
-            #(#befores)*
-            #change
-            #(#afters)*
-        }
+        signal.moved = moved;
     }
 
     fn fed(&mut self, cfgs: &[Attribute], ty: &Type) -> Option<Fed> {
@@ -432,17 +400,13 @@ impl Expansion<'_> {
                 mask,
                 ..
             } = &self.signals[*index];
-            let change = quote! {
-                self.#field = value;
-                changed[#byte] |= #mask;
-            };
-            let change = self.observe(*index, &change);
             quote! {
                 #(#cfgs)*
                 impl #krate::Feed<#fed_ty, ()> for #ident {
                     fn feed(&mut self, changed: &mut #flags, value: #fed_ty) {
                         if #differs {
-                            #change
+                            self.#field = value;
+                            changed[#byte] |= #mask;
                         }
                     }
                 }
@@ -467,12 +431,16 @@ impl Expansion<'_> {
         self.defaults.push(default);
         let field = &self.signals[index].field;
         let differs = quote_spanned!(ty.span()=> ::core::cmp::PartialEq::ne(&value, &self.#field));
-        self.memos.push((index, helper, deps, differs));
+        self.derived.push(Derived {
+            index,
+            deps,
+            memo: Some((helper, differs)),
+        });
         self.get(index, ty);
     }
 
     fn evaluations(&mut self) {
-        let evaluations = self.memos.iter().map(|(index, helper, deps, differs)| {
+        let evaluations = self.derived.iter().map(|Derived { index, deps, memo }| {
             let Signal {
                 cfgs,
                 field,
@@ -484,18 +452,22 @@ impl Expansion<'_> {
                 let Signal { byte, mask, .. } = &self.signals[*dep];
                 quote!(changed[#byte] & #mask != 0)
             });
-            let arguments = deps.iter().map(|dep| self.value(*dep, false));
-            let change = quote! {
-                self.#field = value;
-                changed[#byte] |= #mask;
+            let Some((helper, differs)) = memo else {
+                return quote! {
+                    #(#cfgs)*
+                    if #(#dirty)||* {
+                        changed[#byte] |= #mask;
+                    }
+                };
             };
-            let change = self.observe(*index, &change);
+            let arguments = deps.iter().map(|dep| self.value(*dep, false));
             quote! {
                 #(#cfgs)*
                 if #(#dirty)||* {
                     let value = #helper(#(&#arguments),*);
                     if #differs {
-                        #change
+                        self.#field = value;
+                        changed[#byte] |= #mask;
                     }
                 }
             }
@@ -517,6 +489,11 @@ impl Expansion<'_> {
             return;
         };
         self.link(index, &deps);
+        self.derived.push(Derived {
+            index,
+            deps,
+            memo: None,
+        });
         self.get(index, ty);
     }
 

@@ -455,7 +455,7 @@ fn views_take_no_field() {
 }
 
 #[test]
-fn views_are_reported_only_when_their_value_changes() {
+fn views_are_reported_whenever_a_dependency_changes() {
     let mut formation = Formation::from(ModbusMap::default());
     assert_eq!(
         poll(&mut formation),
@@ -470,7 +470,14 @@ fn views_are_reported_only_when_their_value_changes() {
     );
 
     formation.feed(Register::<0x42>(0x1122));
-    assert_eq!(poll(&mut formation), ["Register(4386)"]);
+    assert_eq!(
+        poll(&mut formation),
+        [
+            "Register(4386)",
+            "AntiFreezeSupported(false)",
+            "Setpoint(8704)"
+        ]
+    );
 
     formation.feed(Register::<0x42>(0x23));
     assert_eq!(
@@ -521,11 +528,34 @@ fn memos_and_views_build_on_each_other() {
 }
 
 #[test]
-fn unchanged_views_keep_memos_fresh() {
+fn memos_above_views_are_stale_until_polled() {
     let mut formation = Formation::from(ModbusMap::default());
     poll(&mut formation);
 
     formation.feed(Register::<0x42>(0x1122));
 
+    assert_eq!(formation.get::<Alarm, _>(), Reading::Stale(&Alarm(false)));
+    poll(&mut formation);
     assert_eq!(formation.get::<Alarm, _>(), Reading::Fresh(&Alarm(false)));
+}
+
+#[derive(Debug)]
+struct Label(&'static str);
+
+outcrop::strata! {
+    struct Labelled {
+        r42: Register<0x42> = Register(0x22),
+        Label = Register<0x42> => |r| Label(if r.0 & 0x01 != 0 { "on" } else { "off" }),
+    }
+}
+
+#[test]
+fn views_need_no_partial_eq() {
+    let mut formation = Formation::from(Labelled::default());
+    poll(&mut formation);
+
+    formation.feed(Register::<0x42>(0x23));
+
+    assert_eq!(formation.get::<Label, _>().into_inner().0, "on");
+    assert_eq!(poll(&mut formation), ["Register(35)", "Label(\"on\")"]);
 }

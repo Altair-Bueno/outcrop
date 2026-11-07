@@ -50,15 +50,12 @@ pub trait Settle<Tail>: Value {
     where
         Self: 'a,
         Tail: 'a;
-    type Snapshot;
 
     fn value<'a>(&'a self, tail: &'a Tail) -> Self::Ref<'a>;
 
     fn stale<Fl: Bits>(changed: &Fl) -> bool;
 
-    fn snapshot(&self, tail: &Tail) -> Self::Snapshot;
-
-    fn differs(&self, tail: &Tail, snapshot: Self::Snapshot) -> bool;
+    fn moved<Fl: Bits>(changed: &Fl) -> bool;
 }
 
 pub trait Select<T, I> {
@@ -70,6 +67,8 @@ pub trait Select<T, I> {
     fn select(&self) -> Self::Ref<'_>;
 
     fn stale<Fl: Bits>(changed: &Fl) -> bool;
+
+    fn moved<Fl: Bits>(changed: &Fl) -> bool;
 }
 
 #[diagnostic::on_unimplemented(
@@ -83,6 +82,8 @@ pub trait ComputeImpl<S, M> {
     fn dirty<Fl: Bits>(changed: &Fl) -> bool;
 
     fn pending<Fl: Bits>(changed: &Fl) -> bool;
+
+    fn moved<Fl: Bits>(changed: &Fl) -> bool;
 
     fn compute(&self, strata: &S) -> Self::Output;
 }

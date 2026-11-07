@@ -10,9 +10,9 @@
 //! - a **view**, computed from the signals beneath it every time it is read,
 //!   for values cheap enough not to be stored.
 //!
-//! [`Formation::poll`] reports every signal whose value changed. Nothing
-//! allocates: the whole graph lives in a single value whose type encodes its
-//! shape.
+//! [`Formation::poll`] reports every input and memo whose value changed, and
+//! every view with a changed dependency. Nothing allocates: the whole graph
+//! lives in a single value whose type encodes its shape.
 //!
 //! ```
 //! use core::fmt::Debug;
