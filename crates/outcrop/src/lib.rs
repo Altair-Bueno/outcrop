@@ -24,7 +24,7 @@
 //!     }
 //! }
 //!
-//! let mut formation = Formation::<8>::new()
+//! let mut formation = Formation::new()
 //!     .input(Temperature(20))
 //!     .with(|t: &Temperature| AntiFreeze(t.0 < 10));
 //!
@@ -36,8 +36,12 @@
 #![forbid(unsafe_code)]
 #![cfg_attr(coverage_nightly, feature(coverage_attribute))]
 
-mod capacity;
 mod compute;
+#[expect(
+    unnameable_types,
+    reason = "change flags sized by the strata, unnameable so they stay an implementation detail"
+)]
+mod flags;
 mod formation;
 #[expect(
     unnameable_types,
@@ -45,11 +49,17 @@ mod formation;
 )]
 mod plumbing;
 mod sink;
-pub mod stratum;
+#[expect(
+    unnameable_types,
+    reason = "strata only appear in inferred formation types, so they can change without breaking users"
+)]
+mod stratum;
 mod visit;
 
-pub use capacity::Capacity;
-pub use capacity::Supported;
 pub use formation::Formation;
 pub use sink::Sink;
+pub use stratum::Compute;
+pub use stratum::Feed;
+pub use stratum::Report;
+pub use stratum::Strata;
 pub use visit::Visit;

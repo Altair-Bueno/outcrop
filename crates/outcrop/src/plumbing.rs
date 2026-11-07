@@ -1,17 +1,22 @@
 use core::fmt::Debug;
 
-pub trait Flags {
+pub trait Flags: Debug + Default {
+    const BYTES: usize;
+
     fn get(&self, index: usize) -> bool;
 
-    fn set(&mut self, index: usize);
+    fn set_top(&mut self, index: usize);
 }
 
-#[diagnostic::on_unimplemented(
-    message = "`{Self}` is not a formation capacity",
-    note = "formation capacities are `Capacity<N>` with `N` between 1 and 1024; `Supported` is sealed"
-)]
-pub trait CapacityImpl {
-    type Flags: Flags + Default + Debug;
+pub trait Cursor {
+    type Next: Cursor;
+    type Grow<F: Flags>: Flags;
+
+    fn grow<F: Flags>(flags: F) -> Self::Grow<F>;
+
+    fn below<F: Flags>(flags: &Self::Grow<F>) -> &F;
+
+    fn below_mut<F: Flags>(flags: &mut Self::Grow<F>) -> &mut F;
 }
 
 #[diagnostic::on_unimplemented(
@@ -20,8 +25,18 @@ pub trait CapacityImpl {
 )]
 pub trait StrataImpl {
     const LEN: usize;
+    type Flags: Flags;
+    type Cursor: Cursor;
 
-    fn evaluate<Fl: Flags>(&mut self, changed: &mut Fl);
+    fn evaluate(&mut self, changed: &mut Self::Flags);
+}
+
+pub trait Stack: StrataImpl {
+    type Tail: StrataImpl;
+
+    fn below(flags: &Self::Flags) -> &<Self::Tail as StrataImpl>::Flags;
+
+    fn below_mut(flags: &mut Self::Flags) -> &mut <Self::Tail as StrataImpl>::Flags;
 }
 
 pub trait Value {
@@ -54,12 +69,12 @@ pub trait ComputeImpl<S, M> {
     label = "not an input or router of this formation",
     note = "inputs are fed by value and routers by reference; derived signals are computed by the formation and cannot be fed"
 )]
-pub trait FeedImpl<T, I, C: CapacityImpl> {
-    fn feed(&mut self, changed: &mut C::Flags, value: T);
+pub trait FeedImpl<T, I>: StrataImpl {
+    fn feed(&mut self, changed: &mut Self::Flags, value: T);
 }
 
-pub trait ReportImpl<V> {
-    fn report<Fl: Flags>(&self, changed: &Fl, visitor: &mut V);
+pub trait ReportImpl<V>: StrataImpl {
+    fn report(&self, changed: &Self::Flags, visitor: &mut V);
 }
 
 #[diagnostic::on_unimplemented(

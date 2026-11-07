@@ -1,8 +1,7 @@
 use core::marker::PhantomData;
 
-use crate::capacity::Capacity;
-use crate::capacity::Supported;
-use crate::plumbing::CapacityImpl;
+use crate::flags::Byte;
+use crate::plumbing::Cursor as _;
 use crate::plumbing::Flags as _;
 use crate::sink::Sink;
 use crate::stratum::Compute;
@@ -15,27 +14,18 @@ use crate::stratum::Router;
 use crate::stratum::Strata;
 use crate::stratum::Stratum;
 
-type Deposited<const N: usize, E, S> = Formation<N, Stratum<E, S>>;
+type Deposited<E, S> = Formation<Stratum<E, S>>;
 
-/// A statically shaped graph of signals holding at most `N` of them.
+/// A statically shaped graph of signals.
 ///
 /// Each [`input`](Self::input), [`with`](Self::with) or
 /// [`route`](Self::route) deposits a stratum on top of the previous ones, and
 /// a stratum can only depend on the strata beneath it, so cycles cannot be
-/// written. Every signal has a value from the moment it is declared.
+/// written. Every signal has a value from the moment it is declared, and the
+/// formation tracks changes in one bit per signal, sized from its strata.
 ///
-/// Exceeding the capacity `N` is a compile-time error:
-///
-/// ```compile_fail,E0080
-/// # use outcrop::Formation;
-/// #[derive(PartialEq)]
-/// struct A(u8);
-/// #[derive(PartialEq)]
-/// struct B(u8);
-/// let formation = Formation::<1>::new().input(A(0)).input(B(0));
-/// ```
-///
-/// So is depending on a signal the formation does not contain:
+/// Depending on a signal the formation does not contain is a compile-time
+/// error:
 ///
 /// ```compile_fail,E0277
 /// # use outcrop::Formation;
@@ -43,7 +33,7 @@ type Deposited<const N: usize, E, S> = Formation<N, Stratum<E, S>>;
 /// struct A(u8);
 /// #[derive(PartialEq)]
 /// struct B(u8);
-/// let formation = Formation::<8>::new().with(|a: &A| B(a.0));
+/// let formation = Formation::new().with(|a: &A| B(a.0));
 /// ```
 ///
 /// And feeding a derived signal:
@@ -54,59 +44,42 @@ type Deposited<const N: usize, E, S> = Formation<N, Stratum<E, S>>;
 /// struct A(u8);
 /// #[derive(PartialEq)]
 /// struct B(u8);
-/// let mut formation = Formation::<8>::new().input(A(0)).with(|a: &A| B(a.0));
+/// let mut formation = Formation::new().input(A(0)).with(|a: &A| B(a.0));
 /// formation.feed(B(1));
 /// ```
 #[derive(Debug)]
-pub struct Formation<const N: usize, S = Nil>
-where
-    Capacity<N>: Supported,
-{
-    changed: <Capacity<N> as CapacityImpl>::Flags,
+pub struct Formation<S: Strata = Nil> {
+    changed: S::Flags,
     strata: S,
 }
 
-impl<const N: usize> Formation<N>
-where
-    Capacity<N>: Supported,
-{
+impl Formation {
     /// Creates an empty formation.
     #[must_use]
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
-            changed: Default::default(),
+            changed: Byte::EMPTY,
             strata: Nil,
         }
     }
 }
 
-impl<const N: usize> Default for Formation<N>
-where
-    Capacity<N>: Supported,
-{
+impl Default for Formation {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<const N: usize, S: Strata> Formation<N, S>
-where
-    Capacity<N>: Supported,
-{
+impl<S: Strata> Formation<S> {
     /// Deposits an input signal with its initial value.
     ///
     /// The value is reported by the next [`poll`](Self::poll).
     #[must_use]
-    pub fn input<T: PartialEq>(mut self, initial: T) -> Deposited<N, Input<T>, S> {
-        const {
-            assert!(
-                S::LEN < N,
-                "the formation has more signals than its capacity N"
-            );
-        }
-        self.changed.set(S::LEN);
+    pub fn input<T: PartialEq>(self, initial: T) -> Deposited<Input<T>, S> {
+        let mut changed = S::Cursor::grow(self.changed);
+        changed.set_top(S::LEN);
         Formation {
-            changed: self.changed,
+            changed,
             strata: Stratum {
                 entry: Input(initial),
                 tail: self.strata,
@@ -121,21 +94,16 @@ where
     /// value is computed immediately and reported by the next
     /// [`poll`](Self::poll).
     #[must_use]
-    pub fn with<F, M>(mut self, mut f: F) -> Deposited<N, Derived<F, M, F::Output>, S>
+    pub fn with<F, M>(self, mut f: F) -> Deposited<Derived<F, M, F::Output>, S>
     where
         F: Compute<S, M>,
         F::Output: PartialEq,
     {
-        const {
-            assert!(
-                S::LEN < N,
-                "the formation has more signals than its capacity N"
-            );
-        }
         let value = f.compute(&self.strata);
-        self.changed.set(S::LEN);
+        let mut changed = S::Cursor::grow(self.changed);
+        changed.set_top(S::LEN);
         Formation {
-            changed: self.changed,
+            changed,
             strata: Stratum {
                 entry: Derived {
                     f,
@@ -161,14 +129,14 @@ where
     /// struct A(u8);
     /// #[derive(PartialEq)]
     /// struct B(u8);
-    /// let formation = Formation::<8>::new()
+    /// let formation = Formation::new()
     ///     .input(A(0))
     ///     .route(|a: &u8, out| out.feed(B(*a)));
     /// ```
     #[must_use]
-    pub fn route<In: ?Sized, F>(self, f: F) -> Deposited<N, Router<In, F>, S>
+    pub fn route<In: ?Sized, F>(self, f: F) -> Deposited<Router<In, F>, S>
     where
-        F: FnMut(&In, &mut Sink<'_, S, Capacity<N>>),
+        F: FnMut(&In, &mut Sink<'_, S>),
     {
         Formation {
             changed: self.changed,
@@ -187,7 +155,7 @@ where
     /// Feeding an input its current value changes nothing.
     pub fn feed<T, I>(&mut self, value: T)
     where
-        S: Feed<T, I, Capacity<N>>,
+        S: Feed<T, I>,
     {
         self.strata.feed(&mut self.changed, value);
     }

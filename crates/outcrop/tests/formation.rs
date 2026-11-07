@@ -3,12 +3,10 @@
 use core::cell::Cell;
 use core::fmt::Debug;
 
-use outcrop::Capacity;
 use outcrop::Formation;
-use outcrop::Supported;
+use outcrop::Report;
+use outcrop::Strata;
 use outcrop::Visit;
-use outcrop::stratum::Report;
-use outcrop::stratum::Strata;
 
 #[derive(Debug, PartialEq)]
 struct Temperature(i16);
@@ -31,9 +29,8 @@ impl<T: Debug> Visit<T> for Recorder {
     }
 }
 
-fn poll<const N: usize, S>(formation: &mut Formation<N, S>) -> Vec<String>
+fn poll<S>(formation: &mut Formation<S>) -> Vec<String>
 where
-    Capacity<N>: Supported,
     S: Strata + Report<Recorder>,
 {
     let mut recorder = Recorder::default();
@@ -47,7 +44,7 @@ fn heating(t: &Temperature, s: &Setpoint) -> Heating {
 
 #[test]
 fn first_poll_reports_every_initial_value() {
-    let mut formation = Formation::<8>::new()
+    let mut formation = Formation::new()
         .input(Temperature(20))
         .input(Setpoint(18))
         .with(heating);
@@ -60,14 +57,14 @@ fn first_poll_reports_every_initial_value() {
 
 #[test]
 fn default_formation_accepts_strata_like_a_new_one() {
-    let mut formation = Formation::<8>::default().input(Temperature(20));
+    let mut formation = Formation::default().input(Temperature(20));
 
     assert_eq!(poll(&mut formation), ["Temperature(20)"]);
 }
 
 #[test]
 fn poll_without_feeds_reports_nothing() {
-    let mut formation = Formation::<8>::new()
+    let mut formation = Formation::new()
         .input(Temperature(20))
         .with(|t: &Temperature| AntiFreeze(t.0 < 10));
     poll(&mut formation);
@@ -77,7 +74,7 @@ fn poll_without_feeds_reports_nothing() {
 
 #[test]
 fn feeding_an_input_reports_it_and_its_changed_dependents() {
-    let mut formation = Formation::<8>::new()
+    let mut formation = Formation::new()
         .input(Temperature(20))
         .input(Setpoint(18))
         .with(heating);
@@ -90,7 +87,7 @@ fn feeding_an_input_reports_it_and_its_changed_dependents() {
 
 #[test]
 fn feeding_the_current_value_reports_nothing() {
-    let mut formation = Formation::<8>::new()
+    let mut formation = Formation::new()
         .input(Temperature(20))
         .with(|t: &Temperature| AntiFreeze(t.0 < 10));
     poll(&mut formation);
@@ -103,7 +100,7 @@ fn feeding_the_current_value_reports_nothing() {
 #[test]
 fn unchanged_derived_value_stops_propagation() {
     let downstream = Cell::new(0);
-    let mut formation = Formation::<8>::new()
+    let mut formation = Formation::new()
         .input(Temperature(20))
         .with(|t: &Temperature| AntiFreeze(t.0 < 10))
         .with(|a: &AntiFreeze| {
@@ -122,7 +119,7 @@ fn unchanged_derived_value_stops_propagation() {
 #[test]
 fn signals_without_changed_dependencies_are_not_recomputed() {
     let calls = Cell::new(0);
-    let mut formation = Formation::<8>::new()
+    let mut formation = Formation::new()
         .input(Temperature(20))
         .input(Setpoint(18))
         .with(|s: &Setpoint| {
@@ -141,7 +138,7 @@ fn signals_without_changed_dependencies_are_not_recomputed() {
 #[test]
 fn several_changed_dependencies_recompute_once() {
     let calls = Cell::new(0);
-    let mut formation = Formation::<8>::new()
+    let mut formation = Formation::new()
         .input(Temperature(20))
         .input(Setpoint(18))
         .with(|t: &Temperature, s: &Setpoint| {
@@ -160,7 +157,7 @@ fn several_changed_dependencies_recompute_once() {
 
 #[test]
 fn derived_signals_see_values_derived_in_the_same_poll() {
-    let mut formation = Formation::<8>::new()
+    let mut formation = Formation::new()
         .input(Temperature(20))
         .with(|t: &Temperature| AntiFreeze(t.0 < 10))
         .with(|a: &AntiFreeze| Heating(a.0));
@@ -181,7 +178,7 @@ fn derived_signals_accept_up_to_eight_dependencies() {
     #[derive(Debug, PartialEq)]
     struct Byte(u8);
 
-    let mut formation = Formation::<16>::new()
+    let mut formation = Formation::new()
         .input(Bit::<0>(false))
         .input(Bit::<1>(false))
         .input(Bit::<2>(false))

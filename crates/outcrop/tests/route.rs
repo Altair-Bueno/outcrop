@@ -38,7 +38,7 @@ fn decode(chunk: &[u8]) -> ModbusRegister {
 
 macro_rules! modbus_formation {
     () => {
-        Formation::<8>::new()
+        Formation::new()
             .input(Register::<0xAA>(0))
             .input(Register::<0xAB>(0))
             .route(|r: &ModbusRegister, out| match r.address {

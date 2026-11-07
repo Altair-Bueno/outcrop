@@ -7,8 +7,5 @@ description = "Static, no_std, sans-IO incremental evaluation of context-depende
 keywords.workspace = true
 categories = ["no-std", "no-std::no-alloc", "embedded", "algorithms"]
 
-[dependencies]
-bitmaps = { workspace = true }
-
 [lints]
 workspace = true
