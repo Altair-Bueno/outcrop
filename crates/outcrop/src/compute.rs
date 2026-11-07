@@ -15,6 +15,13 @@ macro_rules! impl_compute {
                 false $(|| changed.get(<S as Select<$dep, $index>>::INDEX))+
             }
 
+            fn stale<Fl: Bits>(changed: &Fl) -> bool {
+                false $(
+                    || changed.get(<S as Select<$dep, $index>>::INDEX)
+                    || <S as Select<$dep, $index>>::stale(changed)
+                )+
+            }
+
             fn compute(&mut self, strata: &S) -> O {
                 self($(<S as Select<$dep, $index>>::select(strata)),+)
             }

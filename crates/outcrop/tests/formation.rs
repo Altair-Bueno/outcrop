@@ -4,6 +4,7 @@ use core::cell::Cell;
 use core::fmt::Debug;
 
 use outcrop::Formation;
+use outcrop::Reading;
 use outcrop::Report;
 use outcrop::Visit;
 
@@ -268,4 +269,79 @@ fn the_empty_formation_is_nameable() {
 
     formation.poll(&mut Count(0));
     assert_eq!(poll(&mut formation), Vec::<String>::new());
+}
+
+#[derive(Debug, PartialEq)]
+struct Alarm(bool);
+
+#[test]
+fn derived_reads_are_stale_until_the_first_poll() {
+    let mut formation = Formation::new()
+        .input(Temperature(20))
+        .with(|t: &Temperature| AntiFreeze(t.0 < 10));
+
+    assert_eq!(formation.get(), Reading::Fresh(&Temperature(20)));
+    assert_eq!(formation.get(), Reading::Stale(&AntiFreeze(false)));
+
+    poll(&mut formation);
+
+    assert_eq!(formation.get(), Reading::Fresh(&AntiFreeze(false)));
+}
+
+#[test]
+fn feeding_marks_only_dependents_stale_until_the_next_poll() {
+    let mut formation = Formation::new()
+        .input(Temperature(20))
+        .input(Setpoint(18))
+        .with(heating)
+        .with(|t: &Temperature| AntiFreeze(t.0 < 10));
+    poll(&mut formation);
+
+    formation.feed(Setpoint(25));
+
+    assert_eq!(formation.get(), Reading::Fresh(&Setpoint(25)));
+    assert_eq!(formation.get(), Reading::Stale(&Heating(false)));
+    assert_eq!(formation.get(), Reading::Fresh(&AntiFreeze(false)));
+
+    poll(&mut formation);
+
+    assert_eq!(formation.get(), Reading::Fresh(&Heating(true)));
+}
+
+#[test]
+fn staleness_follows_derived_dependencies() {
+    let mut formation = Formation::new()
+        .input(Temperature(20))
+        .input(Setpoint(18))
+        .with(heating)
+        .with(|h: &Heating| Alarm(h.0));
+    poll(&mut formation);
+
+    formation.feed(Temperature(10));
+
+    assert_eq!(formation.get(), Reading::Stale(&Alarm(false)));
+}
+
+#[test]
+fn feeding_the_current_value_keeps_dependents_fresh() {
+    let mut formation = Formation::new()
+        .input(Temperature(20))
+        .with(|t: &Temperature| AntiFreeze(t.0 < 10));
+    poll(&mut formation);
+
+    formation.feed(Temperature(20));
+
+    assert!(formation.get::<AntiFreeze, _>().is_fresh());
+}
+
+#[test]
+fn strata_deposited_after_a_poll_are_reported_by_the_next() {
+    let mut formation = Formation::new().input(Temperature(20));
+    poll(&mut formation);
+
+    let mut formation = formation
+        .input(Setpoint(18))
+        .with(|t: &Temperature| AntiFreeze(t.0 < 10));
+
+    assert_eq!(poll(&mut formation), ["Setpoint(18)", "AntiFreeze(false)"]);
 }

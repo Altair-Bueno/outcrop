@@ -2,8 +2,10 @@ use core::marker::PhantomData;
 
 use crate::plumbing::Bits as _;
 use crate::plumbing::Cursor as _;
+use crate::reading::Reading;
 use crate::sink::Sink;
 use crate::strata::Feed;
+use crate::strata::Get;
 use crate::strata::Report;
 use crate::strata::Strata;
 use crate::stratum::Compute;
@@ -166,6 +168,19 @@ impl<S: Strata> Formation<S> {
         S: Feed<T, I>,
     {
         self.strata.feed(&mut self.changed, value);
+    }
+
+    /// Reads the signal `T` without recomputing anything.
+    ///
+    /// Inputs are always [`Fresh`](Reading::Fresh). A derived signal is
+    /// [`Stale`](Reading::Stale) until the first [`poll`](Self::poll), and
+    /// afterwards whenever an input it depends on, directly or through other
+    /// derived signals, changed since the last one.
+    pub fn get<T, I>(&self) -> Reading<&T>
+    where
+        S: Get<T, I>,
+    {
+        self.strata.get(&self.changed)
     }
 
     /// Recomputes the derived signals whose dependencies changed and reports

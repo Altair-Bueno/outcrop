@@ -9,10 +9,13 @@ use crate::plumbing::ComputeImpl;
 use crate::plumbing::Cursor;
 use crate::plumbing::LayeredImpl;
 use crate::plumbing::Select;
+use crate::plumbing::Settle;
 use crate::plumbing::Stack;
 use crate::plumbing::Value;
+use crate::reading::Reading;
 use crate::sink::Sink;
 use crate::strata::Feed;
+use crate::strata::Get;
 use crate::strata::Report;
 use crate::strata::Strata;
 use crate::visit::Visit;
@@ -200,11 +203,27 @@ impl<F, M, O> Value for Derived<F, M, O> {
     }
 }
 
-impl<E: Value, Tail: LayeredImpl> Select<E::Signal, ()> for (E, Tail) {
+impl<T, Tail> Settle<Tail> for Input<T> {
+    fn stale<Fl: Bits>(_: &Fl) -> bool {
+        false
+    }
+}
+
+impl<F: ComputeImpl<Tail, M>, M, O, Tail> Settle<Tail> for Derived<F, M, O> {
+    fn stale<Fl: Bits>(changed: &Fl) -> bool {
+        F::stale(changed)
+    }
+}
+
+impl<E: Value + Settle<Tail>, Tail: LayeredImpl> Select<E::Signal, ()> for (E, Tail) {
     const INDEX: usize = Tail::LEN;
 
     fn select(&self) -> &E::Signal {
         self.0.value()
+    }
+
+    fn stale<Fl: Bits>(changed: &Fl) -> bool {
+        E::stale(changed)
     }
 }
 
@@ -213,6 +232,21 @@ impl<T, I, E, Tail: Select<T, I>> Select<T, (I,)> for (E, Tail) {
 
     fn select(&self) -> &T {
         self.1.select()
+    }
+
+    fn stale<Fl: Bits>(changed: &Fl) -> bool {
+        Tail::stale(changed)
+    }
+}
+
+impl<T, I, S: LayeredImpl + Select<T, I>> Get<T, I> for S {
+    fn get(&self, changed: &Self::Flags) -> Reading<&T> {
+        let value = self.select();
+        if Self::stale(changed) {
+            Reading::Stale(value)
+        } else {
+            Reading::Fresh(value)
+        }
     }
 }
 

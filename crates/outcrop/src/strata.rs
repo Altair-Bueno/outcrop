@@ -1,6 +1,8 @@
 use core::fmt::Debug;
 use core::hash::Hash;
 
+use crate::reading::Reading;
+
 /// The signals a [`Formation`](crate::Formation) is made of.
 ///
 /// Implemented by the strata built with
@@ -35,6 +37,19 @@ pub trait Strata {
 pub trait Feed<T, I>: Strata {
     /// Stores or routes `value`, marking the inputs whose value changed.
     fn feed(&mut self, changed: &mut Self::Flags, value: T);
+}
+
+/// Strata containing the signal `T`.
+///
+/// The index `I` is inferred, and only tells apart where the `T` is.
+#[diagnostic::on_unimplemented(
+    message = "`{T}` is not a signal of this formation",
+    label = "not an input or derived signal of this formation"
+)]
+pub trait Get<T, I>: Strata {
+    /// Returns the current value of `T`, [`Stale`](Reading::Stale) if a
+    /// dependency marked in `changed` may recompute it.
+    fn get(&self, changed: &Self::Flags) -> Reading<&T>;
 }
 
 /// Strata whose every signal can be reported to the visitor `V`.

@@ -52,6 +52,7 @@ mod formation;
     reason = "builder machinery behind the sealed `Compute` and `Layered` bounds"
 )]
 mod plumbing;
+mod reading;
 mod sink;
 mod strata;
 #[expect(
@@ -64,8 +65,10 @@ mod visit;
 pub use formation::Formation;
 #[cfg(feature = "macros")]
 pub use outcrop_macros::strata;
+pub use reading::Reading;
 pub use sink::Sink;
 pub use strata::Feed;
+pub use strata::Get;
 pub use strata::Report;
 pub use strata::Strata;
 pub use stratum::Compute;

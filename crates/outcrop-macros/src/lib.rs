@@ -25,7 +25,14 @@ struct Declaration {
     entries: Vec<Entry>,
 }
 
-enum Entry {
+struct Entry {
+    cfgs: Vec<Attribute>,
+    attrs: Vec<Attribute>,
+    name: Option<Ident>,
+    kind: Kind,
+}
+
+enum Kind {
     Input { ty: Type, init: Expr },
     Derived { ty: Type, deps: Box<Type>, f: Expr },
     Router { ty: Type, f: Expr },

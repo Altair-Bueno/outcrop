@@ -1,6 +1,8 @@
 use alloc::boxed::Box;
+use alloc::vec::Vec;
 
 use syn::Attribute;
+use syn::Ident;
 use syn::Token;
 use syn::Type;
 use syn::braced;
@@ -12,6 +14,7 @@ use syn::punctuated::Punctuated;
 
 use crate::Declaration;
 use crate::Entry;
+use crate::Kind;
 
 impl Parse for Declaration {
     fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
@@ -48,6 +51,43 @@ impl Parse for Declaration {
 }
 
 impl Parse for Entry {
+    fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
+        let (cfgs, attrs): (Vec<_>, Vec<_>) = input
+            .call(Attribute::parse_outer)?
+            .into_iter()
+            .partition(|attr| attr.path().is_ident("cfg"));
+        let name = if input.peek(Ident) && input.peek2(Token![:]) && !input.peek2(Token![::]) {
+            let name: Ident = input.parse()?;
+            input.parse::<Token![:]>()?;
+            Some(name)
+        } else {
+            None
+        };
+        let kind = input.parse()?;
+        if let Kind::Router { .. } = kind {
+            if let Some(attr) = attrs.first() {
+                return Err(syn::Error::new_spanned(
+                    attr,
+                    "routers have no field, so only `cfg` attributes are allowed on them",
+                ));
+            }
+            if let Some(name) = name {
+                return Err(syn::Error::new(
+                    name.span(),
+                    "routers have no field, so they cannot be named",
+                ));
+            }
+        }
+        Ok(Self {
+            cfgs,
+            attrs,
+            name,
+            kind,
+        })
+    }
+}
+
+impl Parse for Kind {
     fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
         let ty = input.parse()?;
         if input.peek(Token![=>]) {

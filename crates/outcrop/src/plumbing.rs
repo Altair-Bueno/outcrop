@@ -46,10 +46,16 @@ pub trait Value {
     fn value(&self) -> &Self::Signal;
 }
 
+pub trait Settle<Tail> {
+    fn stale<Fl: Bits>(changed: &Fl) -> bool;
+}
+
 pub trait Select<T, I> {
     const INDEX: usize;
 
     fn select(&self) -> &T;
+
+    fn stale<Fl: Bits>(changed: &Fl) -> bool;
 }
 
 #[diagnostic::on_unimplemented(
@@ -61,6 +67,8 @@ pub trait ComputeImpl<S, M> {
     type Output;
 
     fn dirty<Fl: Bits>(changed: &Fl) -> bool;
+
+    fn stale<Fl: Bits>(changed: &Fl) -> bool;
 
     fn compute(&mut self, strata: &S) -> Self::Output;
 }
