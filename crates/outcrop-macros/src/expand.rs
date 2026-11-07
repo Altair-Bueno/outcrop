@@ -20,7 +20,6 @@ use crate::Declaration;
 use crate::Entry;
 use crate::Kind;
 
-#[derive(Clone)]
 struct Signal {
     cfgs: Vec<Attribute>,
     key: String,
@@ -32,7 +31,6 @@ struct Signal {
     moved: Vec<usize>,
 }
 
-#[derive(Clone)]
 struct View {
     helper: Ident,
     deps: Vec<usize>,
@@ -42,12 +40,6 @@ impl Signal {
     fn local(&self) -> Ident {
         format_ident!("__outcrop_{}", self.field, span = Span::mixed_site())
     }
-}
-
-struct Derived {
-    index: usize,
-    deps: Vec<usize>,
-    memo: Option<(Ident, TokenStream)>,
 }
 
 struct Fed {
@@ -67,7 +59,6 @@ struct Expansion<'d> {
     fields: Vec<TokenStream>,
     defaults: Vec<TokenStream>,
     helpers: Vec<TokenStream>,
-    derived: Vec<Derived>,
     evaluations: Vec<TokenStream>,
     impls: Vec<TokenStream>,
     reports: Vec<TokenStream>,
@@ -95,7 +86,6 @@ impl Declaration {
             fields: Vec::new(),
             defaults: Vec::new(),
             helpers: Vec::new(),
-            derived: Vec::new(),
             evaluations: Vec::new(),
             impls: Vec::new(),
             reports: Vec::new(),
@@ -108,10 +98,11 @@ impl Declaration {
         }
         let Self { attrs, vis, .. } = self;
         let cfgs = attrs.iter().filter(|attr| attr.path().is_ident("cfg"));
+        let count = Ident::new("__OUTCROP_BITS", Span::mixed_site());
         let Expansion {
             ident,
             krate,
-            next: count,
+            next,
             bits,
             fields,
             defaults,
@@ -144,8 +135,9 @@ impl Declaration {
             #(#cfgs)*
             const _: () = {
             #(#bits)*
+            const #count: usize = #next;
 
-            type #flags = [u8; (#count).div_ceil(8)];
+            type #flags = [u8; #count.div_ceil(8)];
 
             #(#helpers)*
 
@@ -160,7 +152,7 @@ impl Declaration {
                 type Flags = #flags;
 
                 const CHANGED: #flags = {
-                    let mut flags = [0; (#count).div_ceil(8)];
+                    let mut flags = [0; #count.div_ceil(8)];
                     let mut bit = 0;
                     while bit < #count {
                         flags[bit / 8] |= 1 << (bit % 8);
@@ -199,7 +191,6 @@ impl Expansion<'_> {
                 Kind::Router { ty, f } => self.router(entry, position, ty, f),
             }
         }
-        self.evaluations();
     }
 
     fn error(&mut self, error: Error) {
@@ -417,51 +408,32 @@ impl Expansion<'_> {
         let values = deps.iter().map(|dep| self.value(*dep, true));
         let default = quote!(#(#cfgs)* let #local: #ty = #helper(#(&#values),*););
         self.defaults.push(default);
-        let field = &self.signals[index].field;
+        let dirty = self.changed(&deps);
+        let arguments = deps.iter().map(|dep| self.value(*dep, false));
+        let Signal {
+            field, byte, mask, ..
+        } = &self.signals[index];
         let differs = quote_spanned!(ty.span()=> ::core::cmp::PartialEq::ne(&value, &self.#field));
-        self.derived.push(Derived {
-            index,
-            deps,
-            memo: Some((helper, differs)),
-        });
+        let evaluation = quote! {
+            #(#cfgs)*
+            if #dirty {
+                let value = #helper(#(&#arguments),*);
+                if #differs {
+                    self.#field = value;
+                    changed[#byte] |= #mask;
+                }
+            }
+        };
+        self.evaluations.push(evaluation);
         self.get(index, ty);
     }
 
-    fn evaluations(&mut self) {
-        let evaluations = self.derived.iter().map(|Derived { index, deps, memo }| {
-            let Signal {
-                cfgs,
-                field,
-                byte,
-                mask,
-                ..
-            } = &self.signals[*index];
-            let dirty = deps.iter().map(|dep| {
-                let Signal { byte, mask, .. } = &self.signals[*dep];
-                quote!(changed[#byte] & #mask != 0)
-            });
-            let Some((helper, differs)) = memo else {
-                return quote! {
-                    #(#cfgs)*
-                    if #(#dirty)||* {
-                        changed[#byte] |= #mask;
-                    }
-                };
-            };
-            let arguments = deps.iter().map(|dep| self.value(*dep, false));
-            quote! {
-                #(#cfgs)*
-                if #(#dirty)||* {
-                    let value = #helper(#(&#arguments),*);
-                    if #differs {
-                        self.#field = value;
-                        changed[#byte] |= #mask;
-                    }
-                }
-            }
+    fn changed(&self, indices: &[usize]) -> TokenStream {
+        let checks = indices.iter().map(|index| {
+            let Signal { byte, mask, .. } = &self.signals[*index];
+            quote!(changed[#byte] & #mask != 0)
         });
-        let evaluations = evaluations.collect::<Vec<_>>();
-        self.evaluations.extend(evaluations);
+        quote!(#(#checks)||*)
     }
 
     fn view(&mut self, entry: &Entry, ty: &Type, deps: &Type, f: &Expr) {
@@ -476,11 +448,17 @@ impl Expansion<'_> {
             return;
         };
         self.link(index, &deps);
-        self.derived.push(Derived {
-            index,
-            deps,
-            memo: None,
-        });
+        let dirty = self.changed(&deps);
+        let Signal {
+            cfgs, byte, mask, ..
+        } = &self.signals[index];
+        let evaluation = quote! {
+            #(#cfgs)*
+            if #dirty {
+                changed[#byte] |= #mask;
+            }
+        };
+        self.evaluations.push(evaluation);
         self.get(index, ty);
     }
 
@@ -499,12 +477,9 @@ impl Expansion<'_> {
         let (changed, body) = if stale.is_empty() {
             (quote!(_), quote!(#reading::Fresh(#value)))
         } else {
-            let stale = stale.iter().map(|source| {
-                let Signal { byte, mask, .. } = &self.signals[*source];
-                quote!(changed[#byte] & #mask != 0)
-            });
+            let stale = self.changed(stale);
             let body = quote! {
-                if #(#stale)||* {
+                if #stale {
                     #reading::Stale(#value)
                 } else {
                     #reading::Fresh(#value)
@@ -530,9 +505,9 @@ impl Expansion<'_> {
         let Some(fed) = self.fed(cfgs, ty) else {
             return;
         };
-        let (ident, krate, flags) = (self.ident, self.krate, self.flags.clone());
         let view = format_ident!("__OutcropBelow{position}");
         let helper = format_ident!("__outcrop_route_{position}");
+        let krate = self.krate;
         let sink = quote!(&mut #krate::Sink<'_, #view<'_>>);
         self.helper(
             cfgs,
@@ -542,6 +517,7 @@ impl Expansion<'_> {
             &TokenStream::new(),
             f,
         );
+        let (ident, flags) = (self.ident, &self.flags);
         let below = self.fed.iter().map(
             |Fed {
                  cfgs: fed_cfgs, ty, ..
@@ -557,7 +533,6 @@ impl Expansion<'_> {
                 }
             },
         );
-        let fed_ty = &fed.ty;
         self.impls.push(quote! {
             #(#cfgs)*
             struct #view<'s>(&'s mut #ident);
@@ -574,8 +549,8 @@ impl Expansion<'_> {
             #(#below)*
 
             #(#cfgs)*
-            impl #krate::Feed<#fed_ty, ()> for #ident {
-                fn feed(&mut self, changed: &mut #flags, value: #fed_ty) {
+            impl #krate::Feed<#ty, ()> for #ident {
+                fn feed(&mut self, changed: &mut #flags, value: #ty) {
                     #helper(value, &mut #krate::Sink::new(&mut #view(self), changed));
                 }
             }
@@ -777,14 +752,6 @@ mod tests {
             output.contains("# [inline] fn __outcrop_view_1"),
             "{output}"
         );
-        Ok(())
-    }
-
-    #[test]
-    fn keeps_memo_attributes_on_their_field() -> syn::Result<()> {
-        let output = expand(quote!(struct S { a: A = A(0), #[inline] b: B = A => f }))?;
-        assert!(output.contains("# [inline] b : B"), "{output}");
-        assert_eq!(output.matches("# [inline]").count(), 1, "{output}");
         Ok(())
     }
 

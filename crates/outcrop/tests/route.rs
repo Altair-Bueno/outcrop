@@ -59,6 +59,17 @@ macro_rules! modbus_formation {
 }
 
 #[test]
+fn formations_of_routers_alone_can_be_fed_and_polled() {
+    let mut formation = Formation::new().route(|_: &u8, _| {});
+    let mut recorder = Recorder::default();
+
+    formation.feed(&1_u8);
+    formation.poll(&mut recorder);
+
+    assert_eq!(recorder.0, Vec::<String>::new());
+}
+
+#[test]
 fn routers_report_nothing_themselves() {
     let mut formation = modbus_formation!();
     let mut recorder = Recorder::default();

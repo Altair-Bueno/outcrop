@@ -71,19 +71,14 @@ impl Parse for Entry {
                     "inputs are stored, so they need a field name: `name: Type = initial`",
                 ));
             }
+            (Kind::Router { .. }, Some(name)) => {
+                return Err(syn::Error::new(
+                    name.span(),
+                    "routers have no field, so they cannot be named",
+                ));
+            }
             (kind, _) => kind,
         };
-        let fieldless = match kind {
-            Kind::Router { .. } => Some("routers"),
-            Kind::View { .. } => Some("views"),
-            Kind::Input { .. } | Kind::Memo { .. } => None,
-        };
-        if let (Some(fieldless), Some(name)) = (fieldless, &name) {
-            return Err(syn::Error::new(
-                name.span(),
-                format_args!("{fieldless} have no field, so they cannot be named"),
-            ));
-        }
         Ok(Self {
             cfgs,
             attrs,
