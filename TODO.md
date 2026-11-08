@@ -18,11 +18,6 @@ purpose.
       `Banked` are gone. A view whose dependency is missing now also fails the
       duplicate checks of the signals above it, one more follow-on error than
       before. `crates/outcrop/src/__private.rs`
-- [ ] **One `signal()` path for inputs and banks in `strata!`.** `bank()` still
-      repeats part of `signal()` (report, `signals` push) because `signal()`
-      takes a single concrete type. Taking a width and an optional slot generic
-      would let inputs be width 1. `crates/outcrop-macros/src/expand.rs`
-
 - [x] **Nest a `strata!` struct in a builder formation.**
       `Formation::nest(S::default())` deposits a `Nested<S>` layer, behind the
       `macros` feature: the struct's flags go on top of the builder's, its
@@ -76,3 +71,7 @@ purpose.
   `core::array::from_fn` could shift the baselines the workload measures.
 - The Aidoo example keeps its `From<u16>` unit impls and `bit()` matches written
   out: no `macro_rules` in the example, and `as` casts trip `as_conversions`.
+- `signal()` and `bank()` in `expand.rs` stay separate: since `bits()` and
+  `marker()` hold what they share, the rest differs (N bits, one generic impl
+  for every slot, reporting `Element`s, no per-signal duplicate check), and
+  merging them would need several bank-only parameters.
