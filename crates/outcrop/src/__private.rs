@@ -141,3 +141,58 @@ pub const fn lazy<V, C>(view: V, chain: C) -> (Lazy<V>, C) {
 }
 
 pub fn distinct<T, I, C: Pick<T, I>>(_: &C) {}
+
+#[cfg(test)]
+mod tests {
+    use core::hint::black_box;
+
+    use super::*;
+
+    impl Signal<u8, ()> for () {
+        const BIT: usize = 3;
+        const STALE: u8 = 0b0000_1000;
+        const MOVED: u8 = 0b0000_1010;
+        type Ref<'a>
+            = &'a u8
+        where
+            Self: 'a;
+
+        fn value(&self) -> &u8 {
+            &7
+        }
+    }
+
+    #[test]
+    fn masks_set_one_bit_in_the_byte_that_holds_it() {
+        assert_eq!(mask::<2>(black_box(0)), [0b0000_0001, 0]);
+        assert_eq!(mask::<2>(black_box(7)), [0b1000_0000, 0]);
+        assert_eq!(mask::<2>(black_box(8)), [0, 0b0000_0001]);
+        assert_eq!(mask::<2>(black_box(9)), [0, 0b0000_0010]);
+    }
+
+    #[test]
+    fn unions_hold_every_bit_of_every_mask() {
+        let masks = black_box([mask::<2>(3), mask(9), mask(3)]);
+
+        assert_eq!(union(masks), [0b0000_1000, 0b0000_0010]);
+        assert_eq!(union::<2, 0>(black_box([])), [0, 0]);
+    }
+
+    #[test]
+    fn masks_intersect_when_they_share_a_bit_in_any_byte() {
+        let changed = black_box([0b0000_0100, 0b0000_0010]);
+
+        assert!(intersects(&changed, &black_box(mask(9))));
+        assert!(intersects(&changed, &black_box(mask(2))));
+        assert!(!intersects(&changed, &black_box(mask(3))));
+        assert!(!intersects(&changed, &black_box([0, 0])));
+    }
+
+    #[test]
+    fn signal_constants_are_read_through_the_helpers() {
+        assert_eq!(bit::<(), u8, ()>(), 3);
+        assert_eq!(stale::<(), u8, ()>(), 0b0000_1000);
+        assert_eq!(moved::<(), u8, ()>(), 0b0000_1010);
+        assert_eq!(*value::<(), u8, ()>(&black_box(())), 7);
+    }
+}
