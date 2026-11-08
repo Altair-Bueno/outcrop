@@ -178,6 +178,11 @@ where
     V: Visit<E::Signal>,
     Tail: LayeredImpl,
 {
+    #[expect(
+        clippy::inline_always,
+        reason = "inlined before argument promotion hoists the signal's load above `changed.get`"
+    )]
+    #[inline(always)]
     fn report(&self, tail: &Tail, changed: &Grown<Tail>, visitor: &mut V) {
         if changed.get(Tail::LEN) {
             visitor.visit(self.value(tail).borrow());

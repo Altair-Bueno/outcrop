@@ -33,17 +33,13 @@ purpose.
       element; the builder takes the byte count explicitly, as
       `bank::<13, _, _, _>([0_u16; 101])`, checked against `N.div_ceil(8)` at
       compile time. `crates/outcrop/src/flags.rs`
-- [ ] **Recover the builder's codegen after the `Layer` refactor.**
-      `tools/measure`, before against after: builder code +302 B (12094 to
-      12396, +2.5%), wasm fuel +69 to +77 per round in every builder scenario
-      (+1 to 2%), peak stack +16 to +32 B; `strata!` unchanged. The source does
-      the same work: `builder_idle`, where everything is inlined, has exactly 69
-      more instructions, 31 of them `i32.const 65535` + `i32.and` pairs, LLVM
-      keeping the 16-bit flags word in a local and masking it where it used to
-      reload it, plus 5 more locals. `#[inline]` on the layer methods made it
-      worse (+570 B, same fuel). Next: compare the LLVM IR of `poll` and the
-      feeds before and after, and try evaluating through `Layer::below_mut` in a
-      different order or without the `&Tail` argument.
+- [x] **Recover the builder's codegen after the `Layer` refactor.** LLVM's
+      argument promotion turned the `&Tail` that the single-signal
+      `LayerReport::report` reads one field through into a value loaded ahead of
+      its `changed.get` branch, which the backend then masked.
+      `#[inline(always)]` on that one method brings builder code back to 12110 B
+      (12094 B before the refactor, 12396 B after) and peak stack to its old
+      values. A blanket `#[inline]` on the layer methods made it worse.
       `crates/outcrop/src/stratum.rs`
 - [ ] **Report banks by byte.** Bank reports test every element's bit on every
       poll that reports anything; skipping zero bytes and walking set bits with
