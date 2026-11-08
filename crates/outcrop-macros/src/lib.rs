@@ -97,9 +97,13 @@ struct Router {
 /// taking each argument by reference for any lifetime: a path such as
 /// `Celsius::from` whose `From<&Kelvin>` impl fixes the lifetime is rejected,
 /// and a closure `|k| Celsius::from(k)` is accepted. Two differences remain:
-/// `f` cannot capture anything, because the struct must name every type it
-/// holds, and a memo or view may have any number of dependencies, where
-/// `Formation` allows eight.
+///
+/// - `f` cannot capture anything, because the struct must name every type it
+///   holds. For a memo or view that is no loss, since it should depend only
+///   on its arguments, and a value that varies belongs in an input. A router
+///   that keeps state between feeds can only be built with `Formation`.
+/// - A memo or view may have any number of dependencies, where `Formation`
+///   allows eight.
 ///
 /// A signal can only depend on signals declared above it:
 ///

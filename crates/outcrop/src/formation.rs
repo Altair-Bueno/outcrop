@@ -126,6 +126,12 @@ impl<S: Layered> Formation<S> {
     /// be inputs, memos or views. The initial value is computed immediately
     /// and reported by the next [`poll`](Self::poll), which recomputes it
     /// whenever a dependency changed.
+    ///
+    /// `f` must depend only on its arguments. A memo is recomputed when a
+    /// dependency changes and at no other time, so nothing else `f` reads is
+    /// tracked: a captured atomic or `Cell` that changes behind the
+    /// formation's back leaves the memo out of date, which is a logic error
+    /// the formation cannot detect. Values that vary belong in inputs.
     #[must_use]
     pub fn memo<F, M, I>(self, f: F) -> Deposited<Memo<F, M, F::Output>, S>
     where
@@ -158,6 +164,11 @@ impl<S: Layered> Formation<S> {
     /// Its value is never compared, so it needs no `PartialEq`:
     /// [`poll`](Self::poll) reports it whenever a dependency changed, even if
     /// its own value did not, and memos above it are then recomputed.
+    ///
+    /// As for a memo, `f` must depend only on its arguments: [`get`](Self::get)
+    /// computes `f` afresh, but [`poll`](Self::poll) only reports a view when
+    /// a dependency changed, so a change in anything else `f` reads goes
+    /// unreported.
     #[must_use]
     pub fn view<F, M, I>(self, f: F) -> Deposited<View<F, M, F::Output>, S>
     where
