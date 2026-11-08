@@ -1,4 +1,5 @@
 use crate::__private::Signal;
+use crate::flags::Chunk;
 use crate::flags::Used;
 use crate::plumbing::Bits;
 use crate::plumbing::Layer;
@@ -60,7 +61,7 @@ where
 
 impl<T, I, S, Tail, const N: usize> Select<T, Within<I>> for (Nested<S>, Tail)
 where
-    S: Signal<T, I, Flags = [u8; N]>,
+    S: Signal<T, I, Flags = Chunk<N>>,
     Tail: LayeredImpl,
 {
     const INDEX: usize = <Tail::Flags as Bits>::BITS + S::BIT;
@@ -74,11 +75,11 @@ where
     }
 
     fn stale<Fl: Bits>(changed: &Fl) -> bool {
-        intersects::<Tail, Fl>(changed, &S::STALE)
+        intersects::<Tail, Fl>(changed, S::STALE.bytes())
     }
 
     fn moved<Fl: Bits>(changed: &Fl) -> bool {
-        intersects::<Tail, Fl>(changed, &S::MOVED)
+        intersects::<Tail, Fl>(changed, S::MOVED.bytes())
     }
 }
 

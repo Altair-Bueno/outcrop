@@ -142,7 +142,7 @@ impl Declaration {
             #(#bits)*
             const #count: usize = #next;
 
-            type #flags = [::core::primitive::u8; #count.div_ceil(8)];
+            type #flags = #private::Chunk<{ #count.div_ceil(8) }>;
 
             #(#helpers)*
 
@@ -159,7 +159,7 @@ impl Declaration {
             impl #krate::Strata for #ident {
                 type Flags = #flags;
 
-                const CHANGED: #flags = [::core::primitive::u8::MAX; #count.div_ceil(8)];
+                const CHANGED: #flags = #private::all();
 
                 fn evaluate(&mut self, #changed_flags: &mut #flags) {
                     #(#evaluations)*
@@ -782,9 +782,9 @@ mod tests {
             b: outcrop::B = A => f,
             C = (A, outcrop::B) => g,
         }))?;
-        assert!(output.contains("a : A"), "{output}");
+        assert!(output.contains("a : A ,"), "{output}");
         assert!(output.contains("b : outcrop :: B"), "{output}");
-        assert!(!output.contains(": C"), "{output}");
+        assert!(!output.contains(" : C ,"), "{output}");
         Ok(())
     }
 

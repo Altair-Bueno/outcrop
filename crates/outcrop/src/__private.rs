@@ -6,6 +6,7 @@ use core::marker::PhantomData;
 use crate::bank::Element;
 use crate::bank::Slot;
 use crate::bank::Write;
+pub use crate::flags::Chunk;
 use crate::plumbing::ComputeImpl;
 use crate::plumbing::Select;
 use crate::reading::Reading;
@@ -43,12 +44,12 @@ pub fn value<S: Signal<T, I>, T, I>(strata: &S) -> S::Ref<'_> {
     strata.value()
 }
 
-pub fn get<'s, S, T, I, const N: usize>(strata: &'s S, changed: &[u8; N]) -> Reading<S::Ref<'s>>
+pub fn get<'s, S, T, I, const N: usize>(strata: &'s S, changed: &Chunk<N>) -> Reading<S::Ref<'s>>
 where
-    S: Signal<T, I, Flags = [u8; N]>,
+    S: Signal<T, I, Flags = Chunk<N>>,
 {
     let value = strata.value();
-    if intersects(changed, &S::STALE) {
+    if changed.intersects(&S::STALE) {
         Reading::Stale(value)
     } else {
         Reading::Fresh(value)
@@ -57,39 +58,24 @@ where
 
 pub fn routed<S: Feed<T, I>, T, I>() {}
 
-pub const fn mask<const N: usize>(bit: usize) -> [u8; N] {
-    let mut mask = [0; N];
-    mask[bit / 8] = 1 << (bit % 8);
-    mask
+pub const fn all<const N: usize>() -> Chunk<N> {
+    Chunk::ALL
 }
 
-pub const fn union<const N: usize, const M: usize>(masks: [[u8; N]; M]) -> [u8; N] {
-    let mut union = [0; N];
-    let mut mask = 0;
-    while mask < M {
-        let mut byte = 0;
-        while byte < N {
-            union[byte] |= masks[mask][byte];
-            byte += 1;
-        }
-        mask += 1;
-    }
-    union
+pub const fn mask<const N: usize>(bit: usize) -> Chunk<N> {
+    Chunk::bit(bit)
 }
 
-pub fn intersects<const N: usize>(changed: &[u8; N], mask: &[u8; N]) -> bool {
-    changed
-        .iter()
-        .zip(mask)
-        .any(|(changed, mask)| changed & mask != 0)
+pub const fn union<const N: usize, const M: usize>(masks: [Chunk<N>; M]) -> Chunk<N> {
+    Chunk::union(masks)
 }
 
-pub const fn is_set<const N: usize>(changed: &[u8; N], bit: usize) -> bool {
-    changed[bit / 8] & 1 << (bit % 8) != 0
+pub fn is_set<const N: usize>(changed: &Chunk<N>, bit: usize) -> bool {
+    changed.get(bit)
 }
 
-pub const fn set<const N: usize>(changed: &mut [u8; N], bit: usize) {
-    changed[bit / 8] |= 1 << (bit % 8);
+pub fn set<const N: usize>(changed: &mut Chunk<N>, bit: usize) {
+    changed.set(bit);
 }
 
 #[diagnostic::on_unimplemented(
@@ -119,18 +105,18 @@ pub fn read<E: Slot, const N: usize>(bank: &[E::Item; N]) -> E {
 
 pub fn write<T: PartialEq + Clone, const N: usize>(
     bank: &mut [T],
-    changed: &mut [u8; N],
+    changed: &mut Chunk<N>,
     base: usize,
     write: Write<'_, T>,
 ) {
-    write.apply(bank, |index| set(changed, base + index));
+    write.apply(bank, |index| changed.set(base + index));
 }
 
-pub fn report<V, T, const N: usize>(bank: &[T], changed: &[u8; N], base: usize, visitor: &mut V)
+pub fn report<V, T, const N: usize>(bank: &[T], changed: &Chunk<N>, base: usize, visitor: &mut V)
 where
     V: for<'a> Visit<Element<'a, T>>,
 {
-    Element::report(bank, changed, base, visitor);
+    Element::report(bank, changed.bytes(), base, visitor);
 }
 
 pub const fn input<T, C>(value: T, chain: C) -> (Input<T>, C) {
@@ -195,28 +181,28 @@ mod tests {
 
     #[test]
     fn masks_set_one_bit_in_the_byte_that_holds_it() {
-        assert_eq!(mask::<2>(black_box(0)), [0b0000_0001, 0]);
-        assert_eq!(mask::<2>(black_box(7)), [0b1000_0000, 0]);
-        assert_eq!(mask::<2>(black_box(8)), [0, 0b0000_0001]);
-        assert_eq!(mask::<2>(black_box(9)), [0, 0b0000_0010]);
+        assert_eq!(mask::<2>(black_box(0)).bytes(), &[0b0000_0001, 0]);
+        assert_eq!(mask::<2>(black_box(7)).bytes(), &[0b1000_0000, 0]);
+        assert_eq!(mask::<2>(black_box(8)).bytes(), &[0, 0b0000_0001]);
+        assert_eq!(mask::<2>(black_box(9)).bytes(), &[0, 0b0000_0010]);
     }
 
     #[test]
     fn unions_hold_every_bit_of_every_mask() {
         let masks = black_box([mask::<2>(3), mask(9), mask(3)]);
 
-        assert_eq!(union(masks), [0b0000_1000, 0b0000_0010]);
-        assert_eq!(union::<2, 0>(black_box([])), [0, 0]);
+        assert_eq!(union(masks).bytes(), &[0b0000_1000, 0b0000_0010]);
+        assert_eq!(union::<2, 0>(black_box([])).bytes(), &[0, 0]);
     }
 
     #[test]
     fn masks_intersect_when_they_share_a_bit_in_any_byte() {
-        let changed = black_box([0b0000_0100, 0b0000_0010]);
+        let changed = black_box(union([mask::<2>(2), mask(9)]));
 
-        assert!(intersects(&changed, &black_box(mask(9))));
-        assert!(intersects(&changed, &black_box(mask(2))));
-        assert!(!intersects(&changed, &black_box(mask(3))));
-        assert!(!intersects(&changed, &black_box([0, 0])));
+        assert!(changed.intersects(&black_box(mask(9))));
+        assert!(changed.intersects(&black_box(mask(2))));
+        assert!(!changed.intersects(&black_box(mask(3))));
+        assert!(!changed.intersects(&black_box(union([]))));
     }
 
     #[test]

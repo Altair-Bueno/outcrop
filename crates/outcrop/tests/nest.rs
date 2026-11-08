@@ -184,3 +184,25 @@ fn signals_around_a_nested_struct_keep_their_own_bits() {
 
     assert_eq!(poll(&mut formation), ["Label(\"b\")", "Offset(2)"]);
 }
+
+outcrop::strata! {
+    struct Wide {
+        #[strata(bank)]
+        registers: [u16; 300] = [0; 300],
+    }
+}
+
+#[test]
+fn structs_of_any_width_are_nested() {
+    let mut formation = Formation::new()
+        .nest(Wide::default())
+        .view(|r: &Register<299>| Corrected(i32::from(r.0)));
+    poll(&mut formation);
+
+    formation.feed(Write::new(299, &[4]));
+
+    assert_eq!(
+        poll(&mut formation),
+        ["Element { index: 299, value: 4 }", "Corrected(4)"]
+    );
+}

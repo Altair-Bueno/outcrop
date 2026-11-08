@@ -26,14 +26,12 @@ purpose.
       as planned: no dependencies on the builder beneath it, and a type declared
       twice, by nesting the same struct twice or otherwise, is ambiguous when
       depended on rather than rejected at `nest`. `crates/outcrop/src/nested.rs`
-- [ ] **Pack `strata!` flags in a `Chunk`.** `strata!` still stores its flags
-      as a bare `[u8; N]`, so nesting it needs a second `Bits` impl for
-      `(Tail, [u8; N])` next to the one for `(Tail, Chunk<N>)`. `Bits` requires
-      `Default`, which arrays only have up to 32 bytes, so `nest` takes structs
-      of at most 256 signal bits while builder banks have no limit. Emitting
-      `Chunk<N>` and moving `__private`'s `is_set`, `set`, `mask` and
-      `intersects` onto it leaves one flag representation for both APIs.
-      `crates/outcrop/src/flags.rs`, `crates/outcrop-macros/src/expand.rs`
+- [x] **Pack `strata!` flags in a `Chunk`.** `strata!` declares its flags as
+      `Chunk<N>`, the type builder banks use, so nesting a struct reuses the
+      `Bits` impl of `(Tail, Chunk<N>)` and takes structs of any width, where
+      the bare `[u8; N]` it replaced capped them at 256 signal bits. `Chunk`
+      holds the mask, union and intersection `__private` delegates to. Code
+      size, fuel and stack unchanged. `crates/outcrop/src/flags.rs`
 
 ## Performance
 
