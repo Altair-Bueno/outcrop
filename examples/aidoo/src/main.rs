@@ -1,7 +1,6 @@
 //! An Airzone Aidoo driving a direct expansion unit over Modbus.
 //!
 //! Register map: Aidoo Modbus manual, "Registers for Direct Expansion units".
-#![recursion_limit = "256"]
 #![expect(
     clippy::trivially_copy_pass_by_ref,
     reason = "derived signals receive their dependencies by reference"
@@ -23,10 +22,10 @@ use core::fmt::Debug;
 
 use outcrop::Formation;
 use outcrop::Visit;
+use outcrop::Write;
 
 use crate::aidoo::Aidoo;
 use crate::capabilities::SetpointRange;
-use crate::register::Block;
 
 struct Print;
 
@@ -48,35 +47,17 @@ fn main() {
         0b1_1111, 0b111_1101, 0x1131, 300, 180, 300, 160, 300, 160, 300, 160, 300, 160,
     ];
     let sensors = [0xFFE2_u16, 205, 120, 110, 450, 750, 120, 150, 98, 245, 70];
-    aidoo.feed(&Block {
-        start: 0,
-        words: &status,
-    });
-    aidoo.feed(&Block {
-        start: 14,
-        words: &capabilities,
-    });
-    aidoo.feed(&Block {
-        start: 35,
-        words: &sensors,
-    });
-    aidoo.feed(&Block {
-        start: 53,
-        words: &[220, 2, 0, 1, 8, 2, 0, 0],
-    });
-    aidoo.feed(&Block {
-        start: 73,
-        words: &[0x1215, 0x0001, 0x1CAC],
-    });
+    aidoo.feed(Write::new(0, &status));
+    aidoo.feed(Write::new(14, &capabilities));
+    aidoo.feed(Write::new(35, &sensors));
+    aidoo.feed(Write::new(53, &[220, 2, 0, 1, 8, 2, 0, 0]));
+    aidoo.feed(Write::new(73, &[0x1215, 0x0001, 0x1CAC]));
 
     println!("first poll:");
     aidoo.poll(&mut Print);
 
     // Someone switches the unit to heating at the wall.
-    aidoo.feed(&Block {
-        start: 0,
-        words: &[1, 210, 215, 3, 50],
-    });
+    aidoo.feed(Write::new(0, &[1, 210, 215, 3, 50]));
 
     println!("after switching to heat:");
     aidoo.poll(&mut Print);

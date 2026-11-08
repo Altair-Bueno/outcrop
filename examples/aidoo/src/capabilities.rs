@@ -132,36 +132,36 @@ impl From<&register::AvailableModes> for AvailableModes {
     }
 }
 
+/// Setpoint limits of one mode, read from its maximum and minimum registers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Limits {
     min: DeciCelsius,
     max: DeciCelsius,
 }
 
-/// Setpoint limits of one mode, read from its maximum and minimum registers.
-macro_rules! limits {
-    ($($name:ident = $max:ty, $min:ty;)*) => {$(
-        #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-        pub(crate) struct $name(Limits);
-
-        impl $name {
-            pub(crate) fn new(max: &$max, min: &$min) -> Self {
-                Self(Limits {
-                    min: DeciCelsius::from(min.0),
-                    max: DeciCelsius::from(max.0),
-                })
-            }
+impl Limits {
+    pub(crate) fn new(max: u16, min: u16) -> Self {
+        Self {
+            min: DeciCelsius::from(min),
+            max: DeciCelsius::from(max),
         }
-    )*};
+    }
 }
 
-limits! {
-    CoolLimits = register::CoolMax, register::CoolMin;
-    HeatLimits = register::HeatMax, register::HeatMin;
-    AutoLimits = register::AutoMax, register::AutoMin;
-    FanLimits = register::FanMax, register::FanMin;
-    DryLimits = register::DryMax, register::DryMin;
-}
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CoolLimits(pub(crate) Limits);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct HeatLimits(pub(crate) Limits);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct AutoLimits(pub(crate) Limits);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct FanLimits(pub(crate) Limits);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct DryLimits(pub(crate) Limits);
 
 /// Limits of the setpoint in the current mode, if there is one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
