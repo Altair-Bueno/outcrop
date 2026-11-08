@@ -67,6 +67,14 @@ type Deposited<E, S> = Formation<(E, S)>;
 /// # use outcrop::Formation;
 /// let formation = Formation::new().route(|_: &u8, _| {}).route(|_: &u8, _| {});
 /// ```
+///
+/// Finding a signal by its type takes one level of trait resolution per
+/// signal above it, so a formation of around 120 signals or more exceeds the
+/// compiler's default recursion limit of 128. The compiler reports it as
+/// E0275, "overflow evaluating the requirement", and newer compilers already
+/// warn that exceeding it will become a hard error. Raise the limit in the
+/// crate that builds the formation, with `#![recursion_limit = "256"]`.
+/// `strata!` is subject to the same limit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Formation<S: Strata = ()> {
     changed: S::Flags,
