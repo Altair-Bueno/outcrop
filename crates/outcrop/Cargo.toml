@@ -19,3 +19,7 @@ required-features = ["macros"]
 
 [lints]
 workspace = true
+
+[[example]]
+name = "routers"
+required-features = ["macros"]

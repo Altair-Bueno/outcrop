@@ -1,4 +1,3 @@
-use alloc::string::String;
 use alloc::vec::Vec;
 
 use proc_macro2::Span;
@@ -11,7 +10,6 @@ use syn::Attribute;
 use syn::Error;
 use syn::Expr;
 use syn::Ident;
-use syn::Pat;
 use syn::Path;
 use syn::Type;
 use syn::spanned::Spanned as _;
@@ -28,50 +26,36 @@ use crate::View;
 
 struct Signal<'d> {
     attrs: &'d [Attribute],
-    key: String,
-    storage: Storage<'d>,
-    bit: Ident,
-    stale: Vec<usize>,
-    moved: Vec<usize>,
+    field: Option<&'d Ident>,
 }
 
-enum Storage<'d> {
-    Field(&'d Ident),
-    Computed { helper: Ident, deps: Vec<usize> },
+struct Fed<'d> {
+    attrs: &'d [Attribute],
+    ty: TokenStream,
+    marker: Ident,
 }
 
 fn local(field: &Ident) -> Ident {
     format_ident!("__outcrop_{field}", span = Span::mixed_site())
 }
 
-impl Signal<'_> {
-    fn is_changed(&self) -> TokenStream {
-        let bit = &self.bit;
-        quote!(changed[#bit / 8] & 1 << (#bit % 8) != 0)
-    }
-
-    fn mark(&self) -> TokenStream {
-        let bit = &self.bit;
-        quote!(changed[#bit / 8] |= 1 << (#bit % 8);)
-    }
-}
-
-struct Fed<'d> {
-    attrs: &'d [Attribute],
-    key: String,
-    ty: &'d Type,
+fn mixed(name: &str) -> Ident {
+    Ident::new(name, Span::mixed_site())
 }
 
 struct Expansion<'d> {
     ident: &'d Ident,
     krate: &'d Path,
+    private: TokenStream,
     flags: Ident,
+    chain: Ident,
     next: TokenStream,
     bits: Vec<TokenStream>,
     signals: Vec<Signal<'d>>,
     fed: Vec<Fed<'d>>,
     fields: Vec<TokenStream>,
-    defaults: Vec<TokenStream>,
+    builds: Vec<TokenStream>,
+    takes: Vec<TokenStream>,
     helpers: Vec<TokenStream>,
     evaluations: Vec<TokenStream>,
     impls: Vec<TokenStream>,
@@ -88,17 +72,20 @@ impl ToTokens for Declaration {
 
 impl Declaration {
     fn expand(&self) -> TokenStream {
-        let flags = Ident::new("__OutcropFlags", Span::mixed_site());
+        let krate = &self.krate;
         let mut expansion = Expansion {
             ident: &self.ident,
-            krate: &self.krate,
-            flags: flags.clone(),
+            krate,
+            private: quote!(#krate::__private),
+            flags: mixed("__OutcropFlags"),
+            chain: mixed("__outcrop_chain"),
             next: quote!(0usize),
             bits: Vec::new(),
             signals: Vec::new(),
             fed: Vec::new(),
             fields: Vec::new(),
-            defaults: Vec::new(),
+            builds: Vec::new(),
+            takes: Vec::new(),
             helpers: Vec::new(),
             evaluations: Vec::new(),
             impls: Vec::new(),
@@ -112,14 +99,17 @@ impl Declaration {
         }
         let Self { attrs, vis, .. } = self;
         let cfgs = attrs.iter().filter(|attr| attr.path().is_ident("cfg"));
-        let count = Ident::new("__OUTCROP_BITS", Span::mixed_site());
+        let count = mixed("__OUTCROP_BITS");
         let Expansion {
             ident,
             krate,
+            flags,
+            chain,
             next,
             bits,
             fields,
-            defaults,
+            builds,
+            takes,
             helpers,
             evaluations,
             impls,
@@ -129,12 +119,11 @@ impl Declaration {
             ..
         } = expansion;
         let names = signals.iter().filter_map(|signal| {
-            let Storage::Field(field) = &signal.storage else {
-                return None;
-            };
+            let field = signal.field?;
             let (attrs, local) = (&signal.attrs, local(field));
             Some(quote!(#(#attrs)* #field: #local))
         });
+        let takes = takes.iter().rev();
         let changed_flags = if evaluations.is_empty() {
             quote!(_)
         } else {
@@ -157,7 +146,10 @@ impl Declaration {
 
             impl ::core::default::Default for #ident {
                 fn default() -> Self {
-                    #(#defaults)*
+                    let #chain = ();
+                    #(#builds)*
+                    #(#takes)*
+                    let () = #chain;
                     Self { #(#names,)* }
                 }
             }
@@ -200,25 +192,18 @@ impl<'d> Expansion<'d> {
         }
     }
 
-    fn error(&mut self, error: Error) {
-        match &mut self.errors {
-            Some(errors) => errors.combine(error),
-            None => self.errors = Some(error),
-        }
-    }
-
-    fn signal(&mut self, attrs: &'d [Attribute], ty: &Type, storage: Storage<'d>) -> Option<usize> {
-        let key = key(ty);
-        if self.signals.iter().any(|signal| signal.key == key) {
-            self.error(Error::new(
-                ty.span(),
-                format_args!("`{key}` is already a signal of this formation"),
-            ));
-            return None;
-        }
+    /// Declares the change bit, index type and report of a new signal, and
+    /// returns its bit and index type.
+    fn signal(
+        &mut self,
+        attrs: &'d [Attribute],
+        ty: &Type,
+        field: Option<&'d Ident>,
+    ) -> (Ident, Ident) {
         let index = self.signals.len();
         let bit = format_ident!("__OUTCROP_BIT{index}", span = Span::mixed_site());
-        let krate = self.krate;
+        let marker = format_ident!("__OutcropSignal{index}", span = Span::mixed_site());
+        let (krate, private) = (self.krate, &self.private);
         let visit = quote!(#krate::Visit<#ty>);
         let next = &self.next;
         self.bits.push(quote!(const #bit: usize = #next;));
@@ -251,51 +236,103 @@ impl<'d> Expansion<'d> {
             self.next = quote!(#bit + #compiled!(present) as usize);
             self.visits.push(bound.into_token_stream());
         }
-        self.signals.push(Signal {
-            attrs,
-            key,
-            storage,
-            bit,
-            stale: Vec::new(),
-            moved: Vec::from([index]),
+        let (ident, flags, chain) = (self.ident, &self.flags, &self.chain);
+        let signal = quote!(#private::Signal<#ty, #marker>);
+        let reading = quote!(#krate::Reading);
+        self.impls.push(quote! {
+            #(#attrs)*
+            #[doc(hidden)]
+            #[allow(unnameable_types, missing_docs, missing_debug_implementations)]
+            pub struct #marker;
+
+            #(#attrs)*
+            impl #krate::Get<#ty, #marker> for #ident {
+                type Ref<'a> = <Self as #signal>::Ref<'a> where Self: 'a;
+
+                fn get(&self, changed: &#flags) -> #reading<Self::Ref<'_>> {
+                    let value = <Self as #signal>::value(self);
+                    if #private::intersects(changed, &<Self as #signal>::STALE) {
+                        #reading::Stale(value)
+                    } else {
+                        #reading::Fresh(value)
+                    }
+                }
+            }
         });
-        let value = self.value(index, false);
-        let is_changed = self.signals[index].is_changed();
         self.reports.push(quote! {
             #(#attrs)*
-            if #is_changed {
-                <__OutcropVisitor as #visit>::visit(visitor, &#value);
+            if #private::is_set(changed, #bit) {
+                <__OutcropVisitor as #visit>::visit(
+                    visitor,
+                    ::core::borrow::Borrow::<#ty>::borrow(&<Self as #signal>::value(self)),
+                );
             }
         });
-        Some(index)
+        self.builds.push(quote! {
+            #(#attrs)*
+            #private::distinct::<#ty, _, _>(&#chain);
+        });
+        self.signals.push(Signal { attrs, field });
+        (bit, marker)
     }
 
-    fn value(&self, index: usize, from_locals: bool) -> TokenStream {
-        match &self.signals[index].storage {
-            Storage::Computed { helper, deps } => {
-                let arguments = deps.iter().map(|dep| self.value(*dep, from_locals));
-                quote!(#helper(#(&#arguments),*))
+    /// Implements the lookup of a signal by its type, used by the signals
+    /// above it, `get` and `poll`.
+    fn lookup(
+        &mut self,
+        attrs: &[Attribute],
+        ty: &Type,
+        (bit, marker): (&Ident, &Ident),
+        (stale, moved): (TokenStream, TokenStream),
+        (output, value): (TokenStream, TokenStream),
+    ) {
+        let (ident, flags, private) = (self.ident, &self.flags, &self.private);
+        self.impls.push(quote! {
+            #(#attrs)*
+            impl #private::Signal<#ty, #marker> for #ident {
+                const BIT: usize = #bit;
+                const STALE: #flags = #stale;
+                const MOVED: #flags = #moved;
+                type Ref<'a> = #output where Self: 'a;
+
+                fn value(&self) -> Self::Ref<'_> {
+                    #value
+                }
             }
-            Storage::Field(field) if from_locals => local(field).into_token_stream(),
-            Storage::Field(field) => quote!(self.#field),
-        }
+        });
     }
 
-    fn dependencies(&mut self, deps: &'d Type) -> (Vec<&'d Type>, Vec<usize>) {
-        let deps = dependencies(deps);
-        let mut indices = Vec::new();
-        for &dep in &deps {
-            let key = key(dep);
-            if let Some(index) = self.signals.iter().position(|signal| signal.key == key) {
-                indices.push(index);
-            } else {
-                self.error(Error::new(
-                    dep.span(),
-                    format_args!("`{key}` is not a signal declared above"),
-                ));
-            }
-        }
-        (deps, indices)
+    /// The current value of each dependency, borrowed from `self`.
+    fn arguments(&self, deps: &[&Type]) -> Vec<TokenStream> {
+        let private = &self.private;
+        deps.iter()
+            .map(|dep| {
+                quote! {
+                    ::core::borrow::Borrow::<#dep>::borrow(&#private::value::<Self, #dep, _>(self))
+                }
+            })
+            .collect()
+    }
+
+    /// The value of each dependency, picked from the signals built so far.
+    fn picks(&self, deps: &[&Type], chain: &TokenStream) -> Vec<TokenStream> {
+        let private = &self.private;
+        deps.iter()
+            .map(|dep| {
+                quote! {
+                    ::core::borrow::Borrow::<#dep>::borrow(&#private::pick::<#dep, _, _>(#chain))
+                }
+            })
+            .collect()
+    }
+
+    /// Whether any dependency changed since the last poll.
+    fn dirty(&self, deps: &[&Type]) -> TokenStream {
+        let private = &self.private;
+        let checks = deps
+            .iter()
+            .map(|dep| quote!(#private::is_set(changed, #private::bit::<Self, #dep, _>())));
+        quote!(#(#checks)||*)
     }
 
     fn helper(
@@ -305,14 +342,12 @@ impl<'d> Expansion<'d> {
         name: &Ident,
         parameters: &[TokenStream],
         output: &TokenStream,
+        bound: &TokenStream,
     ) {
         let Function { attrs: targeted, f } = function;
-        match self::function(name, parameters, output, f) {
-            Ok(function) => self
-                .helpers
-                .push(quote!(#(#attrs)* #(#[#targeted])* #function)),
-            Err(error) => self.error(error),
-        }
+        let function = self::function(name, parameters, output, f, bound);
+        self.helpers
+            .push(quote!(#(#attrs)* #(#[#targeted])* #function));
     }
 
     fn derivation(
@@ -324,7 +359,8 @@ impl<'d> Expansion<'d> {
         ty: &Type,
     ) {
         let parameters = deps.iter().map(|dep| quote!(&#dep)).collect::<Vec<_>>();
-        self.helper(attrs, function, name, &parameters, &quote!(-> #ty));
+        let bound = quote!(::core::ops::Fn(#(#parameters),*) -> #ty);
+        self.helper(attrs, function, name, &parameters, &quote!(-> #ty), &bound);
     }
 
     fn field(&mut self, attrs: &[Attribute], field: &Field, ty: &Type) {
@@ -336,69 +372,53 @@ impl<'d> Expansion<'d> {
             .push(quote!(#(#attrs)* #(#[#targeted])* #name: #ty));
     }
 
-    fn link(&mut self, index: usize, deps: &[usize], memo: bool) {
-        let mut stale = Vec::new();
-        let mut moved = Vec::from([index]);
-        for &dep in deps {
-            let signal = &self.signals[dep];
-            if memo {
-                stale.extend_from_slice(&signal.moved);
-            } else {
-                stale.extend_from_slice(&signal.stale);
-                moved.extend_from_slice(&signal.moved);
-            }
-        }
-        if memo {
-            moved.extend_from_slice(&stale);
-        }
-        for list in [&mut stale, &mut moved] {
-            list.sort_unstable();
-            list.dedup();
-        }
-        let signal = &mut self.signals[index];
-        signal.stale = stale;
-        signal.moved = moved;
-    }
-
-    fn fed(&mut self, attrs: &'d [Attribute], ty: &'d Type) -> Option<Fed<'d>> {
-        let key = key(ty);
-        if self.fed.iter().any(|fed| fed.key == key) {
-            self.error(Error::new(
-                ty.span(),
-                format_args!("`{key}` is already fed to this formation"),
-            ));
-            return None;
-        }
-        Some(Fed { attrs, key, ty })
+    /// Moves a stored signal out of the chain built by `Default`.
+    fn take(&mut self, attrs: &[Attribute], local: Option<&Ident>) {
+        let (private, chain) = (&self.private, &self.chain);
+        let pattern = local.map_or_else(|| quote!(_), |local| quote!(#private::Stored(#local)));
+        self.takes
+            .push(quote!(#(#attrs)* let (#pattern, #chain) = #chain;));
     }
 
     fn input(&mut self, attrs: &'d [Attribute], input: &'d Input) {
         let Input { field, ty, init } = input;
-        let storage = Storage::Field(&field.name);
-        let (Some(index), Some(fed)) = (self.signal(attrs, ty, storage), self.fed(attrs, ty))
-        else {
-            return;
-        };
+        let name = &field.name;
+        let local = local(name);
+        let (private, chain) = (self.private.clone(), self.chain.clone());
+        self.builds.push(quote! {
+            #(#attrs)*
+            let #local: #ty = #init;
+            #(#attrs)*
+            let #chain = #private::stored(#local, #chain);
+        });
+        let (bit, marker) = self.signal(attrs, ty, Some(name));
         self.field(attrs, field, ty);
+        self.lookup(
+            attrs,
+            ty,
+            (&bit, &marker),
+            (quote!(#private::union([])), quote!(#private::mask(#bit))),
+            (quote!(&'a #ty), quote!(&self.#name)),
+        );
         let (ident, krate, flags) = (self.ident, self.krate, &self.flags);
-        let (name, local, mark) = (&field.name, local(&field.name), self.signals[index].mark());
         let ne = quote_spanned!(ty.span()=> ::core::cmp::PartialEq::ne);
-        let differs = quote!(#ne(&self.#name, &value));
         self.impls.push(quote! {
             #(#attrs)*
-            impl #krate::Feed<#ty, ()> for #ident {
+            impl #krate::Feed<#ty, #marker> for #ident {
                 fn feed(&mut self, changed: &mut #flags, value: #ty) {
-                    if #differs {
+                    if #ne(&self.#name, &value) {
                         self.#name = value;
-                        #mark
+                        #private::set(changed, #bit);
                     }
                 }
             }
         });
-        self.defaults
-            .push(quote!(#(#attrs)* let #local: #ty = #init;));
-        self.fed.push(fed);
-        self.get(index, ty);
+        self.take(attrs, Some(&local));
+        self.fed.push(Fed {
+            attrs,
+            ty: ty.to_token_stream(),
+            marker,
+        });
     }
 
     fn memo(&mut self, attrs: &'d [Attribute], memo: &'d Memo) {
@@ -408,139 +428,148 @@ impl<'d> Expansion<'d> {
             ty,
             deps,
         } = memo;
-        let (types, deps) = self.dependencies(deps);
-        let Some(index) = self.signal(attrs, ty, Storage::Field(&field.name)) else {
-            return;
-        };
+        let deps = dependencies(deps);
+        let name = &field.name;
+        let local = local(name);
+        let helper = format_ident!("__outcrop_memo_{}", self.signals.len());
+        let (private, chain) = (self.private.clone(), self.chain.clone());
+        let picks = self.picks(&deps, &quote!(&#chain));
+        self.builds.push(quote! {
+            #(#attrs)*
+            let #local: #ty = #helper(#(#picks),*);
+            #(#attrs)*
+            let #chain = #private::stored(#local, #chain);
+        });
+        let (bit, marker) = self.signal(attrs, ty, Some(name));
         self.field(attrs, field, ty);
-        let helper = format_ident!("__outcrop_memo_{index}");
-        self.derivation(attrs, function, &helper, &types, ty);
-        self.link(index, &deps, true);
-        let (name, local) = (&field.name, local(&field.name));
-        let values = deps.iter().map(|dep| self.value(*dep, true));
-        let default = quote!(#(#attrs)* let #local: #ty = #helper(#(&#values),*););
-        self.defaults.push(default);
-        let dirty = self.changed(&deps);
-        let arguments = deps.iter().map(|dep| self.value(*dep, false));
-        let mark = self.signals[index].mark();
+        self.derivation(attrs, function, &helper, &deps, ty);
+        let moved = deps
+            .iter()
+            .map(|dep| quote!(#private::moved::<Self, #dep, _>()));
+        let stale = quote!(#private::union([#(#moved),*]));
+        let moved = quote!(#private::union([#private::mask(#bit), #stale]));
+        self.lookup(
+            attrs,
+            ty,
+            (&bit, &marker),
+            (stale, moved),
+            (quote!(&'a #ty), quote!(&self.#name)),
+        );
+        let dirty = self.dirty(&deps);
+        let arguments = self.arguments(&deps);
         let ne = quote_spanned!(ty.span()=> ::core::cmp::PartialEq::ne);
-        let differs = quote!(#ne(&value, &self.#name));
-        let evaluation = quote! {
+        self.evaluations.push(quote! {
             #(#attrs)*
             if #dirty {
-                let value = #helper(#(&#arguments),*);
-                if #differs {
+                let value = #helper(#(#arguments),*);
+                if #ne(&value, &self.#name) {
                     self.#name = value;
-                    #mark
+                    #private::set(changed, #bit);
                 }
             }
-        };
-        self.evaluations.push(evaluation);
-        self.get(index, ty);
-    }
-
-    fn changed(&self, indices: &[usize]) -> TokenStream {
-        let checks = indices
-            .iter()
-            .map(|index| self.signals[*index].is_changed());
-        quote!(#(#checks)||*)
+        });
+        self.take(attrs, Some(&local));
     }
 
     fn view(&mut self, attrs: &'d [Attribute], view: &'d View) {
         let View { function, ty, deps } = view;
-        let (types, deps) = self.dependencies(deps);
-        let helper = format_ident!("__outcrop_view_{}", self.signals.len());
-        self.derivation(attrs, function, &helper, &types, ty);
-        let storage = Storage::Computed {
-            helper,
-            deps: deps.clone(),
-        };
-        let Some(index) = self.signal(attrs, ty, storage) else {
-            return;
-        };
-        self.link(index, &deps, false);
-        let dirty = self.changed(&deps);
-        let mark = self.signals[index].mark();
-        let evaluation = quote! {
+        let deps = dependencies(deps);
+        let index = self.signals.len();
+        let helper = format_ident!("__outcrop_view_{index}");
+        let derive = format_ident!("__OutcropDerive{index}", span = Span::mixed_site());
+        let (private, chain) = (self.private.clone(), self.chain.clone());
+        let (tail, generic) = (mixed("__outcrop_tail"), mixed("__OutcropChain"));
+        let indices = (0..deps.len())
+            .map(|position| format_ident!("__OutcropIndex{position}", span = Span::mixed_site()))
+            .collect::<Vec<_>>();
+        let picks = deps.iter().zip(&indices).map(|(dep, index)| {
+            quote! {
+                ::core::borrow::Borrow::<#dep>::borrow(
+                    &#private::pick::<#dep, #index, #generic>(#tail),
+                )
+            }
+        });
+        self.impls.push(quote! {
+            #(#attrs)*
+            struct #derive;
+
+            #(#attrs)*
+            impl<#generic, #(#indices),*> #private::Derive<#generic, (#(#indices,)*)> for #derive
+            where
+                #(#generic: #private::Pick<#deps, #indices>,)*
+            {
+                type Output = #ty;
+
+                fn derive(#tail: &#generic) -> #ty {
+                    #helper(#(#picks),*)
+                }
+            }
+        });
+        self.builds.push(quote! {
+            #(#attrs)*
+            let #chain = #private::lazy(#derive, #chain);
+        });
+        let (bit, marker) = self.signal(attrs, ty, None);
+        self.derivation(attrs, function, &helper, &deps, ty);
+        let stale = deps
+            .iter()
+            .map(|dep| quote!(#private::stale::<Self, #dep, _>()));
+        let moved = deps
+            .iter()
+            .map(|dep| quote!(#private::moved::<Self, #dep, _>()));
+        let arguments = self.arguments(&deps);
+        self.lookup(
+            attrs,
+            ty,
+            (&bit, &marker),
+            (
+                quote!(#private::union([#(#stale),*])),
+                quote!(#private::union([#private::mask(#bit), #(#moved),*])),
+            ),
+            (quote!(#ty), quote!(#helper(#(#arguments),*))),
+        );
+        let dirty = self.dirty(&deps);
+        self.evaluations.push(quote! {
             #(#attrs)*
             if #dirty {
-                #mark
+                #private::set(changed, #bit);
             }
-        };
-        self.evaluations.push(evaluation);
-        self.get(index, ty);
-    }
-
-    fn get(&mut self, index: usize, ty: &Type) {
-        let (ident, krate, flags) = (self.ident, self.krate, &self.flags);
-        let Signal {
-            attrs,
-            stale,
-            storage,
-            ..
-        } = &self.signals[index];
-        let reading = quote!(#krate::Reading);
-        let (output, value) = if let Storage::Computed { .. } = storage {
-            (quote!(#ty), self.value(index, false))
-        } else {
-            let value = self.value(index, false);
-            (quote!(&'a #ty), quote!(&#value))
-        };
-        let (changed, body) = if stale.is_empty() {
-            (quote!(_), quote!(#reading::Fresh(#value)))
-        } else {
-            let stale = self.changed(stale);
-            let body = quote! {
-                if #stale {
-                    #reading::Stale(#value)
-                } else {
-                    #reading::Fresh(#value)
-                }
-            };
-            (quote!(changed), body)
-        };
-        let implementation = quote! {
-            #(#attrs)*
-            impl #krate::Get<#ty, ()> for #ident {
-                type Ref<'a> = #output where Self: 'a;
-
-                fn get(&self, #changed: &#flags) -> #reading<Self::Ref<'_>> {
-                    #body
-                }
-            }
-        };
-        self.impls.push(implementation);
+        });
+        self.take(attrs, None);
     }
 
     fn router(&mut self, attrs: &'d [Attribute], position: usize, router: &'d Router) {
-        let Router { function, ty } = router;
-        let Some(fed) = self.fed(attrs, ty) else {
-            return;
-        };
-        let view = format_ident!("__OutcropBelow{position}");
+        let Router {
+            function,
+            ty: pointee,
+        } = router;
+        let ty = quote!(&#pointee);
+        let view = format_ident!("__OutcropBelow{position}", span = Span::mixed_site());
+        let marker = format_ident!("__OutcropRouter{position}", span = Span::mixed_site());
         let helper = format_ident!("__outcrop_route_{position}");
-        let krate = self.krate;
+        let (krate, private) = (self.krate, self.private.clone());
         let sink = quote!(&mut #krate::Sink<'_, #view<'_>>);
         self.helper(
             attrs,
             function,
             &helper,
-            &[quote!(#ty), sink],
+            &[quote!(#ty), sink.clone()],
             &TokenStream::new(),
+            &quote!(::core::ops::FnMut(#ty, #sink)),
         );
         let (ident, flags) = (self.ident, &self.flags);
         let below = self.fed.iter().map(
             |Fed {
                  attrs: fed_attrs,
                  ty,
-                 ..
+                 marker,
              }| {
                 quote! {
                     #(#attrs)*
                     #(#fed_attrs)*
-                    impl #krate::Feed<#ty, ()> for #view<'_> {
+                    impl #krate::Feed<#ty, #marker> for #view<'_> {
                         fn feed(&mut self, changed: &mut #flags, value: #ty) {
-                            <#ident as #krate::Feed<#ty, ()>>::feed(self.0, changed, value);
+                            <#ident as #krate::Feed<#ty, #marker>>::feed(self.0, changed, value);
                         }
                     }
                 }
@@ -562,18 +591,23 @@ impl<'d> Expansion<'d> {
             #(#below)*
 
             #(#attrs)*
-            impl #krate::Feed<#ty, ()> for #ident {
+            #[doc(hidden)]
+            #[allow(unnameable_types, missing_docs, missing_debug_implementations)]
+            pub struct #marker;
+
+            #(#attrs)*
+            impl #krate::Feed<#ty, #marker> for #ident {
                 fn feed(&mut self, changed: &mut #flags, value: #ty) {
                     #helper(value, &mut #krate::Sink::new(&mut #view(self), changed));
                 }
             }
         });
-        self.fed.push(fed);
+        self.builds.push(quote! {
+            #(#attrs)*
+            #private::routed::<Self, #ty, _>();
+        });
+        self.fed.push(Fed { attrs, ty, marker });
     }
-}
-
-fn key(ty: &Type) -> String {
-    ty.to_token_stream().to_string()
 }
 
 fn dependencies(deps: &Type) -> Vec<&Type> {
@@ -588,45 +622,34 @@ fn dependencies(deps: &Type) -> Vec<&Type> {
     }
 }
 
+/// A function calling `f` with its arguments, after checking `f` against
+/// `bound` as `Formation::memo`, `view` and `route` do, which also types the
+/// parameters of a closure.
 fn function(
     name: &Ident,
     parameters: &[TokenStream],
     output: &TokenStream,
     f: &Expr,
-) -> syn::Result<TokenStream> {
-    if let Expr::Closure(closure) = f {
-        if closure.inputs.len() != parameters.len() {
-            return Err(Error::new(
-                closure.inputs.span(),
-                format_args!(
-                    "expected {} closure parameters, found {}",
-                    parameters.len(),
-                    closure.inputs.len()
-                ),
-            ));
-        }
-        let inputs = closure.inputs.iter().zip(parameters).map(|(pat, ty)| {
-            if let Pat::Type(typed) = pat {
-                typed.to_token_stream()
-            } else {
-                quote!(#pat: #ty)
-            }
-        });
-        let body = &closure.body;
-        return Ok(quote! {
-            fn #name(#(#inputs),*) #output {
-                #body
-            }
-        });
-    }
+    bound: &TokenStream,
+) -> TokenStream {
     let arguments = (0..parameters.len())
         .map(|index| format_ident!("__outcrop_a{index}", span = Span::mixed_site()))
         .collect::<Vec<_>>();
-    Ok(quote! {
+    let (typed, generic, function) = (
+        mixed("__outcrop_typed"),
+        mixed("__OutcropF"),
+        mixed("__outcrop_f"),
+    );
+    quote! {
         fn #name(#(#arguments: #parameters),*) #output {
-            (#f)(#(#arguments),*)
+            fn #typed<#generic: #bound>(#function: #generic) -> #generic {
+                #function
+            }
+            #[allow(unused_mut)]
+            let mut #function = #typed(#f);
+            #function(#(#arguments),*)
         }
-    })
+    }
 }
 
 fn reject_default(attrs: &[Attribute]) -> Option<Error> {
@@ -665,46 +688,6 @@ mod tests {
         Ok(syn::parse2::<Declaration>(input)?
             .into_token_stream()
             .to_string())
-    }
-
-    #[test]
-    fn rejects_duplicate_signals() -> syn::Result<()> {
-        let output = expand(quote!(struct S { a: A = A(0), b: A = A(1), A = A => f }))?;
-        assert!(
-            output.contains("`A` is already a signal of this formation"),
-            "{output}"
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn rejects_types_fed_twice() -> syn::Result<()> {
-        let output = expand(quote!(struct S { &[u8] => f, &[u8] => g }))?;
-        assert!(
-            output.contains("`& [u8]` is already fed to this formation"),
-            "{output}"
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn rejects_dependencies_not_declared_above() -> syn::Result<()> {
-        let output = expand(quote!(struct S { B = A => f, a: A = A(0) }))?;
-        assert!(
-            output.contains("`A` is not a signal declared above"),
-            "{output}"
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn reads_unit_dependencies_as_the_unit_signal() -> syn::Result<()> {
-        let output = expand(quote!(struct S { B = () => f }))?;
-        assert!(
-            output.contains("`()` is not a signal declared above"),
-            "{output}"
-        );
-        Ok(())
     }
 
     #[test]
@@ -776,20 +759,25 @@ mod tests {
         let output = expand(quote!(struct S {
             #[deny(x)] a: A = A(0),
             #[deny(y)] B = A => f,
-            #[deny(z)] &[u8] => g,
+            #[deny(z)] [u8] => g,
         }))?;
         for item in [
             "# [deny (x)] a : A",
             "# [deny (x)] let __outcrop_a",
             "# [deny (x)] a : __outcrop_a",
-            "# [deny (x)] if changed",
+            "# [deny (x)] if :: outcrop :: __private :: is_set (changed",
+            "# [deny (x)] impl :: outcrop :: __private :: Signal < A",
+            "# [deny (x)] let (:: outcrop :: __private :: Stored (__outcrop_a)",
             "# [deny (x)] impl :: outcrop :: Feed < A",
             "# [deny (x)] impl :: outcrop :: Get < A",
             "# [deny (y)] fn __outcrop_view_1",
-            "# [deny (y)] if changed",
+            "# [deny (y)] if :: outcrop :: __private :: is_set (changed",
+            "# [deny (y)] struct __OutcropDerive1",
+            "# [deny (y)] impl < __OutcropChain , __OutcropIndex0 > :: outcrop :: __private :: Derive",
             "# [deny (y)] impl :: outcrop :: Get < B",
             "# [deny (z)] fn __outcrop_route_2",
             "# [deny (z)] impl :: outcrop :: Feed < & [u8]",
+            "# [deny (z)] :: outcrop :: __private :: routed :: < Self , & [u8] , _ >",
         ] {
             assert!(output.contains(item), "{item} in {output}");
         }
@@ -812,7 +800,7 @@ mod tests {
         let output = expand(quote!(struct S { a: A = A(0), #[strata(fn(inline))] B = A => f }))?;
         assert!(
             output.contains(
-                "# [inline] fn __outcrop_view_1 (__outcrop_a0 : & A) -> B { (f) (__outcrop_a0) }"
+                "# [inline] fn __outcrop_view_1 (__outcrop_a0 : & A) -> B { fn __outcrop_typed < __OutcropF : :: core :: ops :: Fn (& A) -> B > (__outcrop_f : __OutcropF) -> __OutcropF { __outcrop_f } # [allow (unused_mut)] let mut __outcrop_f = __outcrop_typed (f) ; __outcrop_f (__outcrop_a0) }"
             ),
             "{output}"
         );
@@ -869,21 +857,6 @@ mod tests {
             "{output}"
         );
         assert!(output.contains("__outcrop_compiled0 ! (bound)"), "{output}");
-        Ok(())
-    }
-
-    #[test]
-    fn rejects_closures_of_the_wrong_arity() -> syn::Result<()> {
-        let output =
-            expand(quote!(struct S { a: A = A(0), B = A => |a, b| B(a.0), &[u8] => |frame| {} }))?;
-        assert!(
-            output.contains("expected 1 closure parameters, found 2"),
-            "{output}"
-        );
-        assert!(
-            output.contains("expected 2 closure parameters, found 1"),
-            "{output}"
-        );
         Ok(())
     }
 

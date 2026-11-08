@@ -1,0 +1,143 @@
+//! Support for the code `strata!` generates. Not public API.
+
+use core::borrow::Borrow;
+use core::marker::PhantomData;
+
+use crate::strata::Feed;
+use crate::strata::Strata;
+
+pub trait Signal<T, I>: Strata {
+    const BIT: usize;
+    const STALE: Self::Flags;
+    const MOVED: Self::Flags;
+    type Ref<'a>: Borrow<T>
+    where
+        Self: 'a;
+
+    fn value(&self) -> Self::Ref<'_>;
+}
+
+pub const fn bit<S: Signal<T, I>, T, I>() -> usize {
+    S::BIT
+}
+
+pub const fn stale<S: Signal<T, I>, T, I>() -> S::Flags {
+    S::STALE
+}
+
+pub const fn moved<S: Signal<T, I>, T, I>() -> S::Flags {
+    S::MOVED
+}
+
+pub fn value<S: Signal<T, I>, T, I>(strata: &S) -> S::Ref<'_> {
+    strata.value()
+}
+
+pub fn routed<S: Feed<T, I>, T, I>() {}
+
+pub const fn mask<const N: usize>(bit: usize) -> [u8; N] {
+    let mut mask = [0; N];
+    mask[bit / 8] = 1 << (bit % 8);
+    mask
+}
+
+pub const fn union<const N: usize, const M: usize>(masks: [[u8; N]; M]) -> [u8; N] {
+    let mut union = [0; N];
+    let mut mask = 0;
+    while mask < M {
+        let mut byte = 0;
+        while byte < N {
+            union[byte] |= masks[mask][byte];
+            byte += 1;
+        }
+        mask += 1;
+    }
+    union
+}
+
+pub fn intersects<const N: usize>(changed: &[u8; N], mask: &[u8; N]) -> bool {
+    changed
+        .iter()
+        .zip(mask)
+        .any(|(changed, mask)| changed & mask != 0)
+}
+
+pub const fn is_set<const N: usize>(changed: &[u8; N], bit: usize) -> bool {
+    changed[bit / 8] & 1 << (bit % 8) != 0
+}
+
+pub const fn set<const N: usize>(changed: &mut [u8; N], bit: usize) {
+    changed[bit / 8] |= 1 << (bit % 8);
+}
+
+pub struct Stored<T>(pub T);
+
+pub struct Lazy<V>(V);
+
+pub trait Derive<C, J> {
+    type Output;
+
+    fn derive(chain: &C) -> Self::Output;
+}
+
+pub struct Derived<J>(PhantomData<J>);
+
+#[diagnostic::on_unimplemented(
+    message = "`{T}` is not a signal declared above",
+    label = "a signal can only depend on the inputs, memos and views declared above it",
+    note = "every dependency must be a signal declared earlier in the same `strata!`"
+)]
+pub trait Pick<T, I> {
+    type Ref<'a>: Borrow<T>
+    where
+        Self: 'a;
+
+    fn pick(&self) -> Self::Ref<'_>;
+}
+
+impl<T, Tail> Pick<T, ()> for (Stored<T>, Tail) {
+    type Ref<'a>
+        = &'a T
+    where
+        Self: 'a;
+
+    fn pick(&self) -> &T {
+        &self.0.0
+    }
+}
+
+impl<V: Derive<Tail, J>, J, Tail> Pick<V::Output, Derived<J>> for (Lazy<V>, Tail) {
+    type Ref<'a>
+        = V::Output
+    where
+        Self: 'a;
+
+    fn pick(&self) -> V::Output {
+        V::derive(&self.1)
+    }
+}
+
+impl<T, I, H, Tail: Pick<T, I>> Pick<T, (I,)> for (H, Tail) {
+    type Ref<'a>
+        = Tail::Ref<'a>
+    where
+        Self: 'a;
+
+    fn pick(&self) -> Tail::Ref<'_> {
+        self.1.pick()
+    }
+}
+
+pub fn pick<T, I, C: Pick<T, I>>(chain: &C) -> C::Ref<'_> {
+    chain.pick()
+}
+
+pub const fn stored<T, C>(value: T, chain: C) -> (Stored<T>, C) {
+    (Stored(value), chain)
+}
+
+pub const fn lazy<V, C>(view: V, chain: C) -> (Lazy<V>, C) {
+    (Lazy(view), chain)
+}
+
+pub fn distinct<T, I, C: Pick<T, I>>(_: &C) {}

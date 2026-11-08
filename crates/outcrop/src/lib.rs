@@ -47,6 +47,14 @@
 #![forbid(unsafe_code)]
 #![cfg_attr(coverage_nightly, feature(coverage_attribute))]
 
+#[cfg(feature = "macros")]
+#[doc(hidden)]
+#[expect(
+    missing_debug_implementations,
+    clippy::must_use_candidate,
+    reason = "support for the code `strata!` generates, not public API"
+)]
+pub mod __private;
 mod compute;
 #[expect(
     unnameable_types,

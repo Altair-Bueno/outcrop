@@ -63,12 +63,12 @@ outcrop::strata! {
     struct Modbus {
         aa: Register<0xAA> = Register(0),
         ab: Register<0xAB> = Register(0),
-        &ModbusRegister => |r, sink| match r.address {
+        ModbusRegister => |r, sink| match r.address {
             0xAA => sink.feed(Register::<0xAA>(r.value)),
             0xAB => sink.feed(Register::<0xAB>(r.value)),
             _ => {}
         },
-        &[u8] => |frame, sink| {
+        [u8] => |frame, sink| {
             for chunk in frame.as_chunks::<4>().0 {
                 sink.feed(&decode(*chunk));
             }
@@ -133,7 +133,7 @@ outcrop::strata! {
         },
         alarm: Alarm = (AntiFreezeSupported, Setpoint) => |a, s| Alarm(a.0 && s.0 > 0x2300),
         Heating = Alarm => |a| Heating(!a.0),
-        &ModbusRegister => |r, sink| match r.address {
+        ModbusRegister => |r, sink| match r.address {
             0x42 => sink.feed(Register::<0x42>(r.value)),
             0x43 => sink.feed(Register::<0x43>(r.value)),
             _ => {}
@@ -179,6 +179,32 @@ macro_rules! wrapped {
 
 wrapped!(Temperature, AntiFreeze);
 
+type Celsius = Temperature;
+
+type Threshold = Setpoint;
+
+#[expect(
+    unused_qualifications,
+    reason = "signals are spelled differently on purpose"
+)]
+mod spelled {
+    use super::AntiFreeze;
+    use super::Celsius;
+    use super::Heating;
+    use super::Setpoint;
+    use super::Temperature;
+    use super::heating;
+
+    outcrop::strata! {
+        pub(crate) struct Spelled {
+            temperature: Celsius = Temperature(20),
+            setpoint: super::Threshold = Setpoint(18),
+            heating: Heating = (Temperature, crate::Setpoint) => heating,
+            AntiFreeze = self::Temperature => |t| AntiFreeze(t.0 < 10),
+        }
+    }
+}
+
 outcrop::strata! {
     struct AbsentSignal {
         #[cfg(any())]
@@ -197,9 +223,9 @@ outcrop::strata! {
         #[cfg(any())]
         Alarm = Missing => |_| Alarm(true),
         #[cfg(any())]
-        &[u8] => |_, _| {},
+        [u8] => |_, _| {},
         #[cfg(all())]
-        i16 => |value, sink| sink.feed(Temperature(value)),
+        i16 => |value, sink| sink.feed(Temperature(*value)),
     }
 }
 
@@ -212,7 +238,7 @@ outcrop::strata! {
         #[cfg_attr(all(), cfg(any()))]
         Alarm = Missing => |_| Alarm(true),
         #[cfg_attr(all(), cfg(any()))]
-        &Missing => |_, _| {},
+        Missing => |_, _| {},
         #[cfg(all())]
         #[strata(fn(expect(unused_variables, reason = "reaches the view's closure")))]
         AntiFreeze = Temperature => |t| AntiFreeze(false),
@@ -279,7 +305,7 @@ fn poll<S: Report<Recorder>>(formation: &mut Formation<S>) -> Vec<String> {
 outcrop::strata! {
     struct UnitType {
         unit: () = (),
-        u32 = () => |_| 10,
+        u32 = () => |()| 10,
     }
 }
 
@@ -391,6 +417,29 @@ fn generated_names_do_not_capture_user_code() {
 }
 
 #[test]
+fn signals_are_found_by_type_however_they_are_spelled() {
+    let mut formation = Formation::from(spelled::Spelled::default());
+    poll(&mut formation);
+
+    formation.feed(Temperature(5));
+    formation.feed::<Threshold, _>(Setpoint(30));
+
+    assert_eq!(
+        poll(&mut formation),
+        [
+            "Temperature(5)",
+            "Setpoint(30)",
+            "Heating(true)",
+            "AntiFreeze(true)"
+        ]
+    );
+    assert_eq!(
+        formation.get::<Celsius, _>(),
+        Reading::Fresh(&Temperature(5))
+    );
+}
+
+#[test]
 fn signals_declared_through_other_macros_compare_their_values() {
     let mut formation = Formation::from(Wrapped::default());
     poll(&mut formation);
@@ -414,7 +463,7 @@ fn formations_without_signals_take_no_bits() {
 
     let mut empty = Formation::from(Empty::default());
     let mut router = Formation::from(RouterOnly::default());
-    router.feed(1_u8);
+    router.feed(&1_u8);
 
     assert_eq!(poll(&mut empty), Vec::<String>::new());
     assert_eq!(poll(&mut router), Vec::<String>::new());
@@ -423,7 +472,7 @@ fn formations_without_signals_take_no_bits() {
 #[test]
 fn attributes_reach_the_functions_they_target() {
     let mut formation = Formation::from(Annotated::default());
-    formation.feed(3_i16);
+    formation.feed(&3_i16);
 
     assert_eq!(
         poll(&mut formation),
@@ -464,7 +513,7 @@ fn cfg_keeps_present_signals_and_routers() {
         ["Temperature(20)", "AntiFreeze(false)"]
     );
 
-    formation.feed(3_i16);
+    formation.feed(&3_i16);
 
     assert_eq!(poll(&mut formation), ["Temperature(3)", "AntiFreeze(true)"]);
 }
@@ -536,7 +585,7 @@ fn signals_fed_through_routers_mark_dependents_stale() {
     let mut formation = Formation::from(Gated::default());
     poll(&mut formation);
 
-    formation.feed(3_i16);
+    formation.feed(&3_i16);
 
     assert_eq!(
         formation.get::<Temperature, _>(),

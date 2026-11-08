@@ -85,10 +85,64 @@ struct Router {
 ///   nothing, taking each dependency by reference.
 /// - `Signal = Deps => f`: a view, computed by `f` from `Deps` every time it
 ///   is read. It has no name because it has no field: it takes no memory.
-/// - `In => f`: a router, called with every fed `In` and an [`outcrop::Sink`](https://docs.rs/outcrop)
+/// - `In => f`: a router, called with every fed `&In` and an [`outcrop::Sink`](https://docs.rs/outcrop)
 ///   feeding the inputs and routers declared above it.
 ///
 /// So the struct's fields are exactly the stored signals.
+///
+/// A `strata!` struct behaves like the formation built with the same calls
+/// to `Formation::input`, `memo`, `view` and `route`. Signals are found by
+/// type, so an alias or any path to a type names the same signal. A memo, view
+/// or router accepts the same functions its `Formation` counterpart does,
+/// taking each argument by reference for any lifetime: a path such as
+/// `Celsius::from` whose `From<&Kelvin>` impl fixes the lifetime is rejected,
+/// and a closure `|k| Celsius::from(k)` is accepted. Two differences remain:
+/// `f` cannot capture anything, because the struct must name every type it
+/// holds, and a memo or view may have any number of dependencies, where
+/// `Formation` allows eight.
+///
+/// A signal can only depend on signals declared above it:
+///
+/// ```compile_fail,E0277
+/// #[derive(PartialEq)]
+/// struct A(u8);
+/// #[derive(PartialEq)]
+/// struct B(u8);
+///
+/// outcrop::strata! {
+///     struct S {
+///         b: B = A => |a| B(a.0),
+///         a: A = A(0),
+///     }
+/// }
+/// ```
+///
+/// Every signal has its own type, so declaring a type twice is rejected,
+/// however it is spelled:
+///
+/// ```compile_fail,E0283
+/// #[derive(PartialEq)]
+/// struct A(u8);
+/// type Alias = A;
+///
+/// outcrop::strata! {
+///     struct S {
+///         a: A = A(0),
+///         alias: Alias = A(1),
+///     }
+/// }
+/// ```
+///
+/// And so is routing a type twice:
+///
+/// ```compile_fail,E0283
+/// outcrop::strata! {
+///     struct S {
+///         [u8] => |_, _| {},
+///         [u8] => |_, _| {},
+///     }
+/// }
+/// ```
 ///
 /// Attributes written directly on an entry apply to the whole entry: they are
 /// copied unchanged onto everything it generates, which is what `cfg` and
@@ -140,7 +194,7 @@ struct Router {
 ///     struct Thermostat {
 ///         temperature: Temperature = Temperature(20),
 ///         AntiFreeze = Temperature => |t| AntiFreeze(t.0 < 10),
-///         &[i16] => |samples, sink| {
+///         [i16] => |samples, sink| {
 ///             if let Some(last) = samples.last() {
 ///                 sink.feed(Temperature(*last));
 ///             }
