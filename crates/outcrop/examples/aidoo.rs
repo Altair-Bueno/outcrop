@@ -1,6 +1,7 @@
 //! Read side of an Airzone Aidoo driving a direct expansion unit over Modbus.
 //!
 //! Register map: Aidoo Modbus manual, "Registers for Direct Expansion units".
+#![recursion_limit = "256"]
 #![expect(
     clippy::trivially_copy_pass_by_ref,
     reason = "derived signals receive their dependencies by reference"

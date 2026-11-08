@@ -142,7 +142,7 @@ outcrop::strata! {
         r5: Register<5> = Register(1),
         r6: Register<6> = Register(1),
         r7: Register<7> = Register(1),
-        &Frame => |f, sink| match f.address {
+        Frame => |f, sink| match f.address {
             0 => sink.feed(Register::<0>(f.value)),
             1 => sink.feed(Register::<1>(f.value)),
             2 => sink.feed(Register::<2>(f.value)),
