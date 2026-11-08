@@ -6,6 +6,7 @@ use core::marker::PhantomData;
 use crate::bank::Element;
 use crate::bank::Slot;
 use crate::bank::Write;
+use crate::reading::Reading;
 use crate::strata::Feed;
 use crate::strata::Strata;
 use crate::visit::Visit;
@@ -35,6 +36,18 @@ pub const fn moved<S: Signal<T, I>, T, I>() -> S::Flags {
 
 pub fn value<S: Signal<T, I>, T, I>(strata: &S) -> S::Ref<'_> {
     strata.value()
+}
+
+pub fn get<'s, S, T, I, const N: usize>(strata: &'s S, changed: &[u8; N]) -> Reading<S::Ref<'s>>
+where
+    S: Signal<T, I, Flags = [u8; N]>,
+{
+    let value = strata.value();
+    if intersects(changed, &S::STALE) {
+        Reading::Stale(value)
+    } else {
+        Reading::Fresh(value)
+    }
 }
 
 pub fn routed<S: Feed<T, I>, T, I>() {}
@@ -112,11 +125,7 @@ pub fn report<V, T, const N: usize>(bank: &[T], changed: &[u8; N], base: usize, 
 where
     V: for<'a> Visit<Element<'a, T>>,
 {
-    for (index, value) in bank.iter().enumerate() {
-        if is_set(changed, base + index) {
-            visitor.visit(&Element { index, value });
-        }
-    }
+    Element::report(bank, |index| is_set(changed, base + index), visitor);
 }
 
 pub struct Stored<T>(pub T);

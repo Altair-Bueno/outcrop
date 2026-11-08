@@ -1,3 +1,5 @@
+use crate::visit::Visit;
+
 /// A signal stored in one element of a bank.
 ///
 /// A bank, deposited with [`Formation::bank`](crate::Formation::bank) or
@@ -77,4 +79,18 @@ pub struct Element<'a, T> {
     pub index: usize,
     /// Its current value.
     pub value: &'a T,
+}
+
+impl<'a, T> Element<'a, T> {
+    /// Visits every element of `bank` for which `changed` holds.
+    pub(crate) fn report<V>(bank: &'a [T], changed: impl Fn(usize) -> bool, visitor: &mut V)
+    where
+        V: Visit<Self>,
+    {
+        for (index, value) in bank.iter().enumerate() {
+            if changed(index) {
+                visitor.visit(&Self { index, value });
+            }
+        }
+    }
 }

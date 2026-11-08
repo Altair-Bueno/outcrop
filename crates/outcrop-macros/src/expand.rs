@@ -116,6 +116,7 @@ impl Declaration {
             reports,
             visits,
             signals,
+            private,
             ..
         } = expansion;
         let names = signals.iter().filter_map(|signal| {
@@ -124,6 +125,7 @@ impl Declaration {
             Some(quote!(#(#attrs)* #field: #local))
         });
         let takes = takes.iter().rev();
+        let get = lookup_by_type(ident, krate, &private, &flags);
         let changed_flags = if evaluations.is_empty() {
             quote!(_)
         } else {
@@ -163,6 +165,8 @@ impl Declaration {
                     #(#evaluations)*
                 }
             }
+
+            #get
 
             impl<__OutcropVisitor> #krate::Report<__OutcropVisitor> for #ident
             where
@@ -252,29 +256,8 @@ impl<'d> Expansion<'d> {
         let (krate, private) = (self.krate, self.private.clone());
         let visit = quote!(#krate::Visit<#ty>);
         let bit = self.bits(attrs, index, None, visit.clone());
-        let (ident, flags, chain) = (self.ident, &self.flags, &self.chain);
-        let signal = quote!(#private::Signal<#ty, #marker>);
-        let reading = quote!(#krate::Reading);
-        self.impls.push(quote! {
-            #(#attrs)*
-            #[doc(hidden)]
-            #[allow(unnameable_types, missing_docs, missing_debug_implementations)]
-            pub struct #marker;
-
-            #(#attrs)*
-            impl #krate::Get<#ty, #marker> for #ident {
-                type Ref<'a> = <Self as #signal>::Ref<'a> where Self: 'a;
-
-                fn get(&self, changed: &#flags) -> #reading<Self::Ref<'_>> {
-                    let value = <Self as #signal>::value(self);
-                    if #private::intersects(changed, &<Self as #signal>::STALE) {
-                        #reading::Stale(value)
-                    } else {
-                        #reading::Fresh(value)
-                    }
-                }
-            }
-        });
+        self.marker(attrs, &marker);
+        let (chain, signal) = (&self.chain, quote!(#private::Signal<#ty, #marker>));
         self.reports.push(quote! {
             #(#attrs)*
             if #private::is_set(changed, #bit) {
@@ -388,14 +371,18 @@ impl<'d> Expansion<'d> {
             .push(quote!(#(#attrs)* #(#[#targeted])* #name: #ty));
     }
 
-    /// Moves a stored signal out of the chain built by `Default`.
-    fn take(&mut self, attrs: &[Attribute], local: Option<&Ident>) {
-        let private = &self.private;
-        let pattern = local.map_or_else(|| quote!(_), |local| quote!(#private::Stored(#local)));
-        self.untake(attrs, &pattern);
+    /// Declares the type telling apart the lookups of one entry.
+    fn marker(&mut self, attrs: &[Attribute], marker: &Ident) {
+        self.impls.push(quote! {
+            #(#attrs)*
+            #[doc(hidden)]
+            #[allow(unnameable_types, missing_docs, missing_debug_implementations)]
+            pub struct #marker;
+        });
     }
 
-    fn untake(&mut self, attrs: &[Attribute], pattern: &TokenStream) {
+    /// Moves an entry matching `pattern` out of the chain built by `Default`.
+    fn take(&mut self, attrs: &[Attribute], pattern: &TokenStream) {
         let chain = &self.chain;
         self.takes
             .push(quote!(#(#attrs)* let (#pattern, #chain) = #chain;));
@@ -434,7 +421,7 @@ impl<'d> Expansion<'d> {
                 }
             }
         });
-        self.take(attrs, Some(&local));
+        self.take(attrs, &quote!(#private::Stored(#local)));
         self.fed.push(Fed {
             attrs,
             ty: ty.to_token_stream(),
@@ -467,13 +454,8 @@ impl<'d> Expansion<'d> {
         let base = self.bits(attrs, index, Some(&len), visit.clone());
         self.field(attrs, field, ty);
         let signal = quote!(#private::Signal<#slot, #marker>);
-        let reading = quote!(#krate::Reading);
+        self.marker(attrs, &marker);
         self.impls.push(quote! {
-            #(#attrs)*
-            #[doc(hidden)]
-            #[allow(unnameable_types, missing_docs, missing_debug_implementations)]
-            pub struct #marker;
-
             #(#attrs)*
             impl<#slot: #krate::Slot<Item = #item>> #signal for #ident {
                 const BIT: usize = #private::slot::<#slot>(#base);
@@ -483,15 +465,6 @@ impl<'d> Expansion<'d> {
 
                 fn value(&self) -> #slot {
                     #private::read(&self.#name)
-                }
-            }
-
-            #(#attrs)*
-            impl<#slot: #krate::Slot<Item = #item>> #krate::Get<#slot, #marker> for #ident {
-                type Ref<'a> = #slot where Self: 'a;
-
-                fn get(&self, _: &#flags) -> #reading<#slot> {
-                    #reading::Fresh(#private::read(&self.#name))
                 }
             }
 
@@ -506,7 +479,7 @@ impl<'d> Expansion<'d> {
             #(#attrs)*
             #private::report(&self.#name, changed, #base, visitor);
         });
-        self.untake(attrs, &quote!(#private::Banked(#local)));
+        self.take(attrs, &quote!(#private::Banked(#local)));
         self.signals.push(Signal {
             attrs,
             field: Some(name),
@@ -565,7 +538,7 @@ impl<'d> Expansion<'d> {
                 }
             }
         });
-        self.take(attrs, Some(&local));
+        self.take(attrs, &quote!(#private::Stored(#local)));
     }
 
     fn view(&mut self, attrs: &'d [Attribute], view: &'d View) {
@@ -632,7 +605,7 @@ impl<'d> Expansion<'d> {
                 #private::set(changed, #bit);
             }
         });
-        self.take(attrs, None);
+        self.take(attrs, &quote!(_));
     }
 
     fn router(&mut self, attrs: &'d [Attribute], position: usize, router: &'d Router) {
@@ -688,22 +661,41 @@ impl<'d> Expansion<'d> {
             #(#below)*
 
             #(#attrs)*
-            #[doc(hidden)]
-            #[allow(unnameable_types, missing_docs, missing_debug_implementations)]
-            pub struct #marker;
-
-            #(#attrs)*
             impl #krate::Feed<#ty, #marker> for #ident {
                 fn feed(&mut self, changed: &mut #flags, value: #ty) {
                     #helper(value, &mut #krate::Sink::new(&mut #view(self), changed));
                 }
             }
         });
+        self.marker(attrs, &marker);
         self.builds.push(quote! {
             #(#attrs)*
             #private::routed::<Self, #ty, _>();
         });
         self.fed.push(Fed { attrs, ty, marker });
+    }
+}
+
+/// Implements `Get` for every signal the struct implements `Signal` for.
+fn lookup_by_type(
+    ident: &Ident,
+    krate: &Path,
+    private: &TokenStream,
+    flags: &Ident,
+) -> TokenStream {
+    let (t, i) = (mixed("__OutcropT"), mixed("__OutcropI"));
+    let signal = quote!(#private::Signal<#t, #i>);
+    quote! {
+        impl<#t, #i> #krate::Get<#t, #i> for #ident
+        where
+            Self: #signal,
+        {
+            type Ref<'a> = <Self as #signal>::Ref<'a> where Self: 'a;
+
+            fn get(&self, changed: &#flags) -> #krate::Reading<Self::Ref<'_>> {
+                #private::get(self, changed)
+            }
+        }
     }
 }
 
@@ -866,12 +858,11 @@ mod tests {
             "# [deny (x)] impl :: outcrop :: __private :: Signal < A",
             "# [deny (x)] let (:: outcrop :: __private :: Stored (__outcrop_a)",
             "# [deny (x)] impl :: outcrop :: Feed < A",
-            "# [deny (x)] impl :: outcrop :: Get < A",
             "# [deny (y)] fn __outcrop_view_1",
             "# [deny (y)] if :: outcrop :: __private :: is_set (changed",
             "# [deny (y)] struct __OutcropDerive1",
             "# [deny (y)] impl < __OutcropChain , __OutcropIndex0 > :: outcrop :: __private :: Derive",
-            "# [deny (y)] impl :: outcrop :: Get < B",
+            "# [deny (y)] impl :: outcrop :: __private :: Signal < B",
             "# [deny (z)] fn __outcrop_route_2",
             "# [deny (z)] impl :: outcrop :: Feed < & [u8]",
             "# [deny (z)] :: outcrop :: __private :: routed :: < Self , & [u8] , _ >",

@@ -403,20 +403,10 @@ impl<T: Absent> Feed<T, Infallible> for () {
 impl<T, I, E, Tail> Feed<T, (I,)> for (E, Tail)
 where
     Self: Stack<Tail = Tail>,
-    E: Settle<Tail>,
     Tail: LayeredImpl + Feed<T, I>,
 {
     fn feed(&mut self, changed: &mut Self::Flags, value: T) {
         self.1.feed(Self::below_mut(changed), value);
-    }
-}
-
-impl<T, I, In: ?Sized, F, Tail> Feed<T, (I,)> for (Router<In, F>, Tail)
-where
-    Tail: LayeredImpl + Feed<T, I>,
-{
-    fn feed(&mut self, changed: &mut Self::Flags, value: T) {
-        self.1.feed(changed, value);
     }
 }
 
@@ -504,12 +494,15 @@ where
     }
 }
 
-impl<X, I, T, const N: usize, Tail> Feed<X, (I,)> for (Bank<T, N>, Tail)
-where
-    Tail: LayeredImpl + Feed<X, I>,
-{
-    fn feed(&mut self, changed: &mut Self::Flags, value: X) {
-        self.1.feed(&mut changed.0, value);
+impl<T, const N: usize, Tail: LayeredImpl> Stack for (Bank<T, N>, Tail) {
+    type Tail = Tail;
+
+    fn below(flags: &Self::Flags) -> &Tail::Flags {
+        &flags.0
+    }
+
+    fn below_mut(flags: &mut Self::Flags) -> &mut Tail::Flags {
+        &mut flags.0
     }
 }
 
@@ -520,12 +513,7 @@ where
 {
     fn report(&self, changed: &Self::Flags, visitor: &mut V) {
         self.1.report(&changed.0, visitor);
-        let elements = self.0.0.iter().zip(changed.1.0).enumerate();
-        for (index, (value, changed)) in elements {
-            if changed {
-                visitor.visit(&Element { index, value });
-            }
-        }
+        Element::report(&self.0.0, |index| changed.1.0[index], visitor);
     }
 }
 

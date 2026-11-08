@@ -336,6 +336,9 @@ impl<S: Strata> Formation<S> {
     where
         S: Report<V>,
     {
+        if self.changed == S::Flags::default() {
+            return;
+        }
         self.strata.evaluate(&mut self.changed);
         self.strata
             .report(&core::mem::take(&mut self.changed), visitor);
