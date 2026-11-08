@@ -319,7 +319,7 @@ impl<'d> Expansion<'d> {
         deps.iter()
             .map(|dep| {
                 quote! {
-                    ::core::borrow::Borrow::<#dep>::borrow(&#private::pick::<#dep, _, _>(#chain))
+                    ::core::borrow::Borrow::<#dep>::borrow(&#private::select::<#dep, _, _>(#chain))
                 }
             })
             .collect()
@@ -381,11 +381,18 @@ impl<'d> Expansion<'d> {
         });
     }
 
-    /// Moves an entry matching `pattern` out of the chain built by `Default`.
-    fn take(&mut self, attrs: &[Attribute], pattern: &TokenStream) {
+    /// Moves the top entry out of the chain built by `Default`, binding
+    /// what `split` returns to `(pattern, chain)`.
+    fn take(&mut self, attrs: &[Attribute], pattern: &TokenStream, split: &TokenStream) {
         let chain = &self.chain;
         self.takes
-            .push(quote!(#(#attrs)* let (#pattern, #chain) = #chain;));
+            .push(quote!(#(#attrs)* let (#pattern, #chain) = #split;));
+    }
+
+    /// Moves a stored value out of the chain built by `Default`.
+    fn unstore(&mut self, attrs: &[Attribute], local: &Ident) {
+        let (private, chain) = (self.private.clone(), self.chain.clone());
+        self.take(attrs, &quote!(#local), &quote!(#private::unstore(#chain)));
     }
 
     fn input(&mut self, attrs: &'d [Attribute], input: &'d Input) {
@@ -397,7 +404,7 @@ impl<'d> Expansion<'d> {
             #(#attrs)*
             let #local: #ty = #init;
             #(#attrs)*
-            let #chain = #private::stored(#local, #chain);
+            let #chain = #private::input(#local, #chain);
         });
         let (bit, marker) = self.signal(attrs, ty, Some(name));
         self.field(attrs, field, ty);
@@ -421,7 +428,7 @@ impl<'d> Expansion<'d> {
                 }
             }
         });
-        self.take(attrs, &quote!(#private::Stored(#local)));
+        self.unstore(attrs, &local);
         self.fed.push(Fed {
             attrs,
             ty: ty.to_token_stream(),
@@ -447,7 +454,7 @@ impl<'d> Expansion<'d> {
             #(#attrs)*
             let #local: #ty = #init;
             #(#attrs)*
-            let #chain = #private::banked(#local, #chain);
+            let #chain = #private::bank::<{ #len.div_ceil(8) }, _, _, _>(#local, #chain);
             #(#attrs)*
             #private::routed::<Self, #krate::Write<'static, #item>, _>();
         });
@@ -479,7 +486,8 @@ impl<'d> Expansion<'d> {
             #(#attrs)*
             #private::report(&self.#name, changed, #base, visitor);
         });
-        self.take(attrs, &quote!(#private::Banked(#local)));
+        let chain = &self.chain;
+        self.take(attrs, &quote!(#local), &quote!(#private::unbank(#chain)));
         self.signals.push(Signal {
             attrs,
             field: Some(name),
@@ -508,7 +516,7 @@ impl<'d> Expansion<'d> {
             #(#attrs)*
             let #local: #ty = #helper(#(#picks),*);
             #(#attrs)*
-            let #chain = #private::stored(#local, #chain);
+            let #chain = #private::input(#local, #chain);
         });
         let (bit, marker) = self.signal(attrs, ty, Some(name));
         self.field(attrs, field, ty);
@@ -538,7 +546,7 @@ impl<'d> Expansion<'d> {
                 }
             }
         });
-        self.take(attrs, &quote!(#private::Stored(#local)));
+        self.unstore(attrs, &local);
     }
 
     fn view(&mut self, attrs: &'d [Attribute], view: &'d View) {
@@ -546,38 +554,10 @@ impl<'d> Expansion<'d> {
         let deps = dependencies(deps);
         let index = self.signals.len();
         let helper = format_ident!("__outcrop_view_{index}");
-        let derive = format_ident!("__OutcropDerive{index}", span = Span::mixed_site());
         let (private, chain) = (self.private.clone(), self.chain.clone());
-        let (tail, generic) = (mixed("__outcrop_tail"), mixed("__OutcropChain"));
-        let indices = (0..deps.len())
-            .map(|position| format_ident!("__OutcropIndex{position}", span = Span::mixed_site()))
-            .collect::<Vec<_>>();
-        let picks = deps.iter().zip(&indices).map(|(dep, index)| {
-            quote! {
-                ::core::borrow::Borrow::<#dep>::borrow(
-                    &#private::pick::<#dep, #index, #generic>(#tail),
-                )
-            }
-        });
-        self.impls.push(quote! {
-            #(#attrs)*
-            struct #derive;
-
-            #(#attrs)*
-            impl<#generic, #(#indices),*> #private::Derive<#generic, (#(#indices,)*)> for #derive
-            where
-                #(#generic: #private::Pick<#deps, #indices>,)*
-            {
-                type Output = #ty;
-
-                fn derive(#tail: &#generic) -> #ty {
-                    #helper(#(#picks),*)
-                }
-            }
-        });
         self.builds.push(quote! {
             #(#attrs)*
-            let #chain = #private::lazy(#derive, #chain);
+            let #chain = #private::view(#helper, #chain);
         });
         let (bit, marker) = self.signal(attrs, ty, None);
         self.derivation(attrs, function, &helper, &deps, ty);
@@ -605,7 +585,8 @@ impl<'d> Expansion<'d> {
                 #private::set(changed, #bit);
             }
         });
-        self.take(attrs, &quote!(_));
+        let chain = self.chain.clone();
+        self.take(attrs, &quote!(_), &quote!(#chain));
     }
 
     fn router(&mut self, attrs: &'d [Attribute], position: usize, router: &'d Router) {
@@ -856,12 +837,12 @@ mod tests {
             "# [deny (x)] a : __outcrop_a",
             "# [deny (x)] if :: outcrop :: __private :: is_set (changed",
             "# [deny (x)] impl :: outcrop :: __private :: Signal < A",
-            "# [deny (x)] let (:: outcrop :: __private :: Stored (__outcrop_a)",
+            "# [deny (x)] let (__outcrop_a , __outcrop_chain) = :: outcrop :: __private :: unstore",
             "# [deny (x)] impl :: outcrop :: Feed < A",
             "# [deny (y)] fn __outcrop_view_1",
             "# [deny (y)] if :: outcrop :: __private :: is_set (changed",
-            "# [deny (y)] struct __OutcropDerive1",
-            "# [deny (y)] impl < __OutcropChain , __OutcropIndex0 > :: outcrop :: __private :: Derive",
+            "# [deny (y)] let __outcrop_chain = :: outcrop :: __private :: view (__outcrop_view_1",
+            "# [deny (y)] let (_ , __outcrop_chain) = __outcrop_chain",
             "# [deny (y)] impl :: outcrop :: __private :: Signal < B",
             "# [deny (z)] fn __outcrop_route_2",
             "# [deny (z)] impl :: outcrop :: Feed < & [u8]",

@@ -50,7 +50,6 @@
 #[cfg(feature = "macros")]
 #[doc(hidden)]
 #[expect(
-    missing_debug_implementations,
     clippy::must_use_candidate,
     reason = "support for the code `strata!` generates, not public API"
 )]

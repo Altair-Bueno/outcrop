@@ -6,9 +6,14 @@ use core::marker::PhantomData;
 use crate::bank::Element;
 use crate::bank::Slot;
 use crate::bank::Write;
+use crate::plumbing::ComputeImpl;
+use crate::plumbing::Select;
 use crate::reading::Reading;
 use crate::strata::Feed;
 use crate::strata::Strata;
+use crate::stratum::Bank;
+use crate::stratum::Input;
+use crate::stratum::View;
 use crate::visit::Visit;
 
 pub trait Signal<T, I>: Strata {
@@ -128,96 +133,45 @@ where
     Element::report(bank, |index| is_set(changed, base + index), visitor);
 }
 
-pub struct Stored<T>(pub T);
-
-pub struct Lazy<V>(V);
-
-pub trait Derive<C, J> {
-    type Output;
-
-    fn derive(chain: &C) -> Self::Output;
+pub const fn input<T, C>(value: T, chain: C) -> (Input<T>, C) {
+    (Input(value), chain)
 }
 
-pub struct Derived<J>(PhantomData<J>);
-
-#[diagnostic::on_unimplemented(
-    message = "`{T}` is not a signal declared above",
-    label = "a signal can only depend on the inputs, memos and views declared above it",
-    note = "every dependency must be a signal declared earlier in the same `strata!`"
-)]
-pub trait Pick<T, I> {
-    type Ref<'a>: Borrow<T>
-    where
-        Self: 'a;
-
-    fn pick(&self) -> Self::Ref<'_>;
+pub const fn view<F, M, C>(f: F, chain: C) -> (View<F, M, F::Output>, C)
+where
+    F: ComputeImpl<C, M>,
+{
+    (
+        View {
+            f,
+            marker: PhantomData,
+        },
+        chain,
+    )
 }
 
-impl<T, Tail> Pick<T, ()> for (Stored<T>, Tail) {
-    type Ref<'a>
-        = &'a T
-    where
-        Self: 'a;
-
-    fn pick(&self) -> &T {
-        &self.0.0
-    }
+pub const fn bank<const BYTES: usize, T, const N: usize, C>(
+    items: [T; N],
+    chain: C,
+) -> (Bank<T, N, BYTES>, C) {
+    (Bank(items), chain)
 }
 
-impl<V: Derive<Tail, J>, J, Tail> Pick<V::Output, Derived<J>> for (Lazy<V>, Tail) {
-    type Ref<'a>
-        = V::Output
-    where
-        Self: 'a;
-
-    fn pick(&self) -> V::Output {
-        V::derive(&self.1)
-    }
+pub fn unstore<T, C>((Input(value), chain): (Input<T>, C)) -> (T, C) {
+    (value, chain)
 }
 
-impl<T, I, H, Tail: Pick<T, I>> Pick<T, (I,)> for (H, Tail) {
-    type Ref<'a>
-        = Tail::Ref<'a>
-    where
-        Self: 'a;
-
-    fn pick(&self) -> Tail::Ref<'_> {
-        self.1.pick()
-    }
+pub fn unbank<T, const N: usize, const BYTES: usize, C>(
+    (Bank(items), chain): (Bank<T, N, BYTES>, C),
+) -> ([T; N], C) {
+    (items, chain)
 }
 
-pub struct Banked<B>(pub B);
-
-pub enum InBank {}
-
-impl<E: Slot, const N: usize, Tail> Pick<E, InBank> for (Banked<[E::Item; N]>, Tail) {
-    type Ref<'a>
-        = E
-    where
-        Self: 'a;
-
-    fn pick(&self) -> E {
-        read(&self.0.0)
-    }
+pub fn select<T, I, C: Select<T, I>>(chain: &C) -> C::Ref<'_> {
+    chain.select()
 }
 
-pub const fn banked<B, C>(bank: B, chain: C) -> (Banked<B>, C) {
-    (Banked(bank), chain)
-}
-
-pub fn pick<T, I, C: Pick<T, I>>(chain: &C) -> C::Ref<'_> {
-    chain.pick()
-}
-
-pub const fn stored<T, C>(value: T, chain: C) -> (Stored<T>, C) {
-    (Stored(value), chain)
-}
-
-pub const fn lazy<V, C>(view: V, chain: C) -> (Lazy<V>, C) {
-    (Lazy(view), chain)
-}
-
-pub fn distinct<T, I, C: Pick<T, I>>(_: &C) {}
+pub fn distinct<T, I, C: Select<T, I>>(_: &C) {}
 
 #[cfg(test)]
 mod tests {

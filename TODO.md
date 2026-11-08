@@ -11,12 +11,13 @@ purpose.
       a separate, non-generic trait: a generic `Settle<Tail>` bound would let
       another crate implement it for `Router`, so the blanket impls would
       overlap. `crates/outcrop/src/stratum.rs`
-- [ ] **One lookup chain for `strata!` and the builder.** `strata!` builds
-      `Default` from its own `Stored`, `Lazy` and `Banked` chain, resolved by
-      `Pick` and `Derive`, which mirror the builder's `Input`, `View`, `Bank`,
-      `Select` and `Settle`. Building that chain from the builder's types would
-      remove about 90 lines and one diagnostic, but needs a `Select` that does
-      not require `LayeredImpl`. `crates/outcrop/src/__private.rs`
+- [x] **One lookup chain for `strata!` and the builder.** `strata!`'s `Default`
+      builds its chain from the builder's `Input`, `View` and `Bank` layers and
+      resolves dependencies with `Select`, which now carries the "not a signal
+      declared above" diagnostic. `Pick`, `Stored`, `Lazy`, `Derive` and
+      `Banked` are gone. A view whose dependency is missing now also fails the
+      duplicate checks of the signals above it, one more follow-on error than
+      before. `crates/outcrop/src/__private.rs`
 - [ ] **One `signal()` path for inputs and banks in `strata!`.** `bank()` still
       repeats part of `signal()` (report, `signals` push) because `signal()`
       takes a single concrete type. Taking a width and an optional slot generic

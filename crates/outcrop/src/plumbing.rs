@@ -89,6 +89,10 @@ pub trait Settle<Tail>: Value {
     fn settle<Fl: Bits>(&mut self, tail: &Tail, changed: &mut Fl, index: usize);
 }
 
+#[diagnostic::on_unimplemented(
+    message = "`{T}` is not a signal declared above",
+    label = "a signal can only depend on the inputs, memos and views declared above it"
+)]
 pub trait Select<T, I> {
     const INDEX: usize;
     type Ref<'a>: Borrow<T>
