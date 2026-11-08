@@ -1,6 +1,8 @@
 use core::marker::PhantomData;
 
 use crate::bank::Write;
+#[cfg(feature = "macros")]
+use crate::nested::Nested;
 use crate::plumbing::Distinct;
 use crate::plumbing::Layer;
 use crate::plumbing::Routed;
@@ -279,6 +281,73 @@ impl<S: Layered> Formation<S> {
             f,
             marker: PhantomData,
         })
+    }
+
+    /// Deposits a struct declared with `strata!` as one layer, whose signals
+    /// the signals above can depend on, and that the formation and the
+    /// routers above can feed.
+    ///
+    /// Every signal of the struct is reported by the next
+    /// [`poll`](Self::poll). The struct depends only on its own signals,
+    /// never on those beneath it, and counts as one signal towards the
+    /// recursion limit, however many it holds. Its signals are found by type
+    /// like any other, so nesting the same struct twice, or a struct holding
+    /// a type already declared, makes looking that type up ambiguous.
+    ///
+    /// ```
+    /// use outcrop::Formation;
+    ///
+    /// #[derive(Debug, PartialEq)]
+    /// struct Kelvin(u16);
+    /// #[derive(Debug, PartialEq)]
+    /// struct Celsius(i32);
+    /// #[derive(Debug, PartialEq)]
+    /// struct Freezing(bool);
+    ///
+    /// outcrop::strata! {
+    ///     struct Probe {
+    ///         kelvin: Kelvin = Kelvin(293),
+    ///         Celsius = Kelvin => |k| Celsius(i32::from(k.0) - 273),
+    ///     }
+    /// }
+    ///
+    /// let mut formation = Formation::new()
+    ///     .nest(Probe::default())
+    ///     .memo(|c: &Celsius| Freezing(c.0 <= 0));
+    ///
+    /// formation.feed(Kelvin(270));
+    /// formation.poll(&mut ());
+    /// assert_eq!(*formation.get::<Freezing, _>().into_inner(), Freezing(true));
+    /// ```
+    ///
+    /// A type declared both in the struct and in the formation cannot be
+    /// depended on:
+    ///
+    /// ```compile_fail
+    /// # use outcrop::Formation;
+    /// #[derive(PartialEq)]
+    /// struct Kelvin(u16);
+    /// #[derive(PartialEq)]
+    /// struct Hot(bool);
+    ///
+    /// outcrop::strata! {
+    ///     struct Probe {
+    ///         kelvin: Kelvin = Kelvin(293),
+    ///     }
+    /// }
+    ///
+    /// let formation = Formation::new()
+    ///     .input(Kelvin(0))
+    ///     .nest(Probe::default())
+    ///     .memo(|k: &Kelvin| Hot(k.0 > 300));
+    /// ```
+    #[cfg(feature = "macros")]
+    #[must_use]
+    pub fn nest<N: Strata>(self, strata: N) -> Deposited<Nested<N>, S>
+    where
+        Nested<N>: Layer<S>,
+    {
+        self.deposit(Nested(strata))
     }
 
     /// Deposits `layer` on top of the strata, with its bits marked as

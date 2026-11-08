@@ -17,5 +17,9 @@ outcrop-macros = { workspace = true, optional = true }
 name = "strata"
 required-features = ["macros"]
 
+[[test]]
+name = "nest"
+required-features = ["macros"]
+
 [lints]
 workspace = true

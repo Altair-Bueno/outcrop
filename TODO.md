@@ -23,19 +23,14 @@ purpose.
       takes a single concrete type. Taking a width and an optional slot generic
       would let inputs be width 1. `crates/outcrop-macros/src/expand.rs`
 
-- [ ] **Nest a `strata!` struct in a builder formation.** Deposit a `Nested<S>`
-      layer, as in `Formation::new().input(A(0)).nest(S::default())`. Its
-      `[u8; K]` flags go on top of the builder's, its `evaluate` and `report`
-      run on that slice, a `Select` impl maps each signal's bit to `base + BIT`
-      so builder signals above can depend on it, and a forwarding `Feed` impl
-      reaches its inputs and banks. A wrapper is needed because a second blanket
-      `Layer` impl would overlap the one over `Value + Settle`. It gives named,
-      reusable parts in a larger formation, and since a nested struct is one
-      layer for the builder's lookups, a way past the recursion limit. Limits:
-      the struct cannot depend on builder signals below it, the same struct
-      cannot be nested twice since signals are found by type, and checking a
-      dependency inside it tests a mask against an offset slice of the flags.
-      `crates/outcrop/src/stratum.rs`
+- [x] **Nest a `strata!` struct in a builder formation.**
+      `Formation::nest(S::default())` deposits a `Nested<S>` layer, behind the
+      `macros` feature: the struct's flags go on top of the builder's, its
+      evaluate, report and feeds run on that slice, and `Select` maps each of
+      its signals to `base + BIT` through the masks `strata!` generates. Limits
+      as planned: no dependencies on the builder beneath it, and a type declared
+      twice, by nesting the same struct twice or otherwise, is ambiguous when
+      depended on rather than rejected at `nest`. `crates/outcrop/src/nested.rs`
 
 ## Performance
 

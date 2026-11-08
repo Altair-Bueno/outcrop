@@ -62,6 +62,12 @@ mod compute;
 )]
 mod flags;
 mod formation;
+#[cfg(feature = "macros")]
+#[expect(
+    unnameable_types,
+    reason = "nested structs only appear in inferred formation types"
+)]
+mod nested;
 #[expect(
     unnameable_types,
     reason = "builder machinery behind the sealed `Compute` and `Layered` bounds"

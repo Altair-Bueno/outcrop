@@ -73,6 +73,28 @@ impl<Tail: Bits, const BYTES: usize> Bits for (Tail, Chunk<BYTES>) {
     }
 }
 
+impl<Tail: Bits, const BYTES: usize> Bits for (Tail, [u8; BYTES])
+where
+    [u8; BYTES]: Default,
+{
+    const BITS: usize = Tail::BITS + 8 * BYTES;
+    const ALL: Self = (Tail::ALL, [u8::MAX; BYTES]);
+
+    fn get(&self, index: usize) -> bool {
+        if index < Tail::BITS {
+            self.0.get(index)
+        } else {
+            let index = index - Tail::BITS;
+            self.1[index / 8] & 1 << (index % 8) != 0
+        }
+    }
+
+    fn set_top(&mut self, index: usize) {
+        let index = index - Tail::BITS;
+        self.1[index / 8] |= 1 << (index % 8);
+    }
+}
+
 macro_rules! impl_partial {
     ($($used:literal => $next:literal),+) => {$(
         impl Cursor for Used<$used> {
