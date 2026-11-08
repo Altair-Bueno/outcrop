@@ -807,6 +807,18 @@ mod tests {
     }
 
     #[test]
+    fn puts_fn_attributes_on_the_wrapper_of_a_function_path() -> syn::Result<()> {
+        let output = expand(quote!(struct S { a: A = A(0), #[strata(fn(inline))] B = A => f }))?;
+        assert!(
+            output.contains(
+                "# [inline] fn __outcrop_view_1 (__outcrop_a0 : & A) -> B { (f) (__outcrop_a0) }"
+            ),
+            "{output}"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn rejects_fn_attributes_on_inputs() {
         let error = expand(quote!(
             struct S { #[strata(fn(inline))] a: A = A(0) }
