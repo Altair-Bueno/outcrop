@@ -3,7 +3,9 @@
 use core::hint::black_box;
 
 use outcrop::Formation;
+use outcrop::Slot;
 use outcrop::Visit;
+use outcrop::Write;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Register<const A: u16>(pub u16);
@@ -290,8 +292,83 @@ scenarios!(
     macro_route
 );
 
+/// A word of a bank of 100 registers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Word<const A: usize>(pub u16);
+
+impl<const A: usize> Slot for Word<A> {
+    type Item = u16;
+    const INDEX: usize = A;
+
+    fn read(item: &u16) -> Self {
+        Self(*item)
+    }
+}
+
+fn spread(a: &Word<3>, b: &Word<50>, c: &Word<97>) -> Summary {
+    Summary(u32::from(a.0) ^ u32::from(b.0) << 8 ^ u32::from(c.0) << 16)
+}
+
+macro_rules! banked {
+    () => {
+        Formation::new()
+            .bank::<13, _, _, _>([0_u16; 100])
+            .view(|w: &Word<3>| Flag(w.0 != 0))
+            .view(|w: &Word<50>| Unrelated(w.0))
+            .memo(spread)
+    };
+}
+
+outcrop::strata! {
+    struct Banked {
+        #[strata(bank)]
+        words: [u16; 100] = [0; 100],
+        Flag = Word<3> => |w| Flag(w.0 != 0),
+        Unrelated = Word<50> => |w| Unrelated(w.0),
+        spread: Summary = (Word<3>, Word<50>, Word<97>) => spread,
+    }
+}
+
+macro_rules! bank_scenarios {
+    ($make:expr, $one:ident, $all:ident) => {
+        /// Writes one word of the bank, with no signal on it, every round.
+        #[unsafe(no_mangle)]
+        #[inline(never)]
+        pub extern "C" fn $one(rounds: u32) -> u32 {
+            let mut formation = black_box($make);
+            let mut sum = Sum::default();
+            formation.poll(&mut sum);
+            for i in 0..black_box(rounds) {
+                formation.feed(Write::new(black_box(70), &[black_box(i as u16 + 1)]));
+                formation.poll(&mut sum);
+            }
+            black_box(&formation);
+            sum.0
+        }
+
+        /// Writes every word of the bank with a new value every round.
+        #[unsafe(no_mangle)]
+        #[inline(never)]
+        pub extern "C" fn $all(rounds: u32) -> u32 {
+            let mut formation = black_box($make);
+            let mut sum = Sum::default();
+            formation.poll(&mut sum);
+            for i in 0..black_box(rounds) {
+                let words = [black_box(i as u16 + 1); 100];
+                formation.feed(Write::new(0, &words));
+                formation.poll(&mut sum);
+            }
+            black_box(&formation);
+            sum.0
+        }
+    };
+}
+
+bank_scenarios!(banked!(), builder_bank_one, builder_bank_all);
+bank_scenarios!(Formation::from(Banked::default()), macro_bank_one, macro_bank_all);
+
 /// Every scenario, by name.
-pub const SCENARIOS: [(&str, extern "C" fn(u32) -> u32); 12] = [
+pub const SCENARIOS: [(&str, extern "C" fn(u32) -> u32); 16] = [
     ("builder_idle", builder_idle),
     ("builder_feed_bottom", builder_feed_bottom),
     ("builder_feed_unrelated", builder_feed_unrelated),
@@ -304,6 +381,10 @@ pub const SCENARIOS: [(&str, extern "C" fn(u32) -> u32); 12] = [
     ("macro_feed_top", macro_feed_top),
     ("macro_feed_flat", macro_feed_flat),
     ("macro_route", macro_route),
+    ("builder_bank_one", builder_bank_one),
+    ("builder_bank_all", builder_bank_all),
+    ("macro_bank_one", macro_bank_one),
+    ("macro_bank_all", macro_bank_all),
 ];
 
 /// Formation sizes in bytes, builder then macro.

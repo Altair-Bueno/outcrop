@@ -1,10 +1,10 @@
-use wasmi::Config;
-use wasmi::Engine;
-use wasmi::Linker;
-use wasmi::Module;
-use wasmi::Store;
+use wasmtime::Config;
+use wasmtime::Engine;
+use wasmtime::Linker;
+use wasmtime::Module;
+use wasmtime::Store;
 
-const SCENARIOS: [&str; 12] = [
+const SCENARIOS: [&str; 16] = [
     "builder_idle",
     "builder_feed_bottom",
     "builder_feed_unrelated",
@@ -17,13 +17,17 @@ const SCENARIOS: [&str; 12] = [
     "macro_feed_top",
     "macro_feed_flat",
     "macro_route",
+    "builder_bank_one",
+    "builder_bank_all",
+    "macro_bank_one",
+    "macro_bank_all",
 ];
 
 fn run(engine: &Engine, module: &Module, name: &str, rounds: u32) -> Result<(u64, u32), Box<dyn std::error::Error>> {
     let mut store = Store::new(engine, ());
     store.set_fuel(1 << 40)?;
-    let instance = Linker::<()>::new(engine).instantiate_and_start(&mut store, module)?;
-    let func = instance.get_typed_func::<u32, u32>(&store, name)?;
+    let instance = Linker::<()>::new(engine).instantiate(&mut store, module)?;
+    let func = instance.get_typed_func::<u32, u32>(&mut store, name)?;
     let before = store.get_fuel()?;
     let reports = func.call(&mut store, rounds)?;
     Ok((before - store.get_fuel()?, reports))
@@ -32,9 +36,9 @@ fn run(engine: &Engine, module: &Module, name: &str, rounds: u32) -> Result<(u64
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let path = std::env::args().nth(1).ok_or("usage: instr <workload.wasm>")?;
     let bytes = std::fs::read(path)?;
-    let mut config = Config::default();
+    let mut config = Config::new();
     config.consume_fuel(true);
-    let engine = Engine::new(&config);
+    let engine = Engine::new(&config)?;
     let module = Module::new(&engine, &bytes[..])?;
     println!("  scenario\tfuel/round\treports(16 rounds)");
     for name in SCENARIOS {

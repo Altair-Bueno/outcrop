@@ -5,4 +5,4 @@ edition = "2024"
 publish = false
 
 [dependencies]
-wasmi = "2"
+wasmtime = { version = "45", default-features = false, features = ["cranelift", "runtime", "std"] }
