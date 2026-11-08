@@ -1,5 +1,7 @@
 use core::marker::PhantomData;
 
+use crate::bank::Write;
+use crate::flags::Chunk;
 use crate::plumbing::Bits as _;
 use crate::plumbing::Cursor as _;
 use crate::plumbing::Distinct;
@@ -10,6 +12,7 @@ use crate::strata::Feed;
 use crate::strata::Get;
 use crate::strata::Report;
 use crate::strata::Strata;
+use crate::stratum::Bank;
 use crate::stratum::Compute;
 use crate::stratum::Input;
 use crate::stratum::Layered;
@@ -123,6 +126,66 @@ impl<S: Layered> Formation<S> {
         Formation {
             changed,
             strata: (Input(initial), self.strata),
+        }
+    }
+
+    /// Deposits a bank: an array of inputs with a change bit per element,
+    /// each read as the [`Slot`](crate::Slot) whose index points at it.
+    ///
+    /// A bank is fed a [`Write`], which marks only the elements whose value
+    /// changed, so a signal depending on a slot is recomputed and reported
+    /// only when its element changed. [`poll`](Self::poll) reports every
+    /// changed element as an [`Element`](crate::Element), and the next one
+    /// reports them all.
+    ///
+    /// Each element costs a byte of flags, and the whole bank one level of
+    /// the recursion limit, however many elements it holds.
+    ///
+    /// ```
+    /// use outcrop::{Formation, Slot, Write};
+    ///
+    /// #[derive(Debug, PartialEq)]
+    /// struct Register<const ADDRESS: usize>(u16);
+    ///
+    /// impl<const ADDRESS: usize> Slot for Register<ADDRESS> {
+    ///     type Item = u16;
+    ///     const INDEX: usize = ADDRESS;
+    ///
+    ///     fn read(item: &u16) -> Self {
+    ///         Self(*item)
+    ///     }
+    /// }
+    ///
+    /// #[derive(Debug, PartialEq)]
+    /// struct Celsius(u16);
+    ///
+    /// let mut formation = Formation::new()
+    ///     .bank([0_u16; 4])
+    ///     .memo(|r: &Register<2>| Celsius(r.0 / 10));
+    ///
+    /// formation.feed(Write::new(1, &[7, 215]));
+    /// formation.poll(&mut ());
+    /// assert_eq!(*formation.get::<Celsius, _>().into_inner(), Celsius(21));
+    /// ```
+    ///
+    /// Two banks of the same item type are rejected, since a `Write` could
+    /// not tell them apart:
+    ///
+    /// ```compile_fail
+    /// # use outcrop::Formation;
+    /// let formation = Formation::new().bank([0_u16; 2]).bank([0_u16; 3]);
+    /// ```
+    #[must_use]
+    pub fn bank<T: PartialEq + Clone, const N: usize, I>(
+        self,
+        initial: [T; N],
+    ) -> Deposited<Bank<T, N>, S>
+    where
+        for<'w> (Bank<T, N>, S): Routed<Write<'w, T>, I>,
+    {
+        Formation {
+            changed: (self.changed, Chunk([true; N])),
+            strata: (Bank(initial), self.strata),
         }
     }
 

@@ -55,6 +55,7 @@
     reason = "support for the code `strata!` generates, not public API"
 )]
 pub mod __private;
+mod bank;
 mod compute;
 #[expect(
     unnameable_types,
@@ -77,6 +78,9 @@ mod strata;
 mod stratum;
 mod visit;
 
+pub use bank::Element;
+pub use bank::Slot;
+pub use bank::Write;
 pub use formation::Formation;
 #[cfg(feature = "macros")]
 pub use outcrop_macros::strata;

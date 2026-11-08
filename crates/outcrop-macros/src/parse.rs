@@ -61,34 +61,59 @@ impl Parse for Declaration {
     }
 }
 
+/// The attributes of an entry, with the `#[strata(..)]` options taken out.
+#[derive(Default)]
+struct Options {
+    attrs: Vec<Attribute>,
+    field_attrs: Vec<Meta>,
+    fn_attrs: Vec<Meta>,
+    first_field: Option<Span>,
+    first_fn: Option<Span>,
+    bank: Option<Span>,
+}
+
+impl Parse for Options {
+    fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
+        let mut options = Self::default();
+        for attr in input.call(Attribute::parse_outer)? {
+            if !attr.path().is_ident("strata") {
+                options.attrs.push(attr);
+                continue;
+            }
+            attr.parse_nested_meta(|meta| {
+                if meta.path.is_ident("bank") {
+                    options.bank.get_or_insert(meta.path.span());
+                    return Ok(());
+                }
+                let target = if meta.path.is_ident("fn") {
+                    options.first_fn.get_or_insert(meta.path.span());
+                    &mut options.fn_attrs
+                } else if meta.path.is_ident("field") {
+                    options.first_field.get_or_insert(meta.path.span());
+                    &mut options.field_attrs
+                } else {
+                    return Err(meta.error("expected `bank`, `fn(..)` or `field(..)`"));
+                };
+                let content;
+                parenthesized!(content in meta.input);
+                target.extend(content.parse_terminated(Meta::parse, Token![,])?);
+                Ok(())
+            })?;
+        }
+        Ok(options)
+    }
+}
+
 impl Parse for Entry {
     fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
-        let mut attrs = Vec::new();
-        let mut field_attrs = Vec::new();
-        let mut fn_attrs = Vec::new();
-        let mut first_field = None;
-        let mut first_fn = None;
-        for attr in input.call(Attribute::parse_outer)? {
-            if attr.path().is_ident("strata") {
-                attr.parse_nested_meta(|meta| {
-                    let target = if meta.path.is_ident("fn") {
-                        first_fn.get_or_insert(meta.path.span());
-                        &mut fn_attrs
-                    } else if meta.path.is_ident("field") {
-                        first_field.get_or_insert(meta.path.span());
-                        &mut field_attrs
-                    } else {
-                        return Err(meta.error("expected `fn(..)` or `field(..)`"));
-                    };
-                    let content;
-                    parenthesized!(content in meta.input);
-                    target.extend(content.parse_terminated(Meta::parse, Token![,])?);
-                    Ok(())
-                })?;
-            } else {
-                attrs.push(attr);
-            }
-        }
+        let Options {
+            attrs,
+            field_attrs,
+            fn_attrs,
+            first_field,
+            first_fn,
+            bank,
+        } = input.parse()?;
         let name = if input.peek(Ident) && input.peek2(Token![:]) && !input.peek2(Token![::]) {
             let name: Ident = input.parse()?;
             input.parse::<Token![:]>()?;
@@ -101,7 +126,16 @@ impl Parse for Entry {
             attrs: field_attrs,
         };
         let function = |f| Function { attrs: fn_attrs, f };
-        let kind = match (input.parse()?, name) {
+        let shape = input.parse()?;
+        if let Some(span) = bank
+            && !matches!(shape, Shape::Stored { .. })
+        {
+            return Err(syn::Error::new(
+                span,
+                "only inputs can be banks: `#[strata(bank)] name: [T; N] = initial`",
+            ));
+        }
+        let kind = match (shape, name) {
             (Shape::Stored { ty, .. }, None) => {
                 return Err(syn::Error::new_spanned(
                     ty,
@@ -121,11 +155,16 @@ impl Parse for Entry {
                         "inputs have no function, so `fn(..)` does not apply to them",
                     ));
                 }
-                Kind::Input(Input {
+                let input = Input {
                     field: field(name),
                     ty,
                     init,
-                })
+                };
+                if bank.is_some() {
+                    Kind::Bank(input)
+                } else {
+                    Kind::Input(input)
+                }
             }
             (Shape::Derived { ty, deps, f }, Some(name)) => Kind::Memo(Memo {
                 field: field(name),

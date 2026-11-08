@@ -185,6 +185,7 @@ impl<'d> Expansion<'d> {
             let attrs = &entry.attrs;
             match &entry.kind {
                 Kind::Input(input) => self.input(attrs, input),
+                Kind::Bank(bank) => self.bank(attrs, bank),
                 Kind::Memo(memo) => self.memo(attrs, memo),
                 Kind::View(view) => self.view(attrs, view),
                 Kind::Router(router) => self.router(attrs, position, router),
@@ -192,24 +193,23 @@ impl<'d> Expansion<'d> {
         }
     }
 
-    /// Declares the change bit, index type and report of a new signal, and
-    /// returns its bit and index type.
-    fn signal(
+    /// Reserves `width` change bits for the entry numbered `index`, and
+    /// bounds the visitor by `visit` if the entry is compiled in. Returns the
+    /// constant holding its first bit.
+    fn bits(
         &mut self,
-        attrs: &'d [Attribute],
-        ty: &Type,
-        field: Option<&'d Ident>,
-    ) -> (Ident, Ident) {
-        let index = self.signals.len();
+        attrs: &[Attribute],
+        index: usize,
+        width: Option<&TokenStream>,
+        visit: TokenStream,
+    ) -> Ident {
         let bit = format_ident!("__OUTCROP_BIT{index}", span = Span::mixed_site());
-        let marker = format_ident!("__OutcropSignal{index}", span = Span::mixed_site());
-        let (krate, private) = (self.krate, &self.private);
-        let visit = quote!(#krate::Visit<#ty>);
         let next = &self.next;
         self.bits.push(quote!(const #bit: usize = #next;));
+        let width = width.map(|width| quote!(* (#width)));
         if attrs.is_empty() {
-            self.next = quote!(#bit + 1);
-            self.visits.push(visit.clone());
+            self.next = width.map_or_else(|| quote!(#bit + 1), |width| quote!(#bit + 1 #width));
+            self.visits.push(visit);
         } else {
             let compiled = format_ident!("__outcrop_compiled{index}", span = Span::mixed_site());
             let bound = format_ident!("__OutcropVisit{index}", span = Span::mixed_site());
@@ -233,9 +233,25 @@ impl<'d> Expansion<'d> {
                 }
                 #compiled!(bound);
             });
-            self.next = quote!(#bit + #compiled!(present) as usize);
+            self.next = quote!(#bit + #compiled!(present) as usize #width);
             self.visits.push(bound.into_token_stream());
         }
+        bit
+    }
+
+    /// Declares the change bit, index type and report of a new signal, and
+    /// returns its bit and index type.
+    fn signal(
+        &mut self,
+        attrs: &'d [Attribute],
+        ty: &Type,
+        field: Option<&'d Ident>,
+    ) -> (Ident, Ident) {
+        let index = self.signals.len();
+        let marker = format_ident!("__OutcropSignal{index}", span = Span::mixed_site());
+        let (krate, private) = (self.krate, self.private.clone());
+        let visit = quote!(#krate::Visit<#ty>);
+        let bit = self.bits(attrs, index, None, visit.clone());
         let (ident, flags, chain) = (self.ident, &self.flags, &self.chain);
         let signal = quote!(#private::Signal<#ty, #marker>);
         let reading = quote!(#krate::Reading);
@@ -374,8 +390,13 @@ impl<'d> Expansion<'d> {
 
     /// Moves a stored signal out of the chain built by `Default`.
     fn take(&mut self, attrs: &[Attribute], local: Option<&Ident>) {
-        let (private, chain) = (&self.private, &self.chain);
+        let private = &self.private;
         let pattern = local.map_or_else(|| quote!(_), |local| quote!(#private::Stored(#local)));
+        self.untake(attrs, &pattern);
+    }
+
+    fn untake(&mut self, attrs: &[Attribute], pattern: &TokenStream) {
+        let chain = &self.chain;
         self.takes
             .push(quote!(#(#attrs)* let (#pattern, #chain) = #chain;));
     }
@@ -417,6 +438,82 @@ impl<'d> Expansion<'d> {
         self.fed.push(Fed {
             attrs,
             ty: ty.to_token_stream(),
+            marker,
+        });
+    }
+
+    fn bank(&mut self, attrs: &'d [Attribute], bank: &'d Input) {
+        let Input { field, ty, init } = bank;
+        let name = &field.name;
+        let local = local(name);
+        let index = self.signals.len();
+        let marker = format_ident!("__OutcropSignal{index}", span = Span::mixed_site());
+        let (ident, krate, flags) = (self.ident, self.krate, self.flags.clone());
+        let (private, chain) = (self.private.clone(), self.chain.clone());
+        let array = quote_spanned!(ty.span()=> <#ty as #private::Array>);
+        let item = quote!(#array::Item);
+        let len = quote!(#array::LEN);
+        let slot = mixed("__OutcropSlot");
+        let write = quote!(#krate::Write<'_, #item>);
+        let visit = quote!(for<'__outcrop> #krate::Visit<#krate::Element<'__outcrop, #item>>);
+        self.builds.push(quote! {
+            #(#attrs)*
+            let #local: #ty = #init;
+            #(#attrs)*
+            let #chain = #private::banked(#local, #chain);
+            #(#attrs)*
+            #private::routed::<Self, #krate::Write<'static, #item>, _>();
+        });
+        let base = self.bits(attrs, index, Some(&len), visit.clone());
+        self.field(attrs, field, ty);
+        let signal = quote!(#private::Signal<#slot, #marker>);
+        let reading = quote!(#krate::Reading);
+        self.impls.push(quote! {
+            #(#attrs)*
+            #[doc(hidden)]
+            #[allow(unnameable_types, missing_docs, missing_debug_implementations)]
+            pub struct #marker;
+
+            #(#attrs)*
+            impl<#slot: #krate::Slot<Item = #item>> #signal for #ident {
+                const BIT: usize = #private::slot::<#slot>(#base);
+                const STALE: #flags = #private::union([]);
+                const MOVED: #flags = #private::mask(<Self as #signal>::BIT);
+                type Ref<'a> = #slot where Self: 'a;
+
+                fn value(&self) -> #slot {
+                    #private::read(&self.#name)
+                }
+            }
+
+            #(#attrs)*
+            impl<#slot: #krate::Slot<Item = #item>> #krate::Get<#slot, #marker> for #ident {
+                type Ref<'a> = #slot where Self: 'a;
+
+                fn get(&self, _: &#flags) -> #reading<#slot> {
+                    #reading::Fresh(#private::read(&self.#name))
+                }
+            }
+
+            #(#attrs)*
+            impl #krate::Feed<#write, #marker> for #ident {
+                fn feed(&mut self, changed: &mut #flags, value: #write) {
+                    #private::write(&mut self.#name, changed, #base, value);
+                }
+            }
+        });
+        self.reports.push(quote! {
+            #(#attrs)*
+            #private::report(&self.#name, changed, #base, visitor);
+        });
+        self.untake(attrs, &quote!(#private::Banked(#local)));
+        self.signals.push(Signal {
+            attrs,
+            field: Some(name),
+        });
+        self.fed.push(Fed {
+            attrs,
+            ty: write,
             marker,
         });
     }
@@ -827,7 +924,45 @@ mod tests {
         ))
         .err()
         .map(|error| error.to_string());
-        assert_eq!(error.as_deref(), Some("expected `fn(..)` or `field(..)`"));
+        assert_eq!(
+            error.as_deref(),
+            Some("expected `bank`, `fn(..)` or `field(..)`")
+        );
+    }
+
+    #[test]
+    fn rejects_banks_that_are_not_inputs() {
+        for input in [
+            quote!(struct S { #[strata(bank)] a: A = B => f }),
+            quote!(struct S { #[strata(bank)] A = B => f }),
+            quote!(struct S { #[strata(bank)] [u8] => f }),
+        ] {
+            let error = expand(input).err().map(|error| error.to_string());
+            assert_eq!(
+                error.as_deref(),
+                Some("only inputs can be banks: `#[strata(bank)] name: [T; N] = initial`")
+            );
+        }
+    }
+
+    #[test]
+    fn reserves_a_bit_per_element_of_a_bank() -> syn::Result<()> {
+        let output = expand(quote!(
+            struct S {
+            #[strata(bank)] a: [u16; 4] = [0; 4],
+            #[cfg(x)] #[strata(bank)] b: [u8; 2] = [0; 2],
+            c: C = C(0),
+        }
+        ))?;
+        assert!(
+            output.contains("const __OUTCROP_BIT1 : usize = __OUTCROP_BIT0 + 1 * (< [u16 ; 4] as :: outcrop :: __private :: Array > :: LEN)"),
+            "{output}"
+        );
+        assert!(
+            output.contains("const __OUTCROP_BIT2 : usize = __OUTCROP_BIT1 + __outcrop_compiled1 ! (present) as usize * (< [u8 ; 2] as :: outcrop :: __private :: Array > :: LEN)"),
+            "{output}"
+        );
+        Ok(())
     }
 
     #[test]

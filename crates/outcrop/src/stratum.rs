@@ -3,6 +3,10 @@ use core::convert::Infallible;
 use core::fmt;
 use core::marker::PhantomData;
 
+use crate::bank::Element;
+use crate::bank::Slot;
+use crate::bank::Write;
+use crate::flags::Chunk;
 use crate::flags::Used;
 use crate::plumbing::Absent;
 use crate::plumbing::Bits;
@@ -24,6 +28,10 @@ use crate::visit::Visit;
 /// An input signal fed by the caller.
 #[derive(Debug, Clone, Copy)]
 pub struct Input<T>(pub(super) T);
+
+/// An array of inputs fed by the caller, with a change bit per element.
+#[derive(Debug, Clone, Copy)]
+pub struct Bank<T, const N: usize>(pub(super) [T; N]);
 
 /// A signal computed by `F` from the strata beneath it, and cached.
 #[derive(Clone, Copy)]
@@ -438,4 +446,92 @@ where
             visitor.visit(self.0.value(&self.1).borrow());
         }
     }
+}
+
+/// Index of a slot in [`Select`] and [`Feed`], telling it apart from the
+/// signals deposited one by one.
+#[derive(Debug)]
+pub enum Slotted {}
+
+type Banked<Tail, const N: usize> = (<Tail as Strata>::Flags, Chunk<N>);
+
+impl<T, const N: usize, Tail: LayeredImpl> Strata for (Bank<T, N>, Tail) {
+    type Flags = Banked<Tail, N>;
+
+    const CHANGED: Self::Flags = <Self::Flags as Bits>::ALL;
+
+    fn evaluate(&mut self, changed: &mut Self::Flags) {
+        self.1.evaluate(&mut changed.0);
+    }
+}
+
+impl<T, const N: usize, Tail: LayeredImpl> LayeredImpl for (Bank<T, N>, Tail) {
+    const LEN: usize = <Self::Flags as Bits>::BITS;
+    type Cursor = Used<8>;
+}
+
+impl<E, const N: usize, Tail> Select<E, Slotted> for (Bank<E::Item, N>, Tail)
+where
+    E: Slot,
+    Tail: LayeredImpl,
+{
+    const INDEX: usize = <Tail::Flags as Bits>::BITS + E::INDEX;
+    type Ref<'a>
+        = E
+    where
+        Self: 'a;
+
+    fn select(&self) -> E {
+        read(&self.0.0)
+    }
+
+    fn stale<Fl: Bits>(_: &Fl) -> bool {
+        false
+    }
+
+    fn moved<Fl: Bits>(changed: &Fl) -> bool {
+        changed.get(<Self as Select<E, Slotted>>::INDEX)
+    }
+}
+
+impl<'w, T, const N: usize, Tail> Feed<Write<'w, T>, Slotted> for (Bank<T, N>, Tail)
+where
+    T: PartialEq + Clone,
+    Tail: LayeredImpl,
+{
+    fn feed(&mut self, changed: &mut Self::Flags, write: Write<'w, T>) {
+        write.apply(&mut self.0.0, |index| changed.1.0[index] = true);
+    }
+}
+
+impl<X, I, T, const N: usize, Tail> Feed<X, (I,)> for (Bank<T, N>, Tail)
+where
+    Tail: LayeredImpl + Feed<X, I>,
+{
+    fn feed(&mut self, changed: &mut Self::Flags, value: X) {
+        self.1.feed(&mut changed.0, value);
+    }
+}
+
+impl<V, T, const N: usize, Tail> Report<V> for (Bank<T, N>, Tail)
+where
+    V: for<'a> Visit<Element<'a, T>>,
+    Tail: LayeredImpl + Report<V>,
+{
+    fn report(&self, changed: &Self::Flags, visitor: &mut V) {
+        self.1.report(&changed.0, visitor);
+        let elements = self.0.0.iter().zip(changed.1.0).enumerate();
+        for (index, (value, changed)) in elements {
+            if changed {
+                visitor.visit(&Element { index, value });
+            }
+        }
+    }
+}
+
+/// Reads the slot `E` from `bank`, rejecting at compile time a slot past its
+/// end.
+fn read<E: Slot, const N: usize>(bank: &[E::Item; N]) -> E {
+    const { assert!(E::INDEX < N, "the slot is past the end of the bank") };
+    E::read(&bank[E::INDEX])
 }

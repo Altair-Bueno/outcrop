@@ -33,6 +33,7 @@ struct Entry {
 
 enum Kind {
     Input(Input),
+    Bank(Input),
     Memo(Memo),
     View(View),
     Router(Router),
@@ -85,6 +86,12 @@ struct Router {
 ///   each dependency by reference.
 /// - `Signal = Deps => f`: a view, computed by `f` from `Deps` every time it is
 ///   read. It has no name because it has no field: it takes no memory.
+/// - `#[strata(bank)] name: [T; N] = initial`: a bank, an array of inputs
+///   stored in the field `name` with a change bit per element. It is fed an
+///   [`outcrop::Write`](https://docs.rs/outcrop), and each element is read as
+///   the [`outcrop::Slot`](https://docs.rs/outcrop) whose index points at it.
+///   `poll` reports each changed element as an
+///   [`outcrop::Element`](https://docs.rs/outcrop).
 /// - `In => f`: a router, called with every fed `&In` and an [`outcrop::Sink`](https://docs.rs/outcrop)
 ///   feeding the inputs and routers declared above it.
 ///
@@ -152,6 +159,20 @@ struct Router {
 ///     struct S {
 ///         [u8] => |_, _| {},
 ///         [u8] => |_, _| {},
+///     }
+/// }
+/// ```
+///
+/// As are two banks of the same item type, which a `Write` could not tell
+/// apart:
+///
+/// ```compile_fail
+/// outcrop::strata! {
+///     struct S {
+///         #[strata(bank)]
+///         a: [u16; 2] = [0; 2],
+///         #[strata(bank)]
+///         b: [u16; 3] = [0; 3],
 ///     }
 /// }
 /// ```

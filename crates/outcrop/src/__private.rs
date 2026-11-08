@@ -3,8 +3,12 @@
 use core::borrow::Borrow;
 use core::marker::PhantomData;
 
+use crate::bank::Element;
+use crate::bank::Slot;
+use crate::bank::Write;
 use crate::strata::Feed;
 use crate::strata::Strata;
+use crate::visit::Visit;
 
 pub trait Signal<T, I>: Strata {
     const BIT: usize;
@@ -70,6 +74,51 @@ pub const fn set<const N: usize>(changed: &mut [u8; N], bit: usize) {
     changed[bit / 8] |= 1 << (bit % 8);
 }
 
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` is not an array",
+    label = "a bank must be an array `[T; N]`"
+)]
+pub trait Array {
+    type Item;
+    const LEN: usize;
+}
+
+impl<T, const N: usize> Array for [T; N] {
+    type Item = T;
+    const LEN: usize = N;
+}
+
+pub const fn slot<E: Slot>(base: usize) -> usize {
+    base + E::INDEX
+}
+
+/// Reads the slot `E` from `bank`, rejecting at compile time a slot past its
+/// end.
+pub fn read<E: Slot, const N: usize>(bank: &[E::Item; N]) -> E {
+    const { assert!(E::INDEX < N, "the slot is past the end of the bank") };
+    E::read(&bank[E::INDEX])
+}
+
+pub fn write<T: PartialEq + Clone, const N: usize>(
+    bank: &mut [T],
+    changed: &mut [u8; N],
+    base: usize,
+    write: Write<'_, T>,
+) {
+    write.apply(bank, |index| set(changed, base + index));
+}
+
+pub fn report<V, T, const N: usize>(bank: &[T], changed: &[u8; N], base: usize, visitor: &mut V)
+where
+    V: for<'a> Visit<Element<'a, T>>,
+{
+    for (index, value) in bank.iter().enumerate() {
+        if is_set(changed, base + index) {
+            visitor.visit(&Element { index, value });
+        }
+    }
+}
+
 pub struct Stored<T>(pub T);
 
 pub struct Lazy<V>(V);
@@ -126,6 +175,25 @@ impl<T, I, H, Tail: Pick<T, I>> Pick<T, (I,)> for (H, Tail) {
     fn pick(&self) -> Tail::Ref<'_> {
         self.1.pick()
     }
+}
+
+pub struct Banked<B>(pub B);
+
+pub enum InBank {}
+
+impl<E: Slot, const N: usize, Tail> Pick<E, InBank> for (Banked<[E::Item; N]>, Tail) {
+    type Ref<'a>
+        = E
+    where
+        Self: 'a;
+
+    fn pick(&self) -> E {
+        read(&self.0.0)
+    }
+}
+
+pub const fn banked<B, C>(bank: B, chain: C) -> (Banked<B>, C) {
+    (Banked(bank), chain)
 }
 
 pub fn pick<T, I, C: Pick<T, I>>(chain: &C) -> C::Ref<'_> {

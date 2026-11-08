@@ -7,7 +7,7 @@ use crate::strata::Get;
 use crate::strata::Strata;
 
 pub trait Bits: Copy + Eq + Hash + Debug + Default {
-    const BYTES: usize;
+    const BITS: usize;
     const ALL: Self;
 
     fn get(&self, index: usize) -> bool;
