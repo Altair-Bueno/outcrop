@@ -1,10 +1,8 @@
 use core::marker::PhantomData;
 
 use crate::bank::Write;
-use crate::flags::Chunk;
-use crate::plumbing::Bits as _;
-use crate::plumbing::Cursor as _;
 use crate::plumbing::Distinct;
+use crate::plumbing::Layer;
 use crate::plumbing::Routed;
 use crate::reading::Reading;
 use crate::sink::Sink;
@@ -121,12 +119,7 @@ impl<S: Layered> Formation<S> {
     where
         (Input<T>, S): Distinct<T, I>,
     {
-        let mut changed = S::Cursor::grow(self.changed);
-        changed.set_top(S::LEN);
-        Formation {
-            changed,
-            strata: (Input(initial), self.strata),
-        }
+        self.deposit(Input(initial))
     }
 
     /// Deposits a bank: an array of inputs with a change bit per element,
@@ -138,8 +131,10 @@ impl<S: Layered> Formation<S> {
     /// changed element as an [`Element`](crate::Element), and the next one
     /// reports them all.
     ///
-    /// Each element costs a byte of flags, and the whole bank one level of
-    /// the recursion limit, however many elements it holds.
+    /// The change bits are packed in `BYTES` bytes, which must be
+    /// `N.div_ceil(8)` and is given explicitly, since stable Rust cannot
+    /// compute it from `N`. The whole bank costs one level of the recursion
+    /// limit, however many elements it holds.
     ///
     /// ```
     /// use outcrop::{Formation, Slot, Write};
@@ -160,7 +155,7 @@ impl<S: Layered> Formation<S> {
     /// struct Celsius(u16);
     ///
     /// let mut formation = Formation::new()
-    ///     .bank([0_u16; 4])
+    ///     .bank::<1, _, _, _>([0_u16; 4])
     ///     .memo(|r: &Register<2>| Celsius(r.0 / 10));
     ///
     /// formation.feed(Write::new(1, &[7, 215]));
@@ -173,20 +168,32 @@ impl<S: Layered> Formation<S> {
     ///
     /// ```compile_fail
     /// # use outcrop::Formation;
-    /// let formation = Formation::new().bank([0_u16; 2]).bank([0_u16; 3]);
+    /// let formation = Formation::new()
+    ///     .bank::<1, _, _, _>([0_u16; 2])
+    ///     .bank::<1, _, _, _>([0_u16; 3]);
+    /// ```
+    ///
+    /// And so is a byte count other than `N.div_ceil(8)`:
+    ///
+    /// ```compile_fail,E0080
+    /// # use outcrop::Formation;
+    /// let formation = Formation::new().bank::<1, _, _, _>([0_u16; 9]);
     /// ```
     #[must_use]
-    pub fn bank<T: PartialEq + Clone, const N: usize, I>(
+    pub fn bank<const BYTES: usize, T: PartialEq + Clone, const N: usize, I>(
         self,
         initial: [T; N],
-    ) -> Deposited<Bank<T, N>, S>
+    ) -> Deposited<Bank<T, N, BYTES>, S>
     where
-        for<'w> (Bank<T, N>, S): Routed<Write<'w, T>, I>,
+        for<'w> (Bank<T, N, BYTES>, S): Routed<Write<'w, T>, I>,
     {
-        Formation {
-            changed: (self.changed, Chunk([true; N])),
-            strata: (Bank(initial), self.strata),
-        }
+        const {
+            assert!(
+                BYTES == N.div_ceil(8),
+                "a bank of `N` elements packs its change bits in `N.div_ceil(8)` bytes"
+            );
+        };
+        self.deposit(Bank(initial))
     }
 
     /// Deposits a memo: a signal computed by `f` from the signals beneath it
@@ -211,19 +218,11 @@ impl<S: Layered> Formation<S> {
         (Memo<F, M, F::Output>, S): Distinct<F::Output, I>,
     {
         let value = f.compute(&self.strata);
-        let mut changed = S::Cursor::grow(self.changed);
-        changed.set_top(S::LEN);
-        Formation {
-            changed,
-            strata: (
-                Memo {
-                    f,
-                    value,
-                    marker: PhantomData,
-                },
-                self.strata,
-            ),
-        }
+        self.deposit(Memo {
+            f,
+            value,
+            marker: PhantomData,
+        })
     }
 
     /// Deposits a view: a signal computed by `f` from the signals beneath it
@@ -246,18 +245,10 @@ impl<S: Layered> Formation<S> {
         F: Compute<S, M>,
         (View<F, M, F::Output>, S): Distinct<F::Output, I>,
     {
-        let mut changed = S::Cursor::grow(self.changed);
-        changed.set_top(S::LEN);
-        Formation {
-            changed,
-            strata: (
-                View {
-                    f,
-                    marker: PhantomData,
-                },
-                self.strata,
-            ),
-        }
+        self.deposit(View {
+            f,
+            marker: PhantomData,
+        })
     }
 
     /// Deposits a router that turns a fed `&In` into feeds of the inputs and
@@ -284,15 +275,18 @@ impl<S: Layered> Formation<S> {
         F: FnMut(&In, &mut Sink<'_, S>),
         for<'a> (Router<In, F>, S): Routed<&'a In, I>,
     {
+        self.deposit(Router {
+            f,
+            marker: PhantomData,
+        })
+    }
+
+    /// Deposits `layer` on top of the strata, with its bits marked as
+    /// changed.
+    fn deposit<L: Layer<S>>(self, layer: L) -> Deposited<L, S> {
         Formation {
-            changed: self.changed,
-            strata: (
-                Router {
-                    f,
-                    marker: PhantomData,
-                },
-                self.strata,
-            ),
+            changed: L::deposit(self.changed),
+            strata: (layer, self.strata),
         }
     }
 }

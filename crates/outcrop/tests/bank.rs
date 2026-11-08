@@ -63,7 +63,9 @@ fn total(low: &Register<2>, high: &Register<3>) -> Total {
 
 #[test]
 fn first_poll_reports_every_element_and_signal() {
-    let mut formation = Formation::new().bank([1_u16, 2]).memo(celsius);
+    let mut formation = Formation::new()
+        .bank::<1, _, _, _>([1_u16, 2])
+        .memo(celsius);
 
     assert_eq!(
         poll(&mut formation),
@@ -77,7 +79,7 @@ fn first_poll_reports_every_element_and_signal() {
 
 #[test]
 fn writes_report_only_the_elements_that_changed() {
-    let mut formation = Formation::new().bank([0_u16; 4]);
+    let mut formation = Formation::new().bank::<1, _, _, _>([0_u16; 4]);
     poll(&mut formation);
 
     formation.feed(Write::new(1, &[0, 7, 0]));
@@ -87,7 +89,10 @@ fn writes_report_only_the_elements_that_changed() {
 
 #[test]
 fn signals_are_recomputed_only_when_their_elements_changed() {
-    let mut formation = Formation::new().bank([0_u16; 4]).memo(celsius).view(total);
+    let mut formation = Formation::new()
+        .bank::<1, _, _, _>([0_u16; 4])
+        .memo(celsius)
+        .view(total);
     poll(&mut formation);
 
     formation.feed(Write::new(0, &[9]));
@@ -109,7 +114,7 @@ fn signals_are_recomputed_only_when_their_elements_changed() {
 
 #[test]
 fn writes_past_the_end_of_the_bank_are_ignored() {
-    let mut formation = Formation::new().bank([0_u16; 2]);
+    let mut formation = Formation::new().bank::<1, _, _, _>([0_u16; 2]);
     poll(&mut formation);
 
     formation.feed(Write::new(1, &[5, 6, 7]));
@@ -120,7 +125,9 @@ fn writes_past_the_end_of_the_bank_are_ignored() {
 
 #[test]
 fn slots_are_read_by_type() {
-    let mut formation = Formation::new().bank([0_u16; 2]).memo(celsius);
+    let mut formation = Formation::new()
+        .bank::<1, _, _, _>([0_u16; 2])
+        .memo(celsius);
     formation.feed(Write::new(1, &[300]));
 
     assert_eq!(
@@ -134,7 +141,7 @@ fn slots_are_read_by_type() {
 fn signals_around_a_bank_keep_their_own_bits() {
     let mut formation = Formation::new()
         .input(Label("a"))
-        .bank([0_u16; 11])
+        .bank::<2, _, _, _>([0_u16; 11])
         .memo(celsius)
         .input(Total(0));
     poll(&mut formation);
@@ -155,14 +162,13 @@ fn signals_around_a_bank_keep_their_own_bits() {
 
 #[test]
 fn routers_feed_banks_beneath_them() {
-    let mut formation =
-        Formation::new()
-            .bank([0_u16; 2])
-            .memo(celsius)
-            .route(|bytes: &[u8], sink| {
-                let words = bytes.iter().copied().map(u16::from).collect::<Vec<_>>();
-                sink.feed(Write::new(0, &words));
-            });
+    let mut formation = Formation::new()
+        .bank::<1, _, _, _>([0_u16; 2])
+        .memo(celsius)
+        .route(|bytes: &[u8], sink| {
+            let words = bytes.iter().copied().map(u16::from).collect::<Vec<_>>();
+            sink.feed(Write::new(0, &words));
+        });
     poll(&mut formation);
 
     formation.feed(&[0_u8, 200][..]);
@@ -183,11 +189,18 @@ fn elements_carry_their_index() {
         }
     }
 
-    let mut formation = Formation::new().bank([0_u16; 3]);
+    let mut formation = Formation::new().bank::<1, _, _, _>([0_u16; 3]);
     let mut indices = Indices(Vec::new());
     formation.poll(&mut indices);
 
     assert_eq!(indices.0, [0, 1, 2]);
+}
+
+#[test]
+fn builder_banks_pack_a_change_bit_per_element() {
+    let formation = Formation::new().bank::<2, _, _, _>([0_u8; 11]);
+
+    assert_eq!(size_of_val(&formation), 1 + 2 + 11);
 }
 
 #[cfg(feature = "macros")]
@@ -218,7 +231,7 @@ mod declared {
     fn declared_banks_report_like_built_ones() {
         let mut built = Formation::new()
             .input(Label("a"))
-            .bank([0_u16; 11])
+            .bank::<2, _, _, _>([0_u16; 11])
             .memo(celsius)
             .view(total)
             .route(|bytes: &[u8], sink| {

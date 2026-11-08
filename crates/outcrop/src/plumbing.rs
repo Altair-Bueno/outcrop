@@ -35,18 +35,44 @@ pub trait LayeredImpl: Strata<Flags: Bits> {
     type Cursor: Cursor;
 }
 
-pub trait Stack: LayeredImpl {
-    type Tail: LayeredImpl;
+/// One stratum, deposited on the strata `Tail`.
+///
+/// `Strata`, `LayeredImpl` and the forwarding of feeds and reports are
+/// implemented once for every `(L, Tail)` from these items, whatever the
+/// number of change bits the layer takes.
+pub trait Layer<Tail: LayeredImpl>: Sized {
+    /// The flags of `Tail` with this layer's bits added.
+    type Flags: Bits;
+    /// The index of the next bit, once this layer is deposited.
+    const LEN: usize;
+    type Cursor: Cursor;
+    /// Flags marking every signal as changed.
+    const CHANGED: Self::Flags = <Self::Flags as Bits>::ALL;
 
-    fn below(flags: &Self::Flags) -> &<Self::Tail as Strata>::Flags;
+    /// Adds this layer's bits to `flags`, marked as changed.
+    fn deposit(flags: Tail::Flags) -> Self::Flags;
 
-    fn below_mut(flags: &mut Self::Flags) -> &mut <Self::Tail as Strata>::Flags;
+    fn below(flags: &Self::Flags) -> &Tail::Flags;
+
+    fn below_mut(flags: &mut Self::Flags) -> &mut Tail::Flags;
+
+    /// Updates this layer's bits, once `tail` is evaluated.
+    fn evaluate(&mut self, tail: &Tail, changed: &mut Self::Flags);
 }
 
+/// A layer whose changed signals can be reported to the visitor `V`.
+pub trait LayerReport<V, Tail: LayeredImpl>: Layer<Tail> {
+    fn report(&self, tail: &Tail, changed: &Self::Flags, visitor: &mut V);
+}
+
+/// A layer holding a single signal. Not generic, unlike [`Settle`], so that
+/// no other crate can implement it and the blanket [`Layer`] impl over it
+/// stays apart from those of routers and banks.
 pub trait Value {
     type Signal;
 }
 
+/// A layer holding a single signal, at the bit `Tail::LEN`.
 pub trait Settle<Tail>: Value {
     type Ref<'a>: Borrow<Self::Signal>
     where
@@ -58,6 +84,9 @@ pub trait Settle<Tail>: Value {
     fn stale<Fl: Bits>(changed: &Fl) -> bool;
 
     fn moved<Fl: Bits>(changed: &Fl) -> bool;
+
+    /// Updates the signal and its bit `index`, once `tail` is evaluated.
+    fn settle<Fl: Bits>(&mut self, tail: &Tail, changed: &mut Fl, index: usize);
 }
 
 pub trait Select<T, I> {

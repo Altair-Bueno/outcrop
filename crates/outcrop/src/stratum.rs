@@ -12,10 +12,11 @@ use crate::plumbing::Absent;
 use crate::plumbing::Bits;
 use crate::plumbing::ComputeImpl;
 use crate::plumbing::Cursor;
+use crate::plumbing::Layer;
+use crate::plumbing::LayerReport;
 use crate::plumbing::LayeredImpl;
 use crate::plumbing::Select;
 use crate::plumbing::Settle;
-use crate::plumbing::Stack;
 use crate::plumbing::Value;
 use crate::reading::Reading;
 use crate::sink::Sink;
@@ -29,9 +30,10 @@ use crate::visit::Visit;
 #[derive(Debug, Clone, Copy)]
 pub struct Input<T>(pub(super) T);
 
-/// An array of inputs fed by the caller, with a change bit per element.
+/// An array of inputs fed by the caller, with a change bit per element,
+/// packed in `BYTES` bytes.
 #[derive(Debug, Clone, Copy)]
-pub struct Bank<T, const N: usize>(pub(super) [T; N]);
+pub struct Bank<T, const N: usize, const BYTES: usize>(pub(super) [T; N]);
 
 /// A signal computed by `F` from the strata beneath it, and cached.
 #[derive(Clone, Copy)]
@@ -130,118 +132,116 @@ impl LayeredImpl for () {
     type Cursor = Used<0>;
 }
 
-impl<T, Tail: LayeredImpl> Strata for (Input<T>, Tail) {
-    type Flags = Grown<Tail>;
+impl<L: Layer<Tail>, Tail: LayeredImpl> Strata for (L, Tail) {
+    type Flags = L::Flags;
 
-    const CHANGED: Self::Flags = <Self::Flags as Bits>::ALL;
+    const CHANGED: Self::Flags = L::CHANGED;
 
     fn evaluate(&mut self, changed: &mut Self::Flags) {
-        self.1.evaluate(Self::below_mut(changed));
+        self.1.evaluate(L::below_mut(changed));
+        self.0.evaluate(&self.1, changed);
     }
 }
 
-impl<T, Tail: LayeredImpl> LayeredImpl for (Input<T>, Tail) {
+impl<L: Layer<Tail>, Tail: LayeredImpl> LayeredImpl for (L, Tail) {
+    const LEN: usize = L::LEN;
+    type Cursor = L::Cursor;
+}
+
+impl<E: Value + Settle<Tail>, Tail: LayeredImpl> Layer<Tail> for E {
+    type Flags = Grown<Tail>;
     const LEN: usize = Tail::LEN + 1;
     type Cursor = Next<Tail>;
-}
 
-impl<F, M, O, Tail> Strata for (Memo<F, M, O>, Tail)
-where
-    F: ComputeImpl<Tail, M, Output = O>,
-    O: PartialEq,
-    Tail: LayeredImpl,
-{
-    type Flags = Grown<Tail>;
-
-    const CHANGED: Self::Flags = <Self::Flags as Bits>::ALL;
-
-    fn evaluate(&mut self, changed: &mut Self::Flags) {
-        self.1.evaluate(Self::below_mut(changed));
-        if F::dirty(changed) {
-            let value = self.0.f.compute(&self.1);
-            if value != self.0.value {
-                self.0.value = value;
-                changed.set_top(Tail::LEN);
-            }
-        }
+    fn deposit(flags: Tail::Flags) -> Grown<Tail> {
+        let mut flags = Tail::Cursor::grow(flags);
+        flags.set_top(Tail::LEN);
+        flags
     }
-}
 
-impl<F, M, O, Tail> LayeredImpl for (Memo<F, M, O>, Tail)
-where
-    F: ComputeImpl<Tail, M, Output = O>,
-    O: PartialEq,
-    Tail: LayeredImpl,
-{
-    const LEN: usize = Tail::LEN + 1;
-    type Cursor = Next<Tail>;
-}
-
-impl<F, M, O, Tail> Strata for (View<F, M, O>, Tail)
-where
-    F: ComputeImpl<Tail, M, Output = O>,
-    Tail: LayeredImpl,
-{
-    type Flags = Grown<Tail>;
-
-    const CHANGED: Self::Flags = <Self::Flags as Bits>::ALL;
-
-    fn evaluate(&mut self, changed: &mut Self::Flags) {
-        self.1.evaluate(Self::below_mut(changed));
-        if F::dirty(changed) {
-            changed.set_top(Tail::LEN);
-        }
-    }
-}
-
-impl<F, M, O, Tail> LayeredImpl for (View<F, M, O>, Tail)
-where
-    F: ComputeImpl<Tail, M, Output = O>,
-    Tail: LayeredImpl,
-{
-    const LEN: usize = Tail::LEN + 1;
-    type Cursor = Next<Tail>;
-}
-
-impl<In: ?Sized, F, Tail: LayeredImpl> Strata for (Router<In, F>, Tail) {
-    type Flags = Tail::Flags;
-
-    const CHANGED: Self::Flags = Tail::CHANGED;
-
-    fn evaluate(&mut self, changed: &mut Self::Flags) {
-        self.1.evaluate(changed);
-    }
-}
-
-impl<In: ?Sized, F, Tail: LayeredImpl> LayeredImpl for (Router<In, F>, Tail) {
-    const LEN: usize = Tail::LEN;
-    type Cursor = Tail::Cursor;
-}
-
-impl<E: Value, Tail: LayeredImpl> Stack for (E, Tail)
-where
-    Self: LayeredImpl<Flags = Grown<Tail>>,
-{
-    type Tail = Tail;
-
-    fn below(flags: &Self::Flags) -> &Tail::Flags {
+    fn below(flags: &Grown<Tail>) -> &Tail::Flags {
         Tail::Cursor::below(flags)
     }
 
-    fn below_mut(flags: &mut Self::Flags) -> &mut Tail::Flags {
+    fn below_mut(flags: &mut Grown<Tail>) -> &mut Tail::Flags {
         Tail::Cursor::below_mut(flags)
+    }
+
+    fn evaluate(&mut self, tail: &Tail, changed: &mut Grown<Tail>) {
+        self.settle(tail, changed, Tail::LEN);
     }
 }
 
-impl<In: ?Sized, F, Tail: LayeredImpl> Stack for (Router<In, F>, Tail) {
-    type Tail = Tail;
+impl<V, E, Tail> LayerReport<V, Tail> for E
+where
+    E: Value + Settle<Tail>,
+    V: Visit<E::Signal>,
+    Tail: LayeredImpl,
+{
+    fn report(&self, tail: &Tail, changed: &Grown<Tail>, visitor: &mut V) {
+        if changed.get(Tail::LEN) {
+            visitor.visit(self.value(tail).borrow());
+        }
+    }
+}
 
-    fn below(flags: &Self::Flags) -> &Tail::Flags {
+impl<In: ?Sized, F, Tail: LayeredImpl> Layer<Tail> for Router<In, F> {
+    type Flags = Tail::Flags;
+    const LEN: usize = Tail::LEN;
+    type Cursor = Tail::Cursor;
+    const CHANGED: Tail::Flags = Tail::CHANGED;
+
+    fn deposit(flags: Tail::Flags) -> Tail::Flags {
         flags
     }
 
-    fn below_mut(flags: &mut Self::Flags) -> &mut Tail::Flags {
+    fn below(flags: &Tail::Flags) -> &Tail::Flags {
         flags
+    }
+
+    fn below_mut(flags: &mut Tail::Flags) -> &mut Tail::Flags {
+        flags
+    }
+
+    fn evaluate(&mut self, _: &Tail, _: &mut Tail::Flags) {}
+}
+
+impl<V, In: ?Sized, F, Tail: LayeredImpl> LayerReport<V, Tail> for Router<In, F> {
+    fn report(&self, _: &Tail, _: &Tail::Flags, _: &mut V) {}
+}
+
+type Banked<Tail, const BYTES: usize> = (<Tail as Strata>::Flags, Chunk<BYTES>);
+
+impl<T, const N: usize, const BYTES: usize, Tail> Layer<Tail> for Bank<T, N, BYTES>
+where
+    Tail: LayeredImpl,
+{
+    type Flags = Banked<Tail, BYTES>;
+    const LEN: usize = <Self::Flags as Bits>::BITS;
+    type Cursor = Used<8>;
+
+    fn deposit(flags: Tail::Flags) -> Self::Flags {
+        (flags, Chunk::ALL)
+    }
+
+    fn below(flags: &Self::Flags) -> &Tail::Flags {
+        &flags.0
+    }
+
+    fn below_mut(flags: &mut Self::Flags) -> &mut Tail::Flags {
+        &mut flags.0
+    }
+
+    fn evaluate(&mut self, _: &Tail, _: &mut Self::Flags) {}
+}
+
+impl<V, T, const N: usize, const BYTES: usize, Tail> LayerReport<V, Tail> for Bank<T, N, BYTES>
+where
+    V: for<'a> Visit<Element<'a, T>>,
+    Tail: LayeredImpl,
+{
+    fn report(&self, _: &Tail, changed: &Self::Flags, visitor: &mut V) {
+        Element::report(&self.0, |index| changed.1.get(index), visitor);
     }
 }
 
@@ -275,9 +275,15 @@ impl<T, Tail> Settle<Tail> for Input<T> {
     fn moved<Fl: Bits>(_: &Fl) -> bool {
         false
     }
+
+    fn settle<Fl: Bits>(&mut self, _: &Tail, _: &mut Fl, _: usize) {}
 }
 
-impl<F: ComputeImpl<Tail, M>, M, O, Tail> Settle<Tail> for Memo<F, M, O> {
+impl<F, M, O, Tail> Settle<Tail> for Memo<F, M, O>
+where
+    F: ComputeImpl<Tail, M, Output = O>,
+    O: PartialEq,
+{
     type Ref<'a>
         = &'a O
     where
@@ -294,6 +300,16 @@ impl<F: ComputeImpl<Tail, M>, M, O, Tail> Settle<Tail> for Memo<F, M, O> {
 
     fn moved<Fl: Bits>(changed: &Fl) -> bool {
         F::moved(changed)
+    }
+
+    fn settle<Fl: Bits>(&mut self, tail: &Tail, changed: &mut Fl, index: usize) {
+        if F::dirty(changed) {
+            let value = self.f.compute(tail);
+            if value != self.value {
+                self.value = value;
+                changed.set_top(index);
+            }
+        }
     }
 }
 
@@ -318,6 +334,12 @@ where
     fn moved<Fl: Bits>(changed: &Fl) -> bool {
         F::moved(changed)
     }
+
+    fn settle<Fl: Bits>(&mut self, _: &Tail, changed: &mut Fl, index: usize) {
+        if F::dirty(changed) {
+            changed.set_top(index);
+        }
+    }
 }
 
 impl<E: Settle<Tail>, Tail: LayeredImpl> Select<E::Signal, ()> for (E, Tail) {
@@ -337,6 +359,36 @@ impl<E: Settle<Tail>, Tail: LayeredImpl> Select<E::Signal, ()> for (E, Tail) {
 
     fn moved<Fl: Bits>(changed: &Fl) -> bool {
         changed.get(Tail::LEN) || E::moved(changed)
+    }
+}
+
+/// Index of a slot in [`Select`] and [`Feed`], telling it apart from the
+/// signals deposited one by one.
+#[derive(Debug)]
+pub enum Slotted {}
+
+impl<E, const N: usize, const BYTES: usize, Tail> Select<E, Slotted>
+    for (Bank<E::Item, N, BYTES>, Tail)
+where
+    E: Slot,
+    Tail: LayeredImpl,
+{
+    const INDEX: usize = <Tail::Flags as Bits>::BITS + E::INDEX;
+    type Ref<'a>
+        = E
+    where
+        Self: 'a;
+
+    fn select(&self) -> E {
+        read(&self.0.0)
+    }
+
+    fn stale<Fl: Bits>(_: &Fl) -> bool {
+        false
+    }
+
+    fn moved<Fl: Bits>(changed: &Fl) -> bool {
+        changed.get(<Self as Select<E, Slotted>>::INDEX)
     }
 }
 
@@ -395,18 +447,29 @@ where
     }
 }
 
+impl<'w, T, const N: usize, const BYTES: usize, Tail> Feed<Write<'w, T>, Slotted>
+    for (Bank<T, N, BYTES>, Tail)
+where
+    T: PartialEq + Clone,
+    Tail: LayeredImpl,
+{
+    fn feed(&mut self, changed: &mut Self::Flags, write: Write<'w, T>) {
+        write.apply(&mut self.0.0, |index| changed.1.set(index));
+    }
+}
+
 #[cfg_attr(coverage_nightly, coverage(off))]
 impl<T: Absent> Feed<T, Infallible> for () {
     fn feed(&mut self, _: &mut u8, _: T) {}
 }
 
-impl<T, I, E, Tail> Feed<T, (I,)> for (E, Tail)
+impl<T, I, L, Tail> Feed<T, (I,)> for (L, Tail)
 where
-    Self: Stack<Tail = Tail>,
+    L: Layer<Tail>,
     Tail: LayeredImpl + Feed<T, I>,
 {
     fn feed(&mut self, changed: &mut Self::Flags, value: T) {
-        self.1.feed(Self::below_mut(changed), value);
+        self.1.feed(L::below_mut(changed), value);
     }
 }
 
@@ -414,106 +477,14 @@ impl<V> Report<V> for () {
     fn report(&self, _: &u8, _: &mut V) {}
 }
 
-impl<V, In: ?Sized, F, Tail> Report<V> for (Router<In, F>, Tail)
+impl<V, L, Tail> Report<V> for (L, Tail)
 where
+    L: LayerReport<V, Tail>,
     Tail: LayeredImpl + Report<V>,
 {
     fn report(&self, changed: &Self::Flags, visitor: &mut V) {
-        self.1.report(Self::below(changed), visitor);
-    }
-}
-
-impl<V, E, Tail> Report<V> for (E, Tail)
-where
-    Self: Stack<Tail = Tail>,
-    E: Settle<Tail>,
-    V: Visit<E::Signal>,
-    Tail: LayeredImpl + Report<V>,
-{
-    fn report(&self, changed: &Self::Flags, visitor: &mut V) {
-        self.1.report(Self::below(changed), visitor);
-        if changed.get(Tail::LEN) {
-            visitor.visit(self.0.value(&self.1).borrow());
-        }
-    }
-}
-
-/// Index of a slot in [`Select`] and [`Feed`], telling it apart from the
-/// signals deposited one by one.
-#[derive(Debug)]
-pub enum Slotted {}
-
-type Banked<Tail, const N: usize> = (<Tail as Strata>::Flags, Chunk<N>);
-
-impl<T, const N: usize, Tail: LayeredImpl> Strata for (Bank<T, N>, Tail) {
-    type Flags = Banked<Tail, N>;
-
-    const CHANGED: Self::Flags = <Self::Flags as Bits>::ALL;
-
-    fn evaluate(&mut self, changed: &mut Self::Flags) {
-        self.1.evaluate(&mut changed.0);
-    }
-}
-
-impl<T, const N: usize, Tail: LayeredImpl> LayeredImpl for (Bank<T, N>, Tail) {
-    const LEN: usize = <Self::Flags as Bits>::BITS;
-    type Cursor = Used<8>;
-}
-
-impl<E, const N: usize, Tail> Select<E, Slotted> for (Bank<E::Item, N>, Tail)
-where
-    E: Slot,
-    Tail: LayeredImpl,
-{
-    const INDEX: usize = <Tail::Flags as Bits>::BITS + E::INDEX;
-    type Ref<'a>
-        = E
-    where
-        Self: 'a;
-
-    fn select(&self) -> E {
-        read(&self.0.0)
-    }
-
-    fn stale<Fl: Bits>(_: &Fl) -> bool {
-        false
-    }
-
-    fn moved<Fl: Bits>(changed: &Fl) -> bool {
-        changed.get(<Self as Select<E, Slotted>>::INDEX)
-    }
-}
-
-impl<'w, T, const N: usize, Tail> Feed<Write<'w, T>, Slotted> for (Bank<T, N>, Tail)
-where
-    T: PartialEq + Clone,
-    Tail: LayeredImpl,
-{
-    fn feed(&mut self, changed: &mut Self::Flags, write: Write<'w, T>) {
-        write.apply(&mut self.0.0, |index| changed.1.0[index] = true);
-    }
-}
-
-impl<T, const N: usize, Tail: LayeredImpl> Stack for (Bank<T, N>, Tail) {
-    type Tail = Tail;
-
-    fn below(flags: &Self::Flags) -> &Tail::Flags {
-        &flags.0
-    }
-
-    fn below_mut(flags: &mut Self::Flags) -> &mut Tail::Flags {
-        &mut flags.0
-    }
-}
-
-impl<V, T, const N: usize, Tail> Report<V> for (Bank<T, N>, Tail)
-where
-    V: for<'a> Visit<Element<'a, T>>,
-    Tail: LayeredImpl + Report<V>,
-{
-    fn report(&self, changed: &Self::Flags, visitor: &mut V) {
-        self.1.report(&changed.0, visitor);
-        Element::report(&self.0.0, |index| changed.1.0[index], visitor);
+        self.1.report(L::below(changed), visitor);
+        self.0.report(&self.1, changed, visitor);
     }
 }
 

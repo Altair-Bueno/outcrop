@@ -34,30 +34,42 @@ impl<Tail: Bits> Bits for (Tail, u8) {
     }
 }
 
-/// The change bits of a bank, one per element.
+/// The change bits of a bank, one per element, packed in `BYTES` bytes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct Chunk<const N: usize>(pub(crate) [bool; N]);
+pub struct Chunk<const BYTES: usize>([u8; BYTES]);
 
-impl<const N: usize> Default for Chunk<N> {
-    fn default() -> Self {
-        Self([false; N])
+impl<const BYTES: usize> Chunk<BYTES> {
+    pub(crate) const ALL: Self = Self([u8::MAX; BYTES]);
+
+    pub(crate) const fn get(&self, index: usize) -> bool {
+        self.0[index / 8] & 1 << (index % 8) != 0
+    }
+
+    pub(crate) const fn set(&mut self, index: usize) {
+        self.0[index / 8] |= 1 << (index % 8);
     }
 }
 
-impl<Tail: Bits, const N: usize> Bits for (Tail, Chunk<N>) {
-    const BITS: usize = Tail::BITS + N;
-    const ALL: Self = (Tail::ALL, Chunk([true; N]));
+impl<const BYTES: usize> Default for Chunk<BYTES> {
+    fn default() -> Self {
+        Self([0; BYTES])
+    }
+}
+
+impl<Tail: Bits, const BYTES: usize> Bits for (Tail, Chunk<BYTES>) {
+    const BITS: usize = Tail::BITS + 8 * BYTES;
+    const ALL: Self = (Tail::ALL, Chunk::ALL);
 
     fn get(&self, index: usize) -> bool {
         if index < Tail::BITS {
             self.0.get(index)
         } else {
-            self.1.0[index - Tail::BITS]
+            self.1.get(index - Tail::BITS)
         }
     }
 
     fn set_top(&mut self, index: usize) {
-        self.1.0[index - Tail::BITS] = true;
+        self.1.set(index - Tail::BITS);
     }
 }
 
