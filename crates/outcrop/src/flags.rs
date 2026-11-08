@@ -43,6 +43,7 @@ impl<const BYTES: usize> Chunk<BYTES> {
     pub(crate) const ALL: Self = Self([u8::MAX; BYTES]);
 
     /// Only the bit `index` set.
+    #[cfg(feature = "macros")]
     pub(crate) const fn bit(index: usize) -> Self {
         let mut bit = [0; BYTES];
         bit[index / 8] = 1 << (index % 8);
@@ -50,6 +51,7 @@ impl<const BYTES: usize> Chunk<BYTES> {
     }
 
     /// Every bit set in any of `chunks`.
+    #[cfg(feature = "macros")]
     pub(crate) const fn union<const M: usize>(chunks: [Self; M]) -> Self {
         let mut union = [0; BYTES];
         let mut chunk = 0;
@@ -77,6 +79,7 @@ impl<const BYTES: usize> Chunk<BYTES> {
     }
 
     /// Whether `self` and `other` share any set bit.
+    #[cfg(feature = "macros")]
     pub(crate) fn intersects(&self, other: &Self) -> bool {
         self.0.iter().zip(&other.0).any(|(a, b)| a & b != 0)
     }
