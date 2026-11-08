@@ -203,11 +203,14 @@ outcrop::strata! {
 outcrop::strata! {
     struct Annotated {
         temperature: Temperature = Temperature(20),
-        /// A view whose closure ignores its dependency.
-        #[expect(unused_variables, reason = "the attribute applies to the view's closure")]
+        // The closures below ignore their arguments, so each `#[expect]` is
+        // fulfilled only if it reaches the function generated from it.
+        #[strata(fn(expect(unused_variables, reason = "reaches the memo's closure")))]
+        /// Doc comments on stored signals still go on their field.
+        anti_freeze: AntiFreeze = Temperature => |t| AntiFreeze(false),
+        #[strata(fn(expect(unused_variables, reason = "reaches the view's closure")))]
         Alarm = Temperature => |t| Alarm(true),
-        /// A router whose closure ignores the fed value.
-        #[expect(unused_variables, reason = "the attribute applies to the router's closure")]
+        #[strata(fn(expect(unused_variables, reason = "reaches the router's closure")))]
         i16 => |value, sink| sink.feed(Temperature(0)),
     }
 }
@@ -377,11 +380,14 @@ fn formations_without_signals_take_no_bits() {
 }
 
 #[test]
-fn views_and_routers_accept_attributes() {
+fn attributes_reach_the_functions_they_target() {
     let mut formation = Formation::from(Annotated::default());
     formation.feed(3_i16);
 
-    assert_eq!(poll(&mut formation), ["Temperature(0)", "Alarm(true)"]);
+    assert_eq!(
+        poll(&mut formation),
+        ["Temperature(0)", "AntiFreeze(false)", "Alarm(true)"]
+    );
 }
 
 #[test]

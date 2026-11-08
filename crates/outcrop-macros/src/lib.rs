@@ -13,6 +13,7 @@ use quote::ToTokens as _;
 use syn::Attribute;
 use syn::Expr;
 use syn::Ident;
+use syn::Meta;
 use syn::Path;
 use syn::Type;
 use syn::Visibility;
@@ -27,7 +28,8 @@ struct Declaration {
 
 struct Entry {
     cfgs: Vec<Attribute>,
-    attrs: Vec<Attribute>,
+    field_attrs: Vec<Meta>,
+    fn_attrs: Vec<Meta>,
     name: Option<Ident>,
     kind: Kind,
 }
@@ -55,11 +57,32 @@ enum Kind {
 /// - `In => f`: a router, called with every fed `In` and an [`outcrop::Sink`](https://docs.rs/outcrop)
 ///   feeding the inputs and routers declared above it.
 ///
-/// So the struct's fields are exactly the stored signals. The attributes of
-/// inputs and memos are forwarded to their field. Views and routers have no
-/// field, so their attributes, such as `#[expect]`, go on the function
-/// generated from `f`. `cfg` attributes apply to everything an entry
-/// generates.
+/// So the struct's fields are exactly the stored signals.
+///
+/// `cfg` attributes apply to everything an entry generates. Other attributes
+/// go on the entry's field, so only inputs and memos accept them. To put
+/// attributes on the function generated from `f` instead, list them in
+/// `#[strata(fn(..))]`; `#[strata(field(..))]` lists attributes for the field
+/// the same way:
+///
+/// ```
+/// #[derive(PartialEq)]
+/// struct Kelvin(u16);
+/// #[derive(PartialEq)]
+/// struct Celsius(i32);
+///
+/// outcrop::strata! {
+///     struct Probe {
+///         kelvin: Kelvin = Kelvin(293),
+///         #[strata(fn(inline), field(doc = "The last reading in degrees Celsius."))]
+///         celsius: Celsius = Kelvin => |k| Celsius(i32::from(k.0) - 273),
+///     }
+/// }
+/// ```
+///
+/// Lint attributes in `fn(..)` only reach the body of `f` when it is a
+/// closure. A path to a function is called from the generated function, so
+/// lints inside it are unaffected.
 ///
 /// Attributes are kept, so the struct can derive `Clone`, `PartialEq` and
 /// other traits its signals implement. `Default` is implemented from the

@@ -11,6 +11,7 @@ use syn::Attribute;
 use syn::Error;
 use syn::Expr;
 use syn::Ident;
+use syn::Meta;
 use syn::Pat;
 use syn::Path;
 use syn::Type;
@@ -194,7 +195,10 @@ impl Expansion<'_> {
 
     fn signal(&mut self, entry: &Entry, ty: &Type, view: Option<View>) -> Option<usize> {
         let Entry {
-            cfgs, attrs, name, ..
+            cfgs,
+            field_attrs,
+            name,
+            ..
         } = entry;
         let key = key(ty);
         if self.signals.iter().any(|signal| signal.key == key) {
@@ -218,7 +222,8 @@ impl Expansion<'_> {
         let byte = quote!(#bit / 8);
         let mask = quote!(1 << (#bit % 8));
         if view.is_none() {
-            self.fields.push(quote!(#(#cfgs)* #(#attrs)* #field: #ty));
+            self.fields
+                .push(quote!(#(#cfgs)* #(#[#field_attrs])* #field: #ty));
         }
         self.signals.push(Signal {
             cfgs: cfgs.clone(),
@@ -294,14 +299,14 @@ impl Expansion<'_> {
     fn helper(
         &mut self,
         cfgs: &[Attribute],
-        attrs: &[Attribute],
+        attrs: &[Meta],
         name: &Ident,
         parameters: &[TokenStream],
         output: &TokenStream,
         f: &Expr,
     ) {
         match function(name, parameters, output, f) {
-            Ok(function) => self.helpers.push(quote!(#(#cfgs)* #(#attrs)* #function)),
+            Ok(function) => self.helpers.push(quote!(#(#cfgs)* #(#[#attrs])* #function)),
             Err(error) => self.error(error),
         }
     }
@@ -309,7 +314,7 @@ impl Expansion<'_> {
     fn derivation(
         &mut self,
         cfgs: &[Attribute],
-        attrs: &[Attribute],
+        attrs: &[Meta],
         name: &Ident,
         deps: &[Type],
         ty: &Type,
@@ -394,7 +399,7 @@ impl Expansion<'_> {
             return;
         };
         let helper = format_ident!("__outcrop_memo_{index}");
-        self.derivation(cfgs, &[], &helper, &types, ty, f);
+        self.derivation(cfgs, &entry.fn_attrs, &helper, &types, ty, f);
         self.link(index, &deps);
         let local = self.signals[index].local();
         let values = deps.iter().map(|dep| self.value(*dep, true));
@@ -431,7 +436,7 @@ impl Expansion<'_> {
     fn view(&mut self, entry: &Entry, ty: &Type, deps: &Type, f: &Expr) {
         let (types, deps) = self.dependencies(deps);
         let helper = format_ident!("__outcrop_view_{}", self.signals.len());
-        self.derivation(&entry.cfgs, &entry.attrs, &helper, &types, ty, f);
+        self.derivation(&entry.cfgs, &entry.fn_attrs, &helper, &types, ty, f);
         let view = View {
             helper,
             deps: deps.clone(),
@@ -503,7 +508,7 @@ impl Expansion<'_> {
         let sink = quote!(&mut #krate::Sink<'_, #view<'_>>);
         self.helper(
             cfgs,
-            &entry.attrs,
+            &entry.fn_attrs,
             &helper,
             &[quote!(#ty), sink],
             &TokenStream::new(),
@@ -738,13 +743,86 @@ mod tests {
     }
 
     #[test]
-    fn forwards_view_attributes_to_their_function() -> syn::Result<()> {
-        let output = expand(quote!(struct S { a: A = A(0), #[inline] B = A => f }))?;
+    fn puts_fn_attributes_on_the_function_and_field_attributes_on_the_field() -> syn::Result<()> {
+        let output = expand(quote!(struct S {
+            a: A = A(0),
+            #[strata(fn(inline), field(serde(skip)))] b: B = A => f,
+            #[strata(fn(inline, cold))] C = A => f,
+            #[strata(fn(inline))] &[u8] => f,
+        }))?;
+        assert!(output.contains("# [serde (skip)] b : B"), "{output}");
         assert!(
-            output.contains("# [inline] fn __outcrop_view_1"),
+            output.contains("# [inline] fn __outcrop_memo_1"),
             "{output}"
         );
+        assert!(
+            output.contains("# [inline] # [cold] fn __outcrop_view_2"),
+            "{output}"
+        );
+        assert!(
+            output.contains("# [inline] fn __outcrop_route_3"),
+            "{output}"
+        );
+        assert!(!output.contains("strata"), "{output}");
         Ok(())
+    }
+
+    #[test]
+    fn rejects_bare_attributes_on_views() {
+        let error = expand(quote!(struct S { a: A = A(0), #[inline] B = A => f }))
+            .err()
+            .map(|error| error.to_string());
+        assert_eq!(
+            error.as_deref(),
+            Some("views have no field; put attributes on their function with `#[strata(fn(..))]`")
+        );
+    }
+
+    #[test]
+    fn rejects_doc_comments_on_routers() {
+        let error = expand(quote!(struct S { #[doc = "frames"] &[u8] => f }))
+            .err()
+            .map(|error| error.to_string());
+        assert_eq!(
+            error.as_deref(),
+            Some("routers have no field to document; use a `//` comment instead")
+        );
+    }
+
+    #[test]
+    fn rejects_field_attributes_on_routers() {
+        let error = expand(quote!(struct S { #[strata(field(serde(skip)))] &[u8] => f }))
+            .err()
+            .map(|error| error.to_string());
+        assert_eq!(
+            error.as_deref(),
+            Some(
+                "routers have no field; put attributes on their function with `#[strata(fn(..))]`"
+            )
+        );
+    }
+
+    #[test]
+    fn rejects_fn_attributes_on_inputs() {
+        let error = expand(quote!(
+            struct S { #[strata(fn(inline))] a: A = A(0) }
+        ))
+        .err()
+        .map(|error| error.to_string());
+        assert_eq!(
+            error.as_deref(),
+            Some("inputs have no function, so `fn(..)` does not apply to them")
+        );
+    }
+
+    #[test]
+    fn rejects_unknown_attribute_targets() {
+        let error = expand(quote!(
+            struct S { #[strata(impl(inline))] a: A = A(0) }
+        ))
+        .err()
+        .map(|error| error.to_string());
+        assert_eq!(error.as_deref(), Some("expected `fn(..)` or `field(..)`"));
     }
 
     #[test]
@@ -756,16 +834,6 @@ mod tests {
             error.as_deref(),
             Some("routers have no field, so they cannot be named")
         );
-    }
-
-    #[test]
-    fn forwards_router_attributes_to_their_function() -> syn::Result<()> {
-        let output = expand(quote!(struct S { #[inline] &[u8] => f }))?;
-        assert!(
-            output.contains("# [inline] fn __outcrop_route_0"),
-            "{output}"
-        );
-        Ok(())
     }
 
     #[test]

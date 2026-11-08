@@ -3,14 +3,17 @@ use alloc::vec::Vec;
 
 use syn::Attribute;
 use syn::Ident;
+use syn::Meta;
 use syn::Token;
 use syn::Type;
 use syn::braced;
+use syn::parenthesized;
 use syn::parse::Parse;
 use syn::parse::ParseStream;
 use syn::parse::discouraged::Speculative as _;
 use syn::parse_quote;
 use syn::punctuated::Punctuated;
+use syn::spanned::Spanned as _;
 
 use crate::Declaration;
 use crate::Entry;
@@ -52,10 +55,35 @@ impl Parse for Declaration {
 
 impl Parse for Entry {
     fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
-        let (cfgs, attrs): (Vec<_>, Vec<_>) = input
-            .call(Attribute::parse_outer)?
-            .into_iter()
-            .partition(|attr| attr.path().is_ident("cfg"));
+        let mut cfgs = Vec::new();
+        let mut field_attrs = Vec::new();
+        let mut fn_attrs = Vec::new();
+        let mut first_field = None;
+        let mut first_fn = None;
+        for attr in input.call(Attribute::parse_outer)? {
+            if attr.path().is_ident("cfg") {
+                cfgs.push(attr);
+            } else if attr.path().is_ident("strata") {
+                attr.parse_nested_meta(|meta| {
+                    let target = if meta.path.is_ident("fn") {
+                        first_fn.get_or_insert(meta.path.span());
+                        &mut fn_attrs
+                    } else if meta.path.is_ident("field") {
+                        first_field.get_or_insert((meta.path.span(), false));
+                        &mut field_attrs
+                    } else {
+                        return Err(meta.error("expected `fn(..)` or `field(..)`"));
+                    };
+                    let content;
+                    parenthesized!(content in meta.input);
+                    target.extend(content.parse_terminated(Meta::parse, Token![,])?);
+                    Ok(())
+                })?;
+            } else {
+                first_field.get_or_insert((attr.span(), attr.path().is_ident("doc")));
+                field_attrs.push(attr.meta);
+            }
+        }
         let name = if input.peek(Ident) && input.peek2(Token![:]) && !input.peek2(Token![::]) {
             let name: Ident = input.parse()?;
             input.parse::<Token![:]>()?;
@@ -79,9 +107,31 @@ impl Parse for Entry {
             }
             (kind, _) => kind,
         };
+        let fieldless = match kind {
+            Kind::View { .. } => Some("views"),
+            Kind::Router { .. } => Some("routers"),
+            Kind::Input { .. } | Kind::Memo { .. } => None,
+        };
+        if let (Some(fieldless), Some((span, doc))) = (fieldless, first_field) {
+            let message = if doc {
+                format!("{fieldless} have no field to document; use a `//` comment instead")
+            } else {
+                format!(
+                    "{fieldless} have no field; put attributes on their function with `#[strata(fn(..))]`"
+                )
+            };
+            return Err(syn::Error::new(span, message));
+        }
+        if let (Kind::Input { .. }, Some(span)) = (&kind, first_fn) {
+            return Err(syn::Error::new(
+                span,
+                "inputs have no function, so `fn(..)` does not apply to them",
+            ));
+        }
         Ok(Self {
             cfgs,
-            attrs,
+            field_attrs,
+            fn_attrs,
             name,
             kind,
         })
