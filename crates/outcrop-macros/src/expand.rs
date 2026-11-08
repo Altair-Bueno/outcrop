@@ -382,7 +382,8 @@ impl<'d> Expansion<'d> {
         self.field(attrs, field, ty);
         let (ident, krate, flags) = (self.ident, self.krate, &self.flags);
         let (name, local, mark) = (&field.name, local(&field.name), self.signals[index].mark());
-        let differs = quote_spanned!(ty.span()=> ::core::cmp::PartialEq::ne(&self.#name, &value));
+        let ne = quote_spanned!(ty.span()=> ::core::cmp::PartialEq::ne);
+        let differs = quote!(#ne(&self.#name, &value));
         self.impls.push(quote! {
             #(#attrs)*
             impl #krate::Feed<#ty, ()> for #ident {
@@ -422,7 +423,8 @@ impl<'d> Expansion<'d> {
         let dirty = self.changed(&deps);
         let arguments = deps.iter().map(|dep| self.value(*dep, false));
         let mark = self.signals[index].mark();
-        let differs = quote_spanned!(ty.span()=> ::core::cmp::PartialEq::ne(&value, &self.#name));
+        let ne = quote_spanned!(ty.span()=> ::core::cmp::PartialEq::ne);
+        let differs = quote!(#ne(&value, &self.#name));
         let evaluation = quote! {
             #(#attrs)*
             if #dirty {

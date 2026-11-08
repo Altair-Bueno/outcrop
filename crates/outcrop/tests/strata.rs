@@ -166,6 +166,19 @@ outcrop::strata! {
     }
 }
 
+macro_rules! wrapped {
+    ($input:ident, $memo:ident) => {
+        outcrop::strata! {
+            struct Wrapped {
+                temperature: $input = $input(20),
+                anti_freeze: $memo = $input => |t| $memo(t.0 < 10),
+            }
+        }
+    };
+}
+
+wrapped!(Temperature, AntiFreeze);
+
 outcrop::strata! {
     struct AbsentSignal {
         #[cfg(any())]
@@ -375,6 +388,16 @@ fn generated_names_do_not_capture_user_code() {
         poll(&mut formation),
         ["Setpoint(18)", "Temperature(5)", "V(5)"]
     );
+}
+
+#[test]
+fn signals_declared_through_other_macros_compare_their_values() {
+    let mut formation = Formation::from(Wrapped::default());
+    poll(&mut formation);
+
+    formation.feed(Temperature(5));
+
+    assert_eq!(poll(&mut formation), ["Temperature(5)", "AntiFreeze(true)"]);
 }
 
 #[test]
