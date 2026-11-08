@@ -26,6 +26,14 @@ purpose.
       as planned: no dependencies on the builder beneath it, and a type declared
       twice, by nesting the same struct twice or otherwise, is ambiguous when
       depended on rather than rejected at `nest`. `crates/outcrop/src/nested.rs`
+- [ ] **Pack `strata!` flags in a `Chunk`.** `strata!` still stores its flags
+      as a bare `[u8; N]`, so nesting it needs a second `Bits` impl for
+      `(Tail, [u8; N])` next to the one for `(Tail, Chunk<N>)`. `Bits` requires
+      `Default`, which arrays only have up to 32 bytes, so `nest` takes structs
+      of at most 256 signal bits while builder banks have no limit. Emitting
+      `Chunk<N>` and moving `__private`'s `is_set`, `set`, `mask` and
+      `intersects` onto it leaves one flag representation for both APIs.
+      `crates/outcrop/src/flags.rs`, `crates/outcrop-macros/src/expand.rs`
 
 ## Performance
 
@@ -46,8 +54,19 @@ purpose.
       word of 100 changing per round, fuel 2915 -> 842 (-71%); with every word
       changing, unchanged (10228 -> 10222); peak stack +16 B.
       `crates/outcrop/src/bank.rs`
+- [ ] **Test a nested struct's dependencies by set bit.** A memo or view
+      depending on a signal of a `Nested` struct walks every bit of the
+      signal's mask, calling `changed.get` for each one set. Walking only the
+      set bits with `trailing_zeros`, as bank reports do, would skip zero bytes
+      whole; it matters for large nested structs, such as one holding a bank.
+      Needs a `nest` scenario in `tools/measure/workload` first, to measure it.
+      `crates/outcrop/src/nested.rs`
 
 ## Kept as is
+
+- The `Layer` impls of `Bank` and `Nested` repeat `LEN`, `Cursor = Used<8>`,
+  `below` and `below_mut`: sharing them through a helper trait needs a second
+  blanket `Layer` impl, which overlaps the one over `Value + Settle<Tail>`.
 
 - `Distinct` and `Routed` look like plain aliases of `Get` and `Feed`, but work
   around rustc#152409, where such a where-bound shadows `Strata::Flags`.
