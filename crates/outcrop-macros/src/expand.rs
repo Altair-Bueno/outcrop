@@ -26,17 +26,17 @@ use crate::Memo;
 use crate::Router;
 use crate::View;
 
-struct Signal {
-    cfgs: Vec<Attribute>,
+struct Signal<'d> {
+    cfgs: &'d [Attribute],
     key: String,
-    storage: Storage,
+    storage: Storage<'d>,
     bit: Ident,
     stale: Vec<usize>,
     moved: Vec<usize>,
 }
 
-enum Storage {
-    Field(Ident),
+enum Storage<'d> {
+    Field(&'d Ident),
     Computed { helper: Ident, deps: Vec<usize> },
 }
 
@@ -44,7 +44,7 @@ fn local(field: &Ident) -> Ident {
     format_ident!("__outcrop_{field}", span = Span::mixed_site())
 }
 
-impl Signal {
+impl Signal<'_> {
     fn is_changed(&self) -> TokenStream {
         let bit = &self.bit;
         quote!(changed[#bit / 8] & 1 << (#bit % 8) != 0)
@@ -56,10 +56,10 @@ impl Signal {
     }
 }
 
-struct Fed {
-    cfgs: Vec<Attribute>,
+struct Fed<'d> {
+    cfgs: &'d [Attribute],
     key: String,
-    ty: Type,
+    ty: &'d Type,
 }
 
 struct Expansion<'d> {
@@ -68,8 +68,8 @@ struct Expansion<'d> {
     flags: TokenStream,
     next: TokenStream,
     bits: Vec<TokenStream>,
-    signals: Vec<Signal>,
-    fed: Vec<Fed>,
+    signals: Vec<Signal<'d>>,
+    fed: Vec<Fed<'d>>,
     fields: Vec<TokenStream>,
     defaults: Vec<TokenStream>,
     helpers: Vec<TokenStream>,
@@ -187,8 +187,8 @@ impl Declaration {
     }
 }
 
-impl Expansion<'_> {
-    fn entries(&mut self, entries: &[Entry]) {
+impl<'d> Expansion<'d> {
+    fn entries(&mut self, entries: &'d [Entry]) {
         for (position, entry) in entries.iter().enumerate() {
             let cfgs = &entry.cfgs;
             match &entry.kind {
@@ -207,7 +207,7 @@ impl Expansion<'_> {
         }
     }
 
-    fn signal(&mut self, cfgs: &[Attribute], ty: &Type, storage: Storage) -> Option<usize> {
+    fn signal(&mut self, cfgs: &'d [Attribute], ty: &Type, storage: Storage<'d>) -> Option<usize> {
         let key = key(ty);
         if self.signals.iter().any(|signal| signal.key == key) {
             self.error(Error::new(
@@ -227,7 +227,7 @@ impl Expansion<'_> {
             quote!(#bit + ::core::cfg!(all(#(#predicates),*)) as usize)
         };
         self.signals.push(Signal {
-            cfgs: cfgs.to_vec(),
+            cfgs,
             key,
             storage,
             bit,
@@ -275,10 +275,10 @@ impl Expansion<'_> {
         }
     }
 
-    fn dependencies(&mut self, deps: &Type) -> (Vec<Type>, Vec<usize>) {
+    fn dependencies(&mut self, deps: &'d Type) -> (Vec<&'d Type>, Vec<usize>) {
         let deps = dependencies(deps);
         let mut indices = Vec::new();
-        for dep in &deps {
+        for &dep in &deps {
             let key = key(dep);
             if let Some(index) = self.signals.iter().position(|signal| signal.key == key) {
                 indices.push(index);
@@ -312,7 +312,7 @@ impl Expansion<'_> {
         cfgs: &[Attribute],
         function: &Function,
         name: &Ident,
-        deps: &[Type],
+        deps: &[&Type],
         ty: &Type,
     ) {
         let parameters = deps.iter().map(|dep| quote!(&#dep)).collect::<Vec<_>>();
@@ -349,7 +349,7 @@ impl Expansion<'_> {
         signal.moved = moved;
     }
 
-    fn fed(&mut self, cfgs: &[Attribute], ty: &Type) -> Option<Fed> {
+    fn fed(&mut self, cfgs: &'d [Attribute], ty: &'d Type) -> Option<Fed<'d>> {
         let key = key(ty);
         if self.fed.iter().any(|fed| fed.key == key) {
             self.error(Error::new(
@@ -358,16 +358,12 @@ impl Expansion<'_> {
             ));
             return None;
         }
-        Some(Fed {
-            cfgs: cfgs.to_vec(),
-            key,
-            ty: ty.clone(),
-        })
+        Some(Fed { cfgs, key, ty })
     }
 
-    fn input(&mut self, cfgs: &[Attribute], input: &Input) {
+    fn input(&mut self, cfgs: &'d [Attribute], input: &'d Input) {
         let Input { field, ty, init } = input;
-        let storage = Storage::Field(field.name.clone());
+        let storage = Storage::Field(&field.name);
         let (Some(index), Some(fed)) = (self.signal(cfgs, ty, storage), self.fed(cfgs, ty)) else {
             return;
         };
@@ -392,7 +388,7 @@ impl Expansion<'_> {
         self.get(index, ty);
     }
 
-    fn memo(&mut self, cfgs: &[Attribute], memo: &Memo) {
+    fn memo(&mut self, cfgs: &'d [Attribute], memo: &'d Memo) {
         let Memo {
             field,
             function,
@@ -400,7 +396,7 @@ impl Expansion<'_> {
             deps,
         } = memo;
         let (types, deps) = self.dependencies(deps);
-        let Some(index) = self.signal(cfgs, ty, Storage::Field(field.name.clone())) else {
+        let Some(index) = self.signal(cfgs, ty, Storage::Field(&field.name)) else {
             return;
         };
         self.field(cfgs, field, ty);
@@ -436,7 +432,7 @@ impl Expansion<'_> {
         quote!(#(#checks)||*)
     }
 
-    fn view(&mut self, cfgs: &[Attribute], view: &View) {
+    fn view(&mut self, cfgs: &'d [Attribute], view: &'d View) {
         let View { function, ty, deps } = view;
         let (types, deps) = self.dependencies(deps);
         let helper = format_ident!("__outcrop_view_{}", self.signals.len());
@@ -502,7 +498,7 @@ impl Expansion<'_> {
         self.impls.push(implementation);
     }
 
-    fn router(&mut self, cfgs: &[Attribute], position: usize, router: &Router) {
+    fn router(&mut self, cfgs: &'d [Attribute], position: usize, router: &'d Router) {
         let Router { function, ty } = router;
         let Some(fed) = self.fed(cfgs, ty) else {
             return;
@@ -564,15 +560,15 @@ fn key(ty: &Type) -> String {
     ty.to_token_stream().to_string()
 }
 
-fn dependencies(deps: &Type) -> Vec<Type> {
+fn dependencies(deps: &Type) -> Vec<&Type> {
     if let Type::Tuple(tuple) = deps
         && !tuple.elems.is_empty()
     {
-        tuple.elems.iter().cloned().collect()
+        tuple.elems.iter().collect()
     } else if let Type::Paren(paren) = deps {
-        Vec::from([(*paren.elem).clone()])
+        Vec::from([&*paren.elem])
     } else {
-        Vec::from([deps.clone()])
+        Vec::from([deps])
     }
 }
 
