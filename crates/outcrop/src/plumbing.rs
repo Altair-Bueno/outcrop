@@ -2,6 +2,8 @@ use core::borrow::Borrow;
 use core::fmt::Debug;
 use core::hash::Hash;
 
+use crate::strata::Feed;
+use crate::strata::Get;
 use crate::strata::Strata;
 
 pub trait Bits: Copy + Eq + Hash + Debug + Default {
@@ -94,3 +96,11 @@ pub trait ComputeImpl<S, M> {
     note = "inputs are fed by value and routers by reference; memos and views are computed by the formation and cannot be fed"
 )]
 pub trait Absent {}
+
+pub trait Distinct<T, I> {}
+
+impl<S: Get<T, I>, T, I> Distinct<T, I> for S {}
+
+pub trait Routed<T, I> {}
+
+impl<S: Feed<T, I>, T, I> Routed<T, I> for S {}

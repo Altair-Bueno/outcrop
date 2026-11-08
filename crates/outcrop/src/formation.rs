@@ -2,6 +2,8 @@ use core::marker::PhantomData;
 
 use crate::plumbing::Bits as _;
 use crate::plumbing::Cursor as _;
+use crate::plumbing::Distinct;
+use crate::plumbing::Routed;
 use crate::reading::Reading;
 use crate::sink::Sink;
 use crate::strata::Feed;
@@ -49,6 +51,22 @@ type Deposited<E, S> = Formation<(E, S)>;
 /// let mut formation = Formation::new().input(A(0)).view(|a: &A| B(a.0));
 /// formation.feed(B(1));
 /// ```
+///
+/// Every signal has its own type, so declaring a type twice is rejected:
+///
+/// ```compile_fail,E0283
+/// # use outcrop::Formation;
+/// #[derive(PartialEq)]
+/// struct A(u8);
+/// let formation = Formation::new().input(A(0)).input(A(1));
+/// ```
+///
+/// And so is routing a type twice:
+///
+/// ```compile_fail,E0283
+/// # use outcrop::Formation;
+/// let formation = Formation::new().route(|_: &u8, _| {}).route(|_: &u8, _| {});
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Formation<S: Strata = ()> {
     changed: S::Flags,
@@ -88,7 +106,10 @@ impl<S: Layered> Formation<S> {
     ///
     /// The value is reported by the next [`poll`](Self::poll).
     #[must_use]
-    pub fn input<T: PartialEq>(self, initial: T) -> Deposited<Input<T>, S> {
+    pub fn input<T: PartialEq, I>(self, initial: T) -> Deposited<Input<T>, S>
+    where
+        (Input<T>, S): Distinct<T, I>,
+    {
         let mut changed = S::Cursor::grow(self.changed);
         changed.set_top(S::LEN);
         Formation {
@@ -106,10 +127,11 @@ impl<S: Layered> Formation<S> {
     /// and reported by the next [`poll`](Self::poll), which recomputes it
     /// whenever a dependency changed.
     #[must_use]
-    pub fn memo<F, M>(self, f: F) -> Deposited<Memo<F, M, F::Output>, S>
+    pub fn memo<F, M, I>(self, f: F) -> Deposited<Memo<F, M, F::Output>, S>
     where
         F: Compute<S, M>,
         F::Output: PartialEq,
+        (Memo<F, M, F::Output>, S): Distinct<F::Output, I>,
     {
         let value = f.compute(&self.strata);
         let mut changed = S::Cursor::grow(self.changed);
@@ -137,9 +159,10 @@ impl<S: Layered> Formation<S> {
     /// [`poll`](Self::poll) reports it whenever a dependency changed, even if
     /// its own value did not, and memos above it are then recomputed.
     #[must_use]
-    pub fn view<F, M>(self, f: F) -> Deposited<View<F, M, F::Output>, S>
+    pub fn view<F, M, I>(self, f: F) -> Deposited<View<F, M, F::Output>, S>
     where
         F: Compute<S, M>,
+        (View<F, M, F::Output>, S): Distinct<F::Output, I>,
     {
         let mut changed = S::Cursor::grow(self.changed);
         changed.set_top(S::LEN);
@@ -174,9 +197,10 @@ impl<S: Layered> Formation<S> {
     ///     .route(|a: &u8, out| out.feed(B(*a)));
     /// ```
     #[must_use]
-    pub fn route<In: ?Sized, F>(self, f: F) -> Deposited<Router<In, F>, S>
+    pub fn route<In: ?Sized, F, I>(self, f: F) -> Deposited<Router<In, F>, S>
     where
         F: FnMut(&In, &mut Sink<'_, S>),
+        for<'a> (Router<In, F>, S): Routed<&'a In, I>,
     {
         Formation {
             changed: self.changed,
