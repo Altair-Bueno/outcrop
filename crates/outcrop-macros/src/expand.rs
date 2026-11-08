@@ -65,7 +65,7 @@ struct Fed<'d> {
 struct Expansion<'d> {
     ident: &'d Ident,
     krate: &'d Path,
-    flags: TokenStream,
+    flags: Ident,
     next: TokenStream,
     bits: Vec<TokenStream>,
     signals: Vec<Signal<'d>>,
@@ -92,7 +92,7 @@ impl Declaration {
         let mut expansion = Expansion {
             ident: &self.ident,
             krate: &self.krate,
-            flags: flags.to_token_stream(),
+            flags: flags.clone(),
             next: quote!(0usize),
             bits: Vec::new(),
             signals: Vec::new(),
@@ -270,13 +270,13 @@ impl<'d> Expansion<'d> {
         Some(index)
     }
 
-    fn value(&self, index: usize, local: bool) -> TokenStream {
+    fn value(&self, index: usize, from_locals: bool) -> TokenStream {
         match &self.signals[index].storage {
             Storage::Computed { helper, deps } => {
-                let arguments = deps.iter().map(|dep| self.value(*dep, local));
+                let arguments = deps.iter().map(|dep| self.value(*dep, from_locals));
                 quote!(#helper(#(&#arguments),*))
             }
-            Storage::Field(field) if local => self::local(field).into_token_stream(),
+            Storage::Field(field) if from_locals => local(field).into_token_stream(),
             Storage::Field(field) => quote!(self.#field),
         }
     }
@@ -336,10 +336,9 @@ impl<'d> Expansion<'d> {
             .push(quote!(#(#attrs)* #(#[#targeted])* #name: #ty));
     }
 
-    fn link(&mut self, index: usize, deps: &[usize]) {
+    fn link(&mut self, index: usize, deps: &[usize], memo: bool) {
         let mut stale = Vec::new();
         let mut moved = Vec::from([index]);
-        let memo = matches!(self.signals[index].storage, Storage::Field(_));
         for &dep in deps {
             let signal = &self.signals[dep];
             if memo {
@@ -415,7 +414,7 @@ impl<'d> Expansion<'d> {
         self.field(attrs, field, ty);
         let helper = format_ident!("__outcrop_memo_{index}");
         self.derivation(attrs, function, &helper, &types, ty);
-        self.link(index, &deps);
+        self.link(index, &deps, true);
         let (name, local) = (&field.name, local(&field.name));
         let values = deps.iter().map(|dep| self.value(*dep, true));
         let default = quote!(#(#attrs)* let #local: #ty = #helper(#(&#values),*););
@@ -457,7 +456,7 @@ impl<'d> Expansion<'d> {
         let Some(index) = self.signal(attrs, ty, storage) else {
             return;
         };
-        self.link(index, &deps);
+        self.link(index, &deps, false);
         let dirty = self.changed(&deps);
         let mark = self.signals[index].mark();
         let evaluation = quote! {
