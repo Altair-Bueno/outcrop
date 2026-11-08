@@ -5,14 +5,12 @@ purpose.
 
 ## Design
 
-- [ ] **Layers of any width.** The generic `(E, Tail)` impls of `Feed`,
-      `Report`, `Select` and `Stack` only cover strata of one signal, so banks
-      and routers carry their own `Strata`, `LayeredImpl`, `Select`, `Feed` and
-      `Report` impls. A layer trait with a width (0 for routers, 1 for inputs,
-      memos and views, N for banks) and a per-layer report hook would fold them
-      into one set of impls, with an input being a bank of width 1. Needs care
-      with coherence, since the `Settle` bound is what keeps the current impls
-      apart. `crates/outcrop/src/stratum.rs`
+- [x] **Layers of any width.** A `Layer<Tail>` trait, implemented by single
+      signals (through `Settle`), routers and banks, gives one blanket impl each
+      of `Strata`, `LayeredImpl`, `Report` and forwarding `Feed`. `Value` stays
+      a separate, non-generic trait: a generic `Settle<Tail>` bound would let
+      another crate implement it for `Router`, so the blanket impls would
+      overlap. `crates/outcrop/src/stratum.rs`
 - [ ] **One lookup chain for `strata!` and the builder.** `strata!` builds
       `Default` from its own `Stored`, `Lazy` and `Banked` chain, resolved by
       `Pick` and `Derive`, which mirror the builder's `Input`, `View`, `Bank`,
@@ -24,13 +22,38 @@ purpose.
       takes a single concrete type. Taking a width and an optional slot generic
       would let inputs be width 1. `crates/outcrop-macros/src/expand.rs`
 
+- [ ] **Nest a `strata!` struct in a builder formation.** Deposit a `Nested<S>`
+      layer, as in `Formation::new().input(A(0)).nest(S::default())`. Its
+      `[u8; K]` flags go on top of the builder's, its `evaluate` and `report`
+      run on that slice, a `Select` impl maps each signal's bit to `base + BIT`
+      so builder signals above can depend on it, and a forwarding `Feed` impl
+      reaches its inputs and banks. A wrapper is needed because a second blanket
+      `Layer` impl would overlap the one over `Value + Settle`. It gives named,
+      reusable parts in a larger formation, and since a nested struct is one
+      layer for the builder's lookups, a way past the recursion limit. Limits:
+      the struct cannot depend on builder signals below it, the same struct
+      cannot be nested twice since signals are found by type, and checking a
+      dependency inside it tests a mask against an offset slice of the flags.
+      `crates/outcrop/src/stratum.rs`
+
 ## Performance
 
-- [ ] **Pack the builder's bank flags.** `Chunk<N>` stores a `bool` per element,
-      a byte per bit, and a bank closes the current flag byte. Stable Rust
-      cannot compute `N.div_ceil(8)` in a type; a second const parameter for the
-      byte count, checked by a `const` assertion, would pack them.
-      `crates/outcrop/src/flags.rs`
+- [x] **Pack the builder's bank flags.** `Chunk<BYTES>` packs a change bit per
+      element; the builder takes the byte count explicitly, as
+      `bank::<13, _, _, _>([0_u16; 101])`, checked against `N.div_ceil(8)` at
+      compile time. `crates/outcrop/src/flags.rs`
+- [ ] **Recover the builder's codegen after the `Layer` refactor.**
+      `tools/measure`, before against after: builder code +302 B (12094 to
+      12396, +2.5%), wasm fuel +69 to +77 per round in every builder scenario
+      (+1 to 2%), peak stack +16 to +32 B; `strata!` unchanged. The source does
+      the same work: `builder_idle`, where everything is inlined, has exactly 69
+      more instructions, 31 of them `i32.const 65535` + `i32.and` pairs, LLVM
+      keeping the 16-bit flags word in a local and masking it where it used to
+      reload it, plus 5 more locals. `#[inline]` on the layer methods made it
+      worse (+570 B, same fuel). Next: compare the LLVM IR of `poll` and the
+      feeds before and after, and try evaluating through `Layer::below_mut` in a
+      different order or without the `&Tail` argument.
+      `crates/outcrop/src/stratum.rs`
 - [ ] **Report banks by byte.** Bank reports test every element's bit on every
       poll that reports anything; skipping zero bytes and walking set bits with
       `trailing_zeros` would test about a byte per eight elements.
