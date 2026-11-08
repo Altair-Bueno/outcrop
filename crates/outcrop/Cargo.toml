@@ -21,5 +21,9 @@ required-features = ["macros"]
 workspace = true
 
 [[example]]
+name = "aidoo"
+required-features = ["macros"]
+
+[[example]]
 name = "routers"
 required-features = ["macros"]
