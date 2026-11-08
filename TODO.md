@@ -53,6 +53,36 @@ purpose.
       changing, unchanged (10228 -> 10222); peak stack +16 B.
       `crates/outcrop/src/bank.rs`
 
+## API guidelines
+
+Deviations from the [Rust API Guidelines][guidelines] found by the
+`effective-rust` audit.
+
+- [ ] **Package metadata (C-METADATA).** `license`, `repository` and `readme`
+      are missing, and there is no README or changelog. Blocks publishing;
+      `clippy::cargo_common_metadata` is allowed in the root `Cargo.toml` until
+      a licence is chosen.
+- [ ] **Derives `Formation` cannot use (C-COMMON-TRAITS).** `Formation` derives
+      `PartialEq`, `Eq`, `Hash` and `Default`, but `Input`, `Bank`, `Memo` and
+      `View` implement none of them, so no built formation has them. Memos and
+      views hold closures and can never be `PartialEq`; `Input<T>` and `Bank`
+      could derive all four for input-only formations.
+- [ ] **Doc examples (C-EXAMPLE).** Only `formation.rs` has them. `Reading`,
+      `Sink`, `Visit`, `Feed`, `Get` and `Report` have none, and neither do
+      `Write` and `Element` beyond the `Formation::bank` docs.
+- [ ] **Seal or document `Strata`, `Feed`, `Get` and `Report` (C-SEALED).**
+      They are public and open, so a hand-written impl can break the
+      change-bit invariants. Seal them, or state that implementing them is
+      unsupported.
+- [ ] **`Element` has public fields (C-STRUCT-PRIVATE).** `index` and `value`
+      can never be joined by another field without a breaking change.
+      `#[non_exhaustive]` would do, at the cost of callers constructing one.
+- [ ] **`Write` name.** It collides with `std::io::Write` and
+      `core::fmt::Write` when imported beside them.
+- [ ] **`Reading` combinators.** No `map` or `as_ref`.
+
+[guidelines]: https://rust-lang.github.io/api-guidelines/checklist.html
+
 ## Kept as is
 
 - `nested::intersects` walks every bit of a nested signal's mask rather than
