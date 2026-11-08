@@ -2,9 +2,15 @@
 members = ["workload", "size", "instr", "stack"]
 resolver = "3"
 
+[workspace.package]
+version = "0.0.0"
+edition = "2024"
+publish = false
+
 [workspace.dependencies]
 outcrop = { path = "@OUTCROP@/crates/outcrop", features = ["macros"] }
 workload = { path = "workload" }
+wasmtime = { version = "45", default-features = false }
 
 [profile.release]
 lto = true
