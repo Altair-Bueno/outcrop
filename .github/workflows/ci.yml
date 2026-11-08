@@ -116,7 +116,7 @@ jobs:
           key:
             ${{ runner.os }}-${{ github.job }}-${{ needs.msrv.outputs.version }}
       - name: Check the workspace on a 32-bit target without std
-        run: cargo check --workspace --target thumbv7em-none-eabi
+        run: cargo check --workspace --exclude aidoo --target thumbv7em-none-eabi
 
   rust-coverage:
     name: coverage
@@ -141,8 +141,8 @@ jobs:
           key: ${{ runner.os }}-${{ github.job }}-registry
       - name: Collect coverage data
         run: |
-          cargo llvm-cov --no-report nextest --profile ci --all-features --no-tests=pass
-          cargo llvm-cov --no-report --doc --all-features
+          cargo llvm-cov --no-report nextest --profile ci --workspace --exclude aidoo --all-features --no-tests=pass
+          cargo llvm-cov --no-report --doc --workspace --exclude aidoo --all-features
           cargo llvm-cov report --doctests --lcov --output-path lcov.info
       - name: Upload to Codecov
         uses: codecov/codecov-action@v6

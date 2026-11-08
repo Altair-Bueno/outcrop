@@ -1,0 +1,13 @@
+[package]
+name = "aidoo"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "An Airzone Aidoo modelled with outcrop, from its Modbus register map"
+publish = false
+
+[dependencies]
+outcrop = { workspace = true, features = ["macros"] }
+
+[lints]
+workspace = true
