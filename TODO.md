@@ -70,18 +70,111 @@ Deviations from the [Rust API Guidelines][guidelines] found by the
 - [ ] **Doc examples (C-EXAMPLE).** Only `formation.rs` has them. `Reading`,
       `Sink`, `Visit`, `Feed`, `Get` and `Report` have none, and neither do
       `Write` and `Element` beyond the `Formation::bank` docs.
-- [ ] **Seal or document `Strata`, `Feed`, `Get` and `Report` (C-SEALED).**
-      They are public and open, so a hand-written impl can break the
-      change-bit invariants. Seal them, or state that implementing them is
-      unsupported.
+- [ ] **Seal or document `Strata`, `Feed`, `Get` and `Report` (C-SEALED).** They
+      are public and open, so a hand-written impl can break the change-bit
+      invariants. Seal them, or state that implementing them is unsupported.
 - [ ] **`Element` has public fields (C-STRUCT-PRIVATE).** `index` and `value`
       can never be joined by another field without a breaking change.
       `#[non_exhaustive]` would do, at the cost of callers constructing one.
-- [ ] **`Write` name.** It collides with `std::io::Write` and
-      `core::fmt::Write` when imported beside them.
+- [ ] **`Write` name.** It collides with `std::io::Write` and `core::fmt::Write`
+      when imported beside them.
 - [ ] **`Reading` combinators.** No `map` or `as_ref`.
 
 [guidelines]: https://rust-lang.github.io/api-guidelines/checklist.html
+
+## Invariants
+
+Invariants the crates rely on without enforcing them, found by an audit of
+`crates/`. Items marked _verified_ were reproduced with a scratch test.
+
+### Broken promises
+
+- [ ] **A change bit means "written with a different value", not "differs from
+      the last report".** _Verified._ Inputs and banks compare a feed with the
+      current value, so `feed(A(1)); feed(A(0))` between polls reports `A(0)`
+      although nothing changed, and so does a router feeding an input twice. The
+      `poll` docs promise only changed values. Either compare with the
+      last-reported value (a stored copy) or reword the docs.
+      `crates/outcrop/src/stratum.rs`, `crates/outcrop/src/bank.rs`
+- [ ] **`PartialEq` is assumed reflexive.** _Verified._ An input holding
+      `f32::NAN` is reported on every feed, and a NaN memo on every
+      recomputation. Require `Eq`, or document it.
+- [ ] **`strata!` views take at most eight dependencies.** _Verified._ The
+      `strata!` docs claim any number, but `Default` builds views with
+      `__private::view`, bounded by `ComputeImpl`, which stops at eight. Memos
+      have no limit. `crates/outcrop/src/__private.rs`
+- [ ] **A panicking visitor loses reports.** `poll` takes the flags before
+      `report`, so under `panic=unwind` the changes not yet visited are never
+      reported, although the memos were updated. Clear bits as they are
+      reported, or document that visitors must not panic.
+      `crates/outcrop/src/formation.rs`
+
+### Held by construction only
+
+- [ ] **`Layer::LEN`, `Cursor` and `Flags` must agree.** A `Used<8>` cursor must
+      mean `LEN == Flags::BITS`; `Bank` and `Nested` set them by hand and
+      nothing ties them together. `crates/outcrop/src/plumbing.rs`
+- [ ] **Bit indexes are never range-checked.** `(Tail, u8)::set_top` underflows
+      below `Tail::BITS`, and `u8::get`/`set_top` with an index of 8 or more
+      panic in debug and alias another bit in release.
+      `crates/outcrop/src/flags.rs`
+- [ ] **`strata!` evaluates in declaration order.** The generated `evaluate`
+      compiles with a dependency declared below; only the chain built by
+      `Default` rejects it. `crates/outcrop-macros/src/expand.rs`
+- [ ] **`Flags::default()` means "nothing changed".** `poll` skips on it. Spare
+      bits past the last signal are set by `CHANGED` and bank deposits, harmless
+      only because poll clears them and bank reports mask them out.
+- [ ] **Hand-written `Strata`, `Feed`, `Get`, `Report` and `__private::Signal`
+      impls can break all of the above.** A wrong `Signal::BIT` or mask makes a
+      `Nested` lookup read the wrong bit, and calling `evaluate`, `report` and
+      `feed` directly skips the order `Formation::poll` keeps. See C-SEALED
+      above. `crates/outcrop/src/nested.rs`
+
+### Partial checks
+
+- [ ] **Uniqueness depends on declaration order.** An input after a nested
+      struct or bank holding its type is rejected at declaration, but a nested
+      struct after such an input, a bank whose `Slot`s clash with earlier
+      signals, or an input clashing with an earlier router's `&In` only fail
+      with E0283 where used or fed. `nest` checks no feed collisions at all.
+- [ ] **Compile-time asserts are post-monomorphisation.** _Verified._ The slot
+      `INDEX < N` and `BYTES == N.div_ceil(8)` asserts pass `cargo check` and
+      fail only `cargo build`, and never fire for unreachable code. In
+      `strata!`, a slot index in a bank's spare bits computes a `BIT` aliasing
+      the next signal; only the assert in `read` stops it.
+- [ ] **A `strata!` field named `chain` fails to compile.** _Verified._ Its
+      local `__outcrop_chain` clashes with the chain binding (E0416). The
+      `__outcrop_memo_N`, `__outcrop_view_N` and `__outcrop_route_N` helpers
+      also use call-site spans, unlike every other generated name.
+      `crates/outcrop-macros/src/expand.rs`
+- [ ] **`strata!` attribute forwarding.** Only plain `#[cfg]` on the struct
+      reaches the generated `const _` block, not `#[cfg_attr(.., cfg(..))]`.
+
+### Implicit state machines
+
+Documented here so that changes keep them consistent.
+
+1. **Change bit per signal:** clean → pending (declared, or fed a different
+   value) → set by evaluation (memo changed, or a view's dependency moved) →
+   reported and cleared by `poll`.
+2. **Formation lifecycle**, seen through `Reading`: built (every bit set, memos
+   stale) → fed (dependent memos stale) → polled (fresh). Freshness is derived
+   from the flags, never stored.
+3. **Memo cache:** valid, stale, recomputed equal (no bit) or recomputed changed
+   (bit). Equal to `f(deps)` only after a poll; `From` and `nest` set every bit,
+   repairing fields written directly in the declaring module.
+4. **Bit allocator:** `Used<0>`…`Used<8>`, then a new byte. Banks and nested
+   structs jump to `Used<8>`, leaving the current byte's spare bits unused.
+5. **Builder vs closed:** `Layered` strata can be extended, `strata!` structs
+   cannot; enforced by the trait bound.
+6. **`poll` protocol:** skip if clean → evaluate → clear → report, fixed only
+   inside `Formation::poll`.
+7. **Router state:** builder routers keep state in their `FnMut`; `strata!`
+   routers cannot capture, so their state lives untracked in statics.
+8. **`strata!` `Default` chain:** pushed in declaration order, popped in
+   reverse, ending in `let () = chain`; enforced at compile time.
+9. **`strata!` cfg detection:** two shadowing `macro_rules!` give each entry a
+   compiled-in or compiled-out state, feeding bit numbering and visitor bounds.
 
 ## Kept as is
 
