@@ -25,8 +25,7 @@ struct Signal {
     cfgs: Vec<Attribute>,
     key: String,
     field: Ident,
-    byte: TokenStream,
-    mask: TokenStream,
+    bit: Ident,
     view: Option<View>,
     stale: Vec<usize>,
     moved: Vec<usize>,
@@ -40,6 +39,16 @@ struct View {
 impl Signal {
     fn local(&self) -> Ident {
         format_ident!("__outcrop_{}", self.field, span = Span::mixed_site())
+    }
+
+    fn is_changed(&self) -> TokenStream {
+        let bit = &self.bit;
+        quote!(changed[#bit / 8] & 1 << (#bit % 8) != 0)
+    }
+
+    fn mark(&self) -> TokenStream {
+        let bit = &self.bit;
+        quote!(changed[#bit / 8] |= 1 << (#bit % 8);)
     }
 }
 
@@ -219,8 +228,6 @@ impl Expansion<'_> {
             let predicates = predicates(cfgs);
             quote!(#bit + ::core::cfg!(all(#(#predicates),*)) as usize)
         };
-        let byte = quote!(#bit / 8);
-        let mask = quote!(1 << (#bit % 8));
         if view.is_none() {
             self.fields
                 .push(quote!(#(#cfgs)* #(#[#field_attrs])* #field: #ty));
@@ -229,8 +236,7 @@ impl Expansion<'_> {
             cfgs: cfgs.clone(),
             key,
             field,
-            byte: byte.clone(),
-            mask: mask.clone(),
+            bit,
             view,
             stale: Vec::new(),
             moved: Vec::from([index]),
@@ -238,9 +244,10 @@ impl Expansion<'_> {
         let krate = self.krate;
         let visit = quote!(#krate::Visit<#ty>);
         let value = self.value(index, false);
+        let is_changed = self.signals[index].is_changed();
         self.reports.push(quote! {
             #(#cfgs)*
-            if changed[#byte] & #mask != 0 {
+            if #is_changed {
                 <__OutcropVisitor as #visit>::visit(visitor, &#value);
             }
         });
@@ -372,8 +379,7 @@ impl Expansion<'_> {
         };
         let (ident, krate, flags) = (self.ident, self.krate, &self.flags);
         let signal = &self.signals[index];
-        let (field, local, byte, mask) =
-            (&signal.field, signal.local(), &signal.byte, &signal.mask);
+        let (field, local, mark) = (&signal.field, signal.local(), signal.mark());
         let differs = quote_spanned!(ty.span()=> ::core::cmp::PartialEq::ne(&self.#field, &value));
         self.impls.push(quote! {
             #(#cfgs)*
@@ -381,7 +387,7 @@ impl Expansion<'_> {
                 fn feed(&mut self, changed: &mut #flags, value: #ty) {
                     if #differs {
                         self.#field = value;
-                        changed[#byte] |= #mask;
+                        #mark
                     }
                 }
             }
@@ -407,9 +413,8 @@ impl Expansion<'_> {
         self.defaults.push(default);
         let dirty = self.changed(&deps);
         let arguments = deps.iter().map(|dep| self.value(*dep, false));
-        let Signal {
-            field, byte, mask, ..
-        } = &self.signals[index];
+        let signal = &self.signals[index];
+        let (field, mark) = (&signal.field, signal.mark());
         let differs = quote_spanned!(ty.span()=> ::core::cmp::PartialEq::ne(&value, &self.#field));
         let evaluation = quote! {
             #(#cfgs)*
@@ -417,7 +422,7 @@ impl Expansion<'_> {
                 let value = #helper(#(&#arguments),*);
                 if #differs {
                     self.#field = value;
-                    changed[#byte] |= #mask;
+                    #mark
                 }
             }
         };
@@ -426,10 +431,9 @@ impl Expansion<'_> {
     }
 
     fn changed(&self, indices: &[usize]) -> TokenStream {
-        let checks = indices.iter().map(|index| {
-            let Signal { byte, mask, .. } = &self.signals[*index];
-            quote!(changed[#byte] & #mask != 0)
-        });
+        let checks = indices
+            .iter()
+            .map(|index| self.signals[*index].is_changed());
         quote!(#(#checks)||*)
     }
 
@@ -446,13 +450,12 @@ impl Expansion<'_> {
         };
         self.link(index, &deps);
         let dirty = self.changed(&deps);
-        let Signal {
-            cfgs, byte, mask, ..
-        } = &self.signals[index];
+        let signal = &self.signals[index];
+        let (cfgs, mark) = (&signal.cfgs, signal.mark());
         let evaluation = quote! {
             #(#cfgs)*
             if #dirty {
-                changed[#byte] |= #mask;
+                #mark
             }
         };
         self.evaluations.push(evaluation);
