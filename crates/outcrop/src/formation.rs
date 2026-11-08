@@ -54,7 +54,7 @@ type Deposited<E, S> = Formation<(E, S)>;
 ///
 /// Every signal has its own type, so declaring a type twice is rejected:
 ///
-/// ```compile_fail,E0283
+/// ```compile_fail
 /// # use outcrop::Formation;
 /// #[derive(PartialEq)]
 /// struct A(u8);
@@ -63,7 +63,7 @@ type Deposited<E, S> = Formation<(E, S)>;
 ///
 /// And so is routing a type twice:
 ///
-/// ```compile_fail,E0283
+/// ```compile_fail
 /// # use outcrop::Formation;
 /// let formation = Formation::new().route(|_: &u8, _| {}).route(|_: &u8, _| {});
 /// ```

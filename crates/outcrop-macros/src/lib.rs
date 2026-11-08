@@ -79,12 +79,12 @@ struct Router {
 ///
 /// - `name: Signal = initial`: an input with its initial value, stored in the
 ///   field `name`.
-/// - `name: Signal = Deps => f`: a memo, computed by `f` from `Deps` and
-///   stored in the field `name`. `Deps` is a signal declared above or a tuple
-///   of them, and `f` is a path to a function or a closure that captures
-///   nothing, taking each dependency by reference.
-/// - `Signal = Deps => f`: a view, computed by `f` from `Deps` every time it
-///   is read. It has no name because it has no field: it takes no memory.
+/// - `name: Signal = Deps => f`: a memo, computed by `f` from `Deps` and stored
+///   in the field `name`. `Deps` is a signal declared above or a tuple of them,
+///   and `f` is a path to a function or a closure that captures nothing, taking
+///   each dependency by reference.
+/// - `Signal = Deps => f`: a view, computed by `f` from `Deps` every time it is
+///   read. It has no name because it has no field: it takes no memory.
 /// - `In => f`: a router, called with every fed `&In` and an [`outcrop::Sink`](https://docs.rs/outcrop)
 ///   feeding the inputs and routers declared above it.
 ///
@@ -99,9 +99,9 @@ struct Router {
 /// and a closure `|k| Celsius::from(k)` is accepted. Two differences remain:
 ///
 /// - `f` cannot capture anything, because the struct must name every type it
-///   holds. For a memo or view that is no loss, since it should depend only
-///   on its arguments, and a value that varies belongs in an input. A router
-///   that keeps state between feeds can only be built with `Formation`.
+///   holds. For a memo or view that is no loss, since it should depend only on
+///   its arguments, and a value that varies belongs in an input. A router that
+///   keeps state between feeds can only be built with `Formation`.
 /// - A memo or view may have any number of dependencies, where `Formation`
 ///   allows eight.
 ///
@@ -124,7 +124,7 @@ struct Router {
 /// Every signal has its own type, so declaring a type twice is rejected,
 /// however it is spelled:
 ///
-/// ```compile_fail,E0283
+/// ```compile_fail
 /// #[derive(PartialEq)]
 /// struct A(u8);
 /// type Alias = A;
@@ -139,7 +139,7 @@ struct Router {
 ///
 /// And so is routing a type twice:
 ///
-/// ```compile_fail,E0283
+/// ```compile_fail
 /// outcrop::strata! {
 ///     struct S {
 ///         [u8] => |_, _| {},

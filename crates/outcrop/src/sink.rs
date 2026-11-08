@@ -21,7 +21,8 @@ impl<'s, S: Strata> Sink<'s, S> {
         Self { strata, changed }
     }
 
-    /// Feeds an input or a router declared beneath the calling router.
+    /// Feeds an input by value, or a router by reference, declared beneath
+    /// the calling router.
     pub fn feed<T, I>(&mut self, value: T)
     where
         S: Feed<T, I>,

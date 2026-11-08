@@ -7,8 +7,8 @@ use crate::reading::Reading;
 /// The signals a [`Formation`](crate::Formation) is made of.
 ///
 /// Implemented by the strata built with
-/// [`Formation::input`](crate::Formation::input), `memo`, `view` and `route`, and by
-/// the types declared with `strata!`. Each signal owns one change bit in
+/// [`Formation::input`](crate::Formation::input), `memo`, `view` and `route`,
+/// and by the types declared with `strata!`. Each signal owns one change bit in
 /// [`Flags`](Self::Flags).
 #[diagnostic::on_unimplemented(
     message = "`{Self}` is not a stack of strata",
