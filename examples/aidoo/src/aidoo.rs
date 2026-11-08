@@ -21,7 +21,6 @@ use crate::modbus::BaudRate;
 use crate::modbus::Parity;
 use crate::register;
 use crate::register::Block;
-use crate::register::Invalid;
 use crate::register::Register;
 use crate::telemetry::BuildingPower;
 use crate::telemetry::CompressorCoolingConsumed;
@@ -76,25 +75,24 @@ macro_rules! declare {
 }
 
 register::table!(declare {
-            Result<Power, Invalid> = register::Power => |r| Power::try_from(r),
-            Setpoint = register::Setpoint => |r| Setpoint::from(r),
-            RoomTemperature = register::RoomTemperature => |r| RoomTemperature::from(r),
-            Result<Mode, Invalid> = register::Mode => |r| Mode::try_from(r),
-            Result<FanSpeed, Invalid> = register::FanSpeed => |r| FanSpeed::try_from(r),
-            Result<VerticalLouvers, Invalid> = register::VerticalLouvers => |r| VerticalLouvers::try_from(r),
-            Result<HorizontalLouvers, Invalid> = register::HorizontalLouvers => |r| HorizontalLouvers::try_from(r),
-            UnitError = (register::UnitErrorFirst, register::UnitErrorSecond) => UnitError::new,
             AvailableModes = register::AvailableModes => |r| AvailableModes::from(r),
             AvailableSpeeds = register::AvailableSpeeds => |r| AvailableSpeeds::from(r),
             AvailableLouvers = register::AvailableLouvers => |r| AvailableLouvers::from(r),
+            Option<Power> = register::Power => Power::new,
+            Setpoint = register::Setpoint => |r| Setpoint::from(r),
+            Option<RoomTemperature> = register::RoomTemperature => RoomTemperature::new,
+            Option<Mode> = (register::Mode, AvailableModes) => Mode::new,
+            Option<FanSpeed> = register::FanSpeed => FanSpeed::new,
+            VerticalLouvers = (register::VerticalLouvers, AvailableLouvers) => VerticalLouvers::new,
+            HorizontalLouvers = (register::HorizontalLouvers, AvailableLouvers) => HorizontalLouvers::new,
+            Option<UnitError> = (register::UnitErrorFirst, register::UnitErrorSecond) => UnitError::new,
             CoolLimits = (register::CoolMax, register::CoolMin) => CoolLimits::new,
             HeatLimits = (register::HeatMax, register::HeatMin) => HeatLimits::new,
             AutoLimits = (register::AutoMax, register::AutoMin) => AutoLimits::new,
             FanLimits = (register::FanMax, register::FanMin) => FanLimits::new,
             DryLimits = (register::DryMax, register::DryMin) => DryLimits::new,
             setpoint_range: SetpointRange = (
-                Result<Mode, Invalid>,
-                AvailableModes,
+                Option<Mode>,
                 CoolLimits,
                 HeatLimits,
                 AutoLimits,
@@ -113,13 +111,13 @@ register::table!(declare {
             CondensationPressure = register::CondensationPressure => |r| CondensationPressure::from(r),
             Current = register::Current => |r| Current::from(r),
             WorkTemperature = register::WorkTemperature => |r| WorkTemperature::from(r),
-            Result<NumericFanSpeed, Invalid> = register::NumericFanSpeed => |r| NumericFanSpeed::try_from(r),
-            ErrorValue = register::ErrorValue => |r| ErrorValue::from(r),
+            Option<NumericFanSpeed> = register::NumericFanSpeed => NumericFanSpeed::new,
+            Option<ErrorValue> = register::ErrorValue => ErrorValue::new,
             ModbusAddress = register::ModbusAddress => |r| ModbusAddress::from(r),
-            Result<BaudRate, Invalid> = register::BaudRate => |r| BaudRate::try_from(r),
-            Result<Parity, Invalid> = register::Parity => |r| Parity::try_from(r),
-            Result<EmergencyHeat, Invalid> = register::EmergencyHeat => |r| EmergencyHeat::try_from(r),
-            Result<T1T2Input, Invalid> = register::T1T2Input => |r| T1T2Input::try_from(r),
+            Option<BaudRate> = register::BaudRate => BaudRate::new,
+            Option<Parity> = register::Parity => Parity::new,
+            Option<EmergencyHeat> = register::EmergencyHeat => EmergencyHeat::new,
+            Option<T1T2Input> = register::T1T2Input => T1T2Input::new,
             HeatingGenerated = (register::HeatingGeneratedLow, register::HeatingGeneratedHigh) => HeatingGenerated::new,
             HeatingPower = register::HeatingPower => |r| HeatingPower::from(r),
             CoolingGenerated = (register::CoolingGeneratedLow, register::CoolingGeneratedHigh) => CoolingGenerated::new,

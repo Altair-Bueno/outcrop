@@ -1,7 +1,6 @@
 //! Signals the unit reports: measurements, totals, flags and its error code.
 
 use crate::register;
-use crate::register::Invalid;
 use crate::units::CentiMegapascal;
 use crate::units::DeciAmpere;
 use crate::units::DeciCelsius;
@@ -10,6 +9,7 @@ use crate::units::Pulses;
 use crate::units::Watts;
 use core::fmt;
 use core::fmt::Debug;
+use core::num::NonZeroU16;
 
 /// Signals decoded from a single register into a unit.
 macro_rules! measurements {
@@ -27,7 +27,6 @@ macro_rules! measurements {
 
 measurements! {
     Setpoint(DeciCelsius) = register::Setpoint;
-    RoomTemperature(DeciCelsius) = register::RoomTemperature;
     OutdoorTemperature(DeciCelsius) = register::OutdoorTemperature;
     ReturnTemperature(DeciCelsius) = register::ReturnTemperature;
     IndoorExchangerTemperature(DeciCelsius) = register::IndoorExchangerTemperature;
@@ -40,7 +39,6 @@ measurements! {
     CondensationPressure(CentiMegapascal) = register::CondensationPressure;
     Current(DeciAmpere) = register::Current;
     WorkTemperature(DeciCelsius) = register::WorkTemperature;
-    ErrorValue(u16) = register::ErrorValue;
     ModbusAddress(u16) = register::ModbusAddress;
     HeatingPower(Watts) = register::HeatingPower;
     CoolingPower(Watts) = register::CoolingPower;
@@ -74,20 +72,29 @@ totals! {
     Consumed = register::ConsumedLow, register::ConsumedHigh;
 }
 
+/// The temperature where the unit is, or `None` when it reads 0: the map
+/// states that a reading is always greater than 0.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct RoomTemperature(DeciCelsius);
+
+impl RoomTemperature {
+    pub(crate) fn new(register: &register::RoomTemperature) -> Option<Self> {
+        (register.0 != 0).then(|| Self(DeciCelsius::from(register.0)))
+    }
+}
+
 /// Signals decoded from a register holding 0 (inactive) or 1 (active).
 macro_rules! flags {
     ($($name:ident = $register:ty;)*) => {$(
         #[derive(Debug, Clone, Copy, PartialEq, Eq)]
         pub(crate) struct $name(bool);
 
-        impl TryFrom<&$register> for $name {
-            type Error = Invalid;
-
-            fn try_from(register: &$register) -> Result<Self, Invalid> {
+        impl $name {
+            pub(crate) const fn new(register: &$register) -> Option<Self> {
                 match register.0 {
-                    0 => Ok(Self(false)),
-                    1 => Ok(Self(true)),
-                    other => Err(Invalid(other)),
+                    0 => Some(Self(false)),
+                    1 => Some(Self(true)),
+                    _ => None,
                 }
             }
         }
@@ -99,7 +106,8 @@ flags! {
     T1T2Input = register::T1T2Input;
 }
 
-/// Error code of the unit, as four ASCII characters.
+/// Error code of the unit, as four ASCII characters, or `None` when both
+/// registers are zero, which means there is no error.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) struct UnitError([u8; 4]);
 
@@ -107,10 +115,24 @@ impl UnitError {
     pub(crate) fn new(
         first: &register::UnitErrorFirst,
         second: &register::UnitErrorSecond,
-    ) -> Self {
+    ) -> Option<Self> {
         let [a, b] = first.0.to_be_bytes();
         let [c, d] = second.0.to_be_bytes();
-        Self([a, b, c, d])
+        Some(Self([a, b, c, d])).filter(|error| error.0 != [0; 4])
+    }
+}
+
+/// Value of the unit's error, or `None` when it is zero, which means there is
+/// no error.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ErrorValue(NonZeroU16);
+
+impl ErrorValue {
+    pub(crate) const fn new(register: &register::ErrorValue) -> Option<Self> {
+        match NonZeroU16::new(register.0) {
+            Some(value) => Some(Self(value)),
+            None => None,
+        }
     }
 }
 

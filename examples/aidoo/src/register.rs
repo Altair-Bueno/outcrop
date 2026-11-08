@@ -20,9 +20,6 @@ pub(crate) struct Block<'a> {
     pub(crate) words: &'a [u16],
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct Invalid(pub(crate) u16);
-
 macro_rules! table {
     ($callback:ident $($arguments:tt)*) => {
         $callback! {

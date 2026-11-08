@@ -1,16 +1,12 @@
 //! The unit's own Modbus settings.
 
 use crate::register;
-use crate::register::Invalid;
-use core::fmt::Debug;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct BaudRate(u32);
 
-impl TryFrom<&register::BaudRate> for BaudRate {
-    type Error = Invalid;
-
-    fn try_from(register: &register::BaudRate) -> Result<Self, Invalid> {
+impl BaudRate {
+    pub(crate) const fn new(register: &register::BaudRate) -> Option<Self> {
         let rate = match register.0 {
             0 => 100,
             1 => 300,
@@ -23,9 +19,9 @@ impl TryFrom<&register::BaudRate> for BaudRate {
             8 => 19200,
             9 => 57600,
             10 => 115_200,
-            other => return Err(Invalid(other)),
+            _ => return None,
         };
-        Ok(Self(rate))
+        Some(Self(rate))
     }
 }
 
@@ -36,15 +32,13 @@ pub(crate) enum Parity {
     Even,
 }
 
-impl TryFrom<&register::Parity> for Parity {
-    type Error = Invalid;
-
-    fn try_from(register: &register::Parity) -> Result<Self, Invalid> {
+impl Parity {
+    pub(crate) const fn new(register: &register::Parity) -> Option<Self> {
         match register.0 {
-            0 => Ok(Self::None),
-            1 => Ok(Self::Odd),
-            2 => Ok(Self::Even),
-            other => Err(Invalid(other)),
+            0 => Some(Self::None),
+            1 => Some(Self::Odd),
+            2 => Some(Self::Even),
+            _ => None,
         }
     }
 }

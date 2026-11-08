@@ -1,8 +1,11 @@
 //! What a user controls: power, mode, fan speed and louvers.
+//!
+//! A value the map does not list, or one the unit's capability flags rule out,
+//! decodes to `None`.
 
+use crate::capabilities::AvailableLouvers;
+use crate::capabilities::AvailableModes;
 use crate::register;
-use crate::register::Invalid;
-use core::fmt::Debug;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Power {
@@ -10,14 +13,12 @@ pub(crate) enum Power {
     On,
 }
 
-impl TryFrom<&register::Power> for Power {
-    type Error = Invalid;
-
-    fn try_from(register: &register::Power) -> Result<Self, Invalid> {
+impl Power {
+    pub(crate) const fn new(register: &register::Power) -> Option<Self> {
         match register.0 {
-            0 => Ok(Self::Off),
-            1 => Ok(Self::On),
-            other => Err(Invalid(other)),
+            0 => Some(Self::Off),
+            1 => Some(Self::On),
+            _ => None,
         }
     }
 }
@@ -44,20 +45,18 @@ impl Mode {
             Self::Dry => 4,
         }
     }
-}
 
-impl TryFrom<&register::Mode> for Mode {
-    type Error = Invalid;
-
-    fn try_from(register: &register::Mode) -> Result<Self, Invalid> {
-        match register.0 {
-            1 => Ok(Self::Auto),
-            2 => Ok(Self::Cool),
-            3 => Ok(Self::Heat),
-            4 => Ok(Self::Fan),
-            5 => Ok(Self::Dry),
-            other => Err(Invalid(other)),
-        }
+    /// The current mode, if the unit lists it among its available modes.
+    pub(crate) fn new(register: &register::Mode, available: &AvailableModes) -> Option<Self> {
+        let mode = match register.0 {
+            1 => Self::Auto,
+            2 => Self::Cool,
+            3 => Self::Heat,
+            4 => Self::Fan,
+            5 => Self::Dry,
+            _ => return None,
+        };
+        Some(mode).filter(|mode| available.supports(*mode))
     }
 }
 
@@ -70,17 +69,15 @@ pub(crate) enum FanSpeed {
     High,
 }
 
-impl TryFrom<&register::FanSpeed> for FanSpeed {
-    type Error = Invalid;
-
-    fn try_from(register: &register::FanSpeed) -> Result<Self, Invalid> {
+impl FanSpeed {
+    pub(crate) const fn new(register: &register::FanSpeed) -> Option<Self> {
         match register.0 {
-            0 => Ok(Self::Auto),
-            25 => Ok(Self::Silent),
-            50 => Ok(Self::Low),
-            75 => Ok(Self::Medium),
-            100 => Ok(Self::High),
-            other => Err(Invalid(other)),
+            0 => Some(Self::Auto),
+            25 => Some(Self::Silent),
+            50 => Some(Self::Low),
+            75 => Some(Self::Medium),
+            100 => Some(Self::High),
+            _ => None,
         }
     }
 }
@@ -89,18 +86,17 @@ impl TryFrom<&register::FanSpeed> for FanSpeed {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct NumericFanSpeed(FanSpeed);
 
-impl TryFrom<&register::NumericFanSpeed> for NumericFanSpeed {
-    type Error = Invalid;
-
-    fn try_from(register: &register::NumericFanSpeed) -> Result<Self, Invalid> {
-        match register.0 {
-            0 => Ok(Self(FanSpeed::Auto)),
-            1 => Ok(Self(FanSpeed::Silent)),
-            2 => Ok(Self(FanSpeed::Low)),
-            3 => Ok(Self(FanSpeed::Medium)),
-            4 => Ok(Self(FanSpeed::High)),
-            other => Err(Invalid(other)),
-        }
+impl NumericFanSpeed {
+    pub(crate) const fn new(register: &register::NumericFanSpeed) -> Option<Self> {
+        let speed = match register.0 {
+            0 => FanSpeed::Auto,
+            1 => FanSpeed::Silent,
+            2 => FanSpeed::Low,
+            3 => FanSpeed::Medium,
+            4 => FanSpeed::High,
+            _ => return None,
+        };
+        Some(Self(speed))
     }
 }
 
@@ -114,46 +110,53 @@ pub(crate) enum Louver {
 
 /// Four louvers, one per nibble, starting at the least significant.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct Louvers([Louver; 4]);
+pub(crate) struct Louvers([Option<Louver>; 4]);
 
-impl TryFrom<u16> for Louvers {
-    type Error = Invalid;
-
-    fn try_from(word: u16) -> Result<Self, Invalid> {
+impl Louvers {
+    /// Decodes every nibble of `word`, keeping the louvers `supports` accepts.
+    fn new(word: u16, supports: impl Fn(Louver) -> bool) -> Self {
         let [high, low] = word.to_be_bytes();
         let nibbles = [low & 0x0F, low >> 4, high & 0x0F, high >> 4];
-        let mut louvers = [Louver::Auto; 4];
-        for (louver, nibble) in louvers.iter_mut().zip(nibbles) {
-            *louver = match nibble {
+        Self(nibbles.map(|nibble| {
+            let louver = match nibble {
                 0..=7 => Louver::Position(nibble),
                 8 => Louver::Auto,
                 9 => Louver::Swing,
                 10 => Louver::Swirl,
-                _ => return Err(Invalid(word)),
+                _ => return None,
             };
-        }
-        Ok(Self(louvers))
+            Some(louver).filter(|louver| supports(*louver))
+        }))
     }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct VerticalLouvers(Louvers);
 
-impl TryFrom<&register::VerticalLouvers> for VerticalLouvers {
-    type Error = Invalid;
-
-    fn try_from(register: &register::VerticalLouvers) -> Result<Self, Invalid> {
-        Louvers::try_from(register.0).map(Self)
+impl VerticalLouvers {
+    pub(crate) fn new(register: &register::VerticalLouvers, available: &AvailableLouvers) -> Self {
+        Self(Louvers::new(register.0, |louver| match louver {
+            Louver::Position(_) => true,
+            Louver::Auto => available.auto_vertical,
+            Louver::Swing => available.swing_vertical,
+            Louver::Swirl => available.swirl,
+        }))
     }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct HorizontalLouvers(Louvers);
 
-impl TryFrom<&register::HorizontalLouvers> for HorizontalLouvers {
-    type Error = Invalid;
-
-    fn try_from(register: &register::HorizontalLouvers) -> Result<Self, Invalid> {
-        Louvers::try_from(register.0).map(Self)
+impl HorizontalLouvers {
+    /// The map has no flag for automatic horizontal louvers, so it is kept.
+    pub(crate) fn new(
+        register: &register::HorizontalLouvers,
+        available: &AvailableLouvers,
+    ) -> Self {
+        Self(Louvers::new(register.0, |louver| match louver {
+            Louver::Position(_) | Louver::Auto => true,
+            Louver::Swing => available.swing_horizontal,
+            Louver::Swirl => available.swirl,
+        }))
     }
 }

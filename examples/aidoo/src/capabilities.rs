@@ -2,7 +2,6 @@
 
 use crate::control::Mode;
 use crate::register;
-use crate::register::Invalid;
 use crate::units::DeciCelsius;
 use core::fmt;
 use core::fmt::Debug;
@@ -83,12 +82,12 @@ impl From<&register::AvailableSpeeds> for AvailableSpeeds {
     reason = "each flag is an independent bit of the register"
 )]
 pub(crate) struct AvailableLouvers {
-    auto_vertical: bool,
-    swing_vertical: bool,
-    swing_horizontal: bool,
-    swirl: bool,
-    vertical_positions: u8,
-    horizontal_positions: u8,
+    pub(crate) auto_vertical: bool,
+    pub(crate) swing_vertical: bool,
+    pub(crate) swing_horizontal: bool,
+    pub(crate) swirl: bool,
+    pub(crate) vertical_positions: u8,
+    pub(crate) horizontal_positions: u8,
 }
 
 impl From<&register::AvailableLouvers> for AvailableLouvers {
@@ -164,28 +163,27 @@ limits! {
     DryLimits = register::DryMax, register::DryMin;
 }
 
-/// Limits of the setpoint in the current mode, if the unit supports it.
+/// Limits of the setpoint in the current mode, if there is one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct SetpointRange(Option<Limits>);
 
+#[expect(
+    clippy::ref_option,
+    reason = "derived signals receive their dependencies by reference"
+)]
 pub(crate) fn setpoint_range(
-    mode: &Result<Mode, Invalid>,
-    available: &AvailableModes,
+    mode: &Option<Mode>,
     cool: &CoolLimits,
     heat: &HeatLimits,
     auto: &AutoLimits,
     fan: &FanLimits,
     dry: &DryLimits,
 ) -> SetpointRange {
-    SetpointRange(
-        mode.ok()
-            .filter(|mode| available.supports(*mode))
-            .map(|mode| match mode {
-                Mode::Auto => auto.0,
-                Mode::Cool => cool.0,
-                Mode::Heat => heat.0,
-                Mode::Fan => fan.0,
-                Mode::Dry => dry.0,
-            }),
-    )
+    SetpointRange(mode.map(|mode| match mode {
+        Mode::Auto => auto.0,
+        Mode::Cool => cool.0,
+        Mode::Heat => heat.0,
+        Mode::Fan => fan.0,
+        Mode::Dry => dry.0,
+    }))
 }
