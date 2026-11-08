@@ -46,14 +46,6 @@ purpose.
       word of 100 changing per round, fuel 2915 -> 842 (-71%); with every word
       changing, unchanged (10228 -> 10222); peak stack +16 B.
       `crates/outcrop/src/bank.rs`
-- [ ] **Test a memo's dependencies with one mask.** `strata!` checks each
-      dependency with its own `is_set`; a `const` mask of all of them tested
-      with one `intersects` would replace k checks with one.
-      `crates/outcrop-macros/src/expand.rs`
-- [ ] **Fewer router forwarding impls.** Each router in `strata!` emits a `Feed`
-      impl for every entry fed before it, quadratic in code size; one generic
-      impl gated by a sealed marker trait would do.
-      `crates/outcrop-macros/src/expand.rs`
 
 ## Kept as is
 
@@ -72,3 +64,13 @@ purpose.
   `marker()` hold what they share, the rest differs (N bits, one generic impl
   for every slot, reporting `Element`s, no per-signal duplicate check), and
   merging them would need several bank-only parameters.
+- `strata!` tests a memo's or view's dependencies one `is_set` each rather than
+  one constant mask with `intersects`: measured, the mask saved 0.2% of fuel on
+  the workload's 4-byte flags but cost 30% (831 -> 1079) with a 100-word bank,
+  as `intersects` walks every byte of the flags and LLVM does not fold the
+  mask's zero bytes away.
+- Each `strata!` router keeps a `Feed` forwarding impl per entry fed before it:
+  measured on 100 inputs, three more routers (300 more impls) add about 20 ms to
+  `cargo check` (104 -> 124 ms) and 0.4% to a release build, with no runtime
+  cost; a generic impl would trade the "cannot be fed" error for a
+  post-monomorphisation one, or still need an impl per entry.
