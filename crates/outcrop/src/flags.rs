@@ -45,12 +45,12 @@ impl<const BYTES: usize> Chunk<BYTES> {
         &self.0
     }
 
-    pub(crate) const fn get(&self, index: usize) -> bool {
-        self.0[index / 8] & 1 << (index % 8) != 0
+    pub(crate) fn get(&self, index: usize) -> bool {
+        self.0[index / 8].get(index % 8)
     }
 
-    pub(crate) const fn set(&mut self, index: usize) {
-        self.0[index / 8] |= 1 << (index % 8);
+    pub(crate) fn set(&mut self, index: usize) {
+        self.0[index / 8].set_top(index % 8);
     }
 }
 
@@ -89,13 +89,13 @@ where
             self.0.get(index)
         } else {
             let index = index - Tail::BITS;
-            self.1[index / 8] & 1 << (index % 8) != 0
+            self.1[index / 8].get(index % 8)
         }
     }
 
     fn set_top(&mut self, index: usize) {
         let index = index - Tail::BITS;
-        self.1[index / 8] |= 1 << (index % 8);
+        self.1[index / 8].set_top(index % 8);
     }
 }
 

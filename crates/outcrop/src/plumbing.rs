@@ -85,8 +85,9 @@ pub trait Settle<Tail>: Value {
 
     fn moved<Fl: Bits>(changed: &Fl) -> bool;
 
-    /// Updates the signal and its bit `index`, once `tail` is evaluated.
-    fn settle<Fl: Bits>(&mut self, tail: &Tail, changed: &mut Fl, index: usize);
+    /// Updates the signal once `tail` is evaluated, returning whether it
+    /// changed.
+    fn settle<Fl: Bits>(&mut self, tail: &Tail, changed: &Fl) -> bool;
 }
 
 #[diagnostic::on_unimplemented(

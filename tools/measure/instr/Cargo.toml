@@ -6,3 +6,4 @@ publish = false
 
 [dependencies]
 wasmtime = { version = "45", default-features = false, features = ["cranelift", "runtime", "std"] }
+workload.workspace = true

@@ -168,7 +168,9 @@ impl<E: Value + Settle<Tail>, Tail: LayeredImpl> Layer<Tail> for E {
     }
 
     fn evaluate(&mut self, tail: &Tail, changed: &mut Grown<Tail>) {
-        self.settle(tail, changed, Tail::LEN);
+        if self.settle(tail, changed) {
+            changed.set_top(Tail::LEN);
+        }
     }
 }
 
@@ -281,7 +283,9 @@ impl<T, Tail> Settle<Tail> for Input<T> {
         false
     }
 
-    fn settle<Fl: Bits>(&mut self, _: &Tail, _: &mut Fl, _: usize) {}
+    fn settle<Fl: Bits>(&mut self, _: &Tail, _: &Fl) -> bool {
+        false
+    }
 }
 
 impl<F, M, O, Tail> Settle<Tail> for Memo<F, M, O>
@@ -307,14 +311,16 @@ where
         F::moved(changed)
     }
 
-    fn settle<Fl: Bits>(&mut self, tail: &Tail, changed: &mut Fl, index: usize) {
-        if F::dirty(changed) {
-            let value = self.f.compute(tail);
-            if value != self.value {
-                self.value = value;
-                changed.set_top(index);
-            }
+    fn settle<Fl: Bits>(&mut self, tail: &Tail, changed: &Fl) -> bool {
+        if !F::dirty(changed) {
+            return false;
         }
+        let value = self.f.compute(tail);
+        if value == self.value {
+            return false;
+        }
+        self.value = value;
+        true
     }
 }
 
@@ -340,10 +346,8 @@ where
         F::moved(changed)
     }
 
-    fn settle<Fl: Bits>(&mut self, _: &Tail, changed: &mut Fl, index: usize) {
-        if F::dirty(changed) {
-            changed.set_top(index);
-        }
+    fn settle<Fl: Bits>(&mut self, _: &Tail, changed: &Fl) -> bool {
+        F::dirty(changed)
     }
 }
 

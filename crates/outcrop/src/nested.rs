@@ -58,9 +58,9 @@ where
     }
 }
 
-impl<T, I, S, Tail> Select<T, Within<I>> for (Nested<S>, Tail)
+impl<T, I, S, Tail, const N: usize> Select<T, Within<I>> for (Nested<S>, Tail)
 where
-    S: Signal<T, I, Flags: AsRef<[u8]>>,
+    S: Signal<T, I, Flags = [u8; N]>,
     Tail: LayeredImpl,
 {
     const INDEX: usize = <Tail::Flags as Bits>::BITS + S::BIT;
@@ -74,11 +74,11 @@ where
     }
 
     fn stale<Fl: Bits>(changed: &Fl) -> bool {
-        intersects::<Tail, Fl>(changed, S::STALE.as_ref())
+        intersects::<Tail, Fl>(changed, &S::STALE)
     }
 
     fn moved<Fl: Bits>(changed: &Fl) -> bool {
-        intersects::<Tail, Fl>(changed, S::MOVED.as_ref())
+        intersects::<Tail, Fl>(changed, &S::MOVED)
     }
 }
 
@@ -97,5 +97,5 @@ where
 /// struct nested on `Tail`.
 fn intersects<Tail: LayeredImpl, Fl: Bits>(changed: &Fl, mask: &[u8]) -> bool {
     let base = <Tail::Flags as Bits>::BITS;
-    (0..8 * mask.len()).any(|bit| mask[bit / 8] & 1 << (bit % 8) != 0 && changed.get(base + bit))
+    (0..8 * mask.len()).any(|bit| mask[bit / 8].get(bit % 8) && changed.get(base + bit))
 }
