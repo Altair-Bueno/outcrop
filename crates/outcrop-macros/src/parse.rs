@@ -63,21 +63,19 @@ impl Parse for Declaration {
 
 impl Parse for Entry {
     fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
-        let mut cfgs = Vec::new();
+        let mut attrs = Vec::new();
         let mut field_attrs = Vec::new();
         let mut fn_attrs = Vec::new();
         let mut first_field = None;
         let mut first_fn = None;
         for attr in input.call(Attribute::parse_outer)? {
-            if attr.path().is_ident("cfg") {
-                cfgs.push(attr);
-            } else if attr.path().is_ident("strata") {
+            if attr.path().is_ident("strata") {
                 attr.parse_nested_meta(|meta| {
                     let target = if meta.path.is_ident("fn") {
                         first_fn.get_or_insert(meta.path.span());
                         &mut fn_attrs
                     } else if meta.path.is_ident("field") {
-                        first_field.get_or_insert((meta.path.span(), false));
+                        first_field.get_or_insert(meta.path.span());
                         &mut field_attrs
                     } else {
                         return Err(meta.error("expected `fn(..)` or `field(..)`"));
@@ -88,8 +86,7 @@ impl Parse for Entry {
                     Ok(())
                 })?;
             } else {
-                first_field.get_or_insert((attr.span(), attr.path().is_ident("doc")));
-                field_attrs.push(attr.meta);
+                attrs.push(attr);
             }
         }
         let name = if input.peek(Ident) && input.peek2(Token![:]) && !input.peek2(Token![::]) {
@@ -152,20 +149,18 @@ impl Parse for Entry {
                 })
             }
         };
-        Ok(Self { cfgs, kind })
+        Ok(Self { attrs, kind })
     }
 }
 
-fn fieldless(kind: &str, first_field: Option<(Span, bool)>) -> syn::Result<()> {
-    let Some((span, doc)) = first_field else {
-        return Ok(());
-    };
-    let message = if doc {
-        format!("{kind} have no field to document; use a `//` comment instead")
-    } else {
-        format!("{kind} have no field; put attributes on their function with `#[strata(fn(..))]`")
-    };
-    Err(syn::Error::new(span, message))
+fn fieldless(kind: &str, first_field: Option<Span>) -> syn::Result<()> {
+    match first_field {
+        Some(span) => Err(syn::Error::new(
+            span,
+            format!("{kind} have no field, so `field(..)` does not apply to them"),
+        )),
+        None => Ok(()),
+    }
 }
 
 enum Shape {

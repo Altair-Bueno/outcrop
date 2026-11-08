@@ -27,7 +27,7 @@ use crate::Router;
 use crate::View;
 
 struct Signal<'d> {
-    cfgs: &'d [Attribute],
+    attrs: &'d [Attribute],
     key: String,
     storage: Storage<'d>,
     bit: Ident,
@@ -57,7 +57,7 @@ impl Signal<'_> {
 }
 
 struct Fed<'d> {
-    cfgs: &'d [Attribute],
+    attrs: &'d [Attribute],
     key: String,
     ty: &'d Type,
 }
@@ -132,8 +132,8 @@ impl Declaration {
             let Storage::Field(field) = &signal.storage else {
                 return None;
             };
-            let (cfgs, local) = (&signal.cfgs, local(field));
-            Some(quote!(#(#cfgs)* #field: #local))
+            let (attrs, local) = (&signal.attrs, local(field));
+            Some(quote!(#(#attrs)* #field: #local))
         });
         let changed_flags = if evaluations.is_empty() {
             quote!(_)
@@ -190,12 +190,12 @@ impl Declaration {
 impl<'d> Expansion<'d> {
     fn entries(&mut self, entries: &'d [Entry]) {
         for (position, entry) in entries.iter().enumerate() {
-            let cfgs = &entry.cfgs;
+            let attrs = &entry.attrs;
             match &entry.kind {
-                Kind::Input(input) => self.input(cfgs, input),
-                Kind::Memo(memo) => self.memo(cfgs, memo),
-                Kind::View(view) => self.view(cfgs, view),
-                Kind::Router(router) => self.router(cfgs, position, router),
+                Kind::Input(input) => self.input(attrs, input),
+                Kind::Memo(memo) => self.memo(attrs, memo),
+                Kind::View(view) => self.view(attrs, view),
+                Kind::Router(router) => self.router(attrs, position, router),
             }
         }
     }
@@ -207,7 +207,7 @@ impl<'d> Expansion<'d> {
         }
     }
 
-    fn signal(&mut self, cfgs: &'d [Attribute], ty: &Type, storage: Storage<'d>) -> Option<usize> {
+    fn signal(&mut self, attrs: &'d [Attribute], ty: &Type, storage: Storage<'d>) -> Option<usize> {
         let key = key(ty);
         if self.signals.iter().any(|signal| signal.key == key) {
             self.error(Error::new(
@@ -218,49 +218,55 @@ impl<'d> Expansion<'d> {
         }
         let index = self.signals.len();
         let bit = format_ident!("__OUTCROP_BIT{index}", span = Span::mixed_site());
+        let krate = self.krate;
+        let visit = quote!(#krate::Visit<#ty>);
         let next = &self.next;
         self.bits.push(quote!(const #bit: usize = #next;));
-        self.next = if cfgs.is_empty() {
-            quote!(#bit + 1)
+        if attrs.is_empty() {
+            self.next = quote!(#bit + 1);
+            self.visits.push(visit.clone());
         } else {
-            let predicates = predicates(cfgs);
-            quote!(#bit + ::core::cfg!(all(#(#predicates),*)) as usize)
-        };
+            let compiled = format_ident!("__outcrop_compiled{index}", span = Span::mixed_site());
+            let bound = format_ident!("__OutcropVisit{index}", span = Span::mixed_site());
+            self.bits.push(quote! {
+                #[allow(unused_macros)]
+                macro_rules! #compiled {
+                    (present) => { false };
+                    (bound) => {
+                        trait #bound {}
+                        impl<__OutcropVisitor: ?Sized> #bound for __OutcropVisitor {}
+                    };
+                }
+                #(#attrs)*
+                #[allow(unused_macros)]
+                macro_rules! #compiled {
+                    (present) => { true };
+                    (bound) => {
+                        trait #bound: #visit {}
+                        impl<__OutcropVisitor: ?Sized + #visit> #bound for __OutcropVisitor {}
+                    };
+                }
+                #compiled!(bound);
+            });
+            self.next = quote!(#bit + #compiled!(present) as usize);
+            self.visits.push(bound.into_token_stream());
+        }
         self.signals.push(Signal {
-            cfgs,
+            attrs,
             key,
             storage,
             bit,
             stale: Vec::new(),
             moved: Vec::from([index]),
         });
-        let krate = self.krate;
-        let visit = quote!(#krate::Visit<#ty>);
         let value = self.value(index, false);
         let is_changed = self.signals[index].is_changed();
         self.reports.push(quote! {
-            #(#cfgs)*
+            #(#attrs)*
             if #is_changed {
                 <__OutcropVisitor as #visit>::visit(visitor, &#value);
             }
         });
-        if cfgs.is_empty() {
-            self.visits.push(visit);
-        } else {
-            let bound = format_ident!("__OutcropVisit{index}", span = Span::mixed_site());
-            let absent = absent(cfgs);
-            self.helpers.push(quote! {
-                #(#cfgs)*
-                trait #bound: #visit {}
-                #(#cfgs)*
-                impl<__OutcropVisitor: ?Sized + #visit> #bound for __OutcropVisitor {}
-                #absent
-                trait #bound {}
-                #absent
-                impl<__OutcropVisitor: ?Sized> #bound for __OutcropVisitor {}
-            });
-            self.visits.push(bound.into_token_stream());
-        }
         Some(index)
     }
 
@@ -294,34 +300,40 @@ impl<'d> Expansion<'d> {
 
     fn helper(
         &mut self,
-        cfgs: &[Attribute],
+        attrs: &[Attribute],
         function: &Function,
         name: &Ident,
         parameters: &[TokenStream],
         output: &TokenStream,
     ) {
-        let Function { attrs, f } = function;
+        let Function { attrs: targeted, f } = function;
         match self::function(name, parameters, output, f) {
-            Ok(function) => self.helpers.push(quote!(#(#cfgs)* #(#[#attrs])* #function)),
+            Ok(function) => self
+                .helpers
+                .push(quote!(#(#attrs)* #(#[#targeted])* #function)),
             Err(error) => self.error(error),
         }
     }
 
     fn derivation(
         &mut self,
-        cfgs: &[Attribute],
+        attrs: &[Attribute],
         function: &Function,
         name: &Ident,
         deps: &[&Type],
         ty: &Type,
     ) {
         let parameters = deps.iter().map(|dep| quote!(&#dep)).collect::<Vec<_>>();
-        self.helper(cfgs, function, name, &parameters, &quote!(-> #ty));
+        self.helper(attrs, function, name, &parameters, &quote!(-> #ty));
     }
 
-    fn field(&mut self, cfgs: &[Attribute], field: &Field, ty: &Type) {
-        let Field { name, attrs } = field;
-        self.fields.push(quote!(#(#cfgs)* #(#[#attrs])* #name: #ty));
+    fn field(&mut self, attrs: &[Attribute], field: &Field, ty: &Type) {
+        let Field {
+            name,
+            attrs: targeted,
+        } = field;
+        self.fields
+            .push(quote!(#(#attrs)* #(#[#targeted])* #name: #ty));
     }
 
     fn link(&mut self, index: usize, deps: &[usize]) {
@@ -349,7 +361,7 @@ impl<'d> Expansion<'d> {
         signal.moved = moved;
     }
 
-    fn fed(&mut self, cfgs: &'d [Attribute], ty: &'d Type) -> Option<Fed<'d>> {
+    fn fed(&mut self, attrs: &'d [Attribute], ty: &'d Type) -> Option<Fed<'d>> {
         let key = key(ty);
         if self.fed.iter().any(|fed| fed.key == key) {
             self.error(Error::new(
@@ -358,21 +370,22 @@ impl<'d> Expansion<'d> {
             ));
             return None;
         }
-        Some(Fed { cfgs, key, ty })
+        Some(Fed { attrs, key, ty })
     }
 
-    fn input(&mut self, cfgs: &'d [Attribute], input: &'d Input) {
+    fn input(&mut self, attrs: &'d [Attribute], input: &'d Input) {
         let Input { field, ty, init } = input;
         let storage = Storage::Field(&field.name);
-        let (Some(index), Some(fed)) = (self.signal(cfgs, ty, storage), self.fed(cfgs, ty)) else {
+        let (Some(index), Some(fed)) = (self.signal(attrs, ty, storage), self.fed(attrs, ty))
+        else {
             return;
         };
-        self.field(cfgs, field, ty);
+        self.field(attrs, field, ty);
         let (ident, krate, flags) = (self.ident, self.krate, &self.flags);
         let (name, local, mark) = (&field.name, local(&field.name), self.signals[index].mark());
         let differs = quote_spanned!(ty.span()=> ::core::cmp::PartialEq::ne(&self.#name, &value));
         self.impls.push(quote! {
-            #(#cfgs)*
+            #(#attrs)*
             impl #krate::Feed<#ty, ()> for #ident {
                 fn feed(&mut self, changed: &mut #flags, value: #ty) {
                     if #differs {
@@ -383,12 +396,12 @@ impl<'d> Expansion<'d> {
             }
         });
         self.defaults
-            .push(quote!(#(#cfgs)* let #local: #ty = #init;));
+            .push(quote!(#(#attrs)* let #local: #ty = #init;));
         self.fed.push(fed);
         self.get(index, ty);
     }
 
-    fn memo(&mut self, cfgs: &'d [Attribute], memo: &'d Memo) {
+    fn memo(&mut self, attrs: &'d [Attribute], memo: &'d Memo) {
         let Memo {
             field,
             function,
@@ -396,23 +409,23 @@ impl<'d> Expansion<'d> {
             deps,
         } = memo;
         let (types, deps) = self.dependencies(deps);
-        let Some(index) = self.signal(cfgs, ty, Storage::Field(&field.name)) else {
+        let Some(index) = self.signal(attrs, ty, Storage::Field(&field.name)) else {
             return;
         };
-        self.field(cfgs, field, ty);
+        self.field(attrs, field, ty);
         let helper = format_ident!("__outcrop_memo_{index}");
-        self.derivation(cfgs, function, &helper, &types, ty);
+        self.derivation(attrs, function, &helper, &types, ty);
         self.link(index, &deps);
         let (name, local) = (&field.name, local(&field.name));
         let values = deps.iter().map(|dep| self.value(*dep, true));
-        let default = quote!(#(#cfgs)* let #local: #ty = #helper(#(&#values),*););
+        let default = quote!(#(#attrs)* let #local: #ty = #helper(#(&#values),*););
         self.defaults.push(default);
         let dirty = self.changed(&deps);
         let arguments = deps.iter().map(|dep| self.value(*dep, false));
         let mark = self.signals[index].mark();
         let differs = quote_spanned!(ty.span()=> ::core::cmp::PartialEq::ne(&value, &self.#name));
         let evaluation = quote! {
-            #(#cfgs)*
+            #(#attrs)*
             if #dirty {
                 let value = #helper(#(&#arguments),*);
                 if #differs {
@@ -432,23 +445,23 @@ impl<'d> Expansion<'d> {
         quote!(#(#checks)||*)
     }
 
-    fn view(&mut self, cfgs: &'d [Attribute], view: &'d View) {
+    fn view(&mut self, attrs: &'d [Attribute], view: &'d View) {
         let View { function, ty, deps } = view;
         let (types, deps) = self.dependencies(deps);
         let helper = format_ident!("__outcrop_view_{}", self.signals.len());
-        self.derivation(cfgs, function, &helper, &types, ty);
+        self.derivation(attrs, function, &helper, &types, ty);
         let storage = Storage::Computed {
             helper,
             deps: deps.clone(),
         };
-        let Some(index) = self.signal(cfgs, ty, storage) else {
+        let Some(index) = self.signal(attrs, ty, storage) else {
             return;
         };
         self.link(index, &deps);
         let dirty = self.changed(&deps);
         let mark = self.signals[index].mark();
         let evaluation = quote! {
-            #(#cfgs)*
+            #(#attrs)*
             if #dirty {
                 #mark
             }
@@ -460,7 +473,7 @@ impl<'d> Expansion<'d> {
     fn get(&mut self, index: usize, ty: &Type) {
         let (ident, krate, flags) = (self.ident, self.krate, &self.flags);
         let Signal {
-            cfgs,
+            attrs,
             stale,
             storage,
             ..
@@ -486,7 +499,7 @@ impl<'d> Expansion<'d> {
             (quote!(changed), body)
         };
         let implementation = quote! {
-            #(#cfgs)*
+            #(#attrs)*
             impl #krate::Get<#ty, ()> for #ident {
                 type Ref<'a> = #output where Self: 'a;
 
@@ -498,9 +511,9 @@ impl<'d> Expansion<'d> {
         self.impls.push(implementation);
     }
 
-    fn router(&mut self, cfgs: &'d [Attribute], position: usize, router: &'d Router) {
+    fn router(&mut self, attrs: &'d [Attribute], position: usize, router: &'d Router) {
         let Router { function, ty } = router;
-        let Some(fed) = self.fed(cfgs, ty) else {
+        let Some(fed) = self.fed(attrs, ty) else {
             return;
         };
         let view = format_ident!("__OutcropBelow{position}");
@@ -508,7 +521,7 @@ impl<'d> Expansion<'d> {
         let krate = self.krate;
         let sink = quote!(&mut #krate::Sink<'_, #view<'_>>);
         self.helper(
-            cfgs,
+            attrs,
             function,
             &helper,
             &[quote!(#ty), sink],
@@ -517,11 +530,13 @@ impl<'d> Expansion<'d> {
         let (ident, flags) = (self.ident, &self.flags);
         let below = self.fed.iter().map(
             |Fed {
-                 cfgs: fed_cfgs, ty, ..
+                 attrs: fed_attrs,
+                 ty,
+                 ..
              }| {
                 quote! {
-                    #(#cfgs)*
-                    #(#fed_cfgs)*
+                    #(#attrs)*
+                    #(#fed_attrs)*
                     impl #krate::Feed<#ty, ()> for #view<'_> {
                         fn feed(&mut self, changed: &mut #flags, value: #ty) {
                             <#ident as #krate::Feed<#ty, ()>>::feed(self.0, changed, value);
@@ -531,10 +546,10 @@ impl<'d> Expansion<'d> {
             },
         );
         self.impls.push(quote! {
-            #(#cfgs)*
+            #(#attrs)*
             struct #view<'s>(&'s mut #ident);
 
-            #(#cfgs)*
+            #(#attrs)*
             impl #krate::Strata for #view<'_> {
                 type Flags = #flags;
 
@@ -545,7 +560,7 @@ impl<'d> Expansion<'d> {
 
             #(#below)*
 
-            #(#cfgs)*
+            #(#attrs)*
             impl #krate::Feed<#ty, ()> for #ident {
                 fn feed(&mut self, changed: &mut #flags, value: #ty) {
                     #helper(value, &mut #krate::Sink::new(&mut #view(self), changed));
@@ -611,18 +626,6 @@ fn function(
             (#f)(#(#arguments),*)
         }
     })
-}
-
-fn predicates(cfgs: &[Attribute]) -> impl Iterator<Item = TokenStream> {
-    cfgs.iter().map(|attr| match attr.meta.require_list() {
-        Ok(list) => list.tokens.clone(),
-        Err(error) => error.to_compile_error(),
-    })
-}
-
-fn absent(cfgs: &[Attribute]) -> TokenStream {
-    let predicates = predicates(cfgs);
-    quote!(#[cfg(not(all(#(#predicates),*)))])
 }
 
 fn reject_default(attrs: &[Attribute]) -> Option<Error> {
@@ -704,10 +707,10 @@ mod tests {
     }
 
     #[test]
-    fn forwards_signal_attributes_to_their_field_only() -> syn::Result<()> {
+    fn targets_field_attributes_at_the_field_only() -> syn::Result<()> {
         let output = expand(quote!(struct S {
-            #[serde(rename = "a")] a: A = A(0),
-            #[serde(skip)] b: B = A => f,
+            #[strata(field(serde(rename = "a")))] a: A = A(0),
+            #[strata(field(serde(skip)))] b: B = A => f,
         }))?;
         assert!(
             output.contains("# [serde (rename = \"a\")] a : A"),
@@ -768,25 +771,28 @@ mod tests {
     }
 
     #[test]
-    fn rejects_bare_attributes_on_views() {
-        let error = expand(quote!(struct S { a: A = A(0), #[inline] B = A => f }))
-            .err()
-            .map(|error| error.to_string());
-        assert_eq!(
-            error.as_deref(),
-            Some("views have no field; put attributes on their function with `#[strata(fn(..))]`")
-        );
-    }
-
-    #[test]
-    fn rejects_doc_comments_on_routers() {
-        let error = expand(quote!(struct S { #[doc = "frames"] &[u8] => f }))
-            .err()
-            .map(|error| error.to_string());
-        assert_eq!(
-            error.as_deref(),
-            Some("routers have no field to document; use a `//` comment instead")
-        );
+    fn copies_bare_attributes_onto_every_generated_item() -> syn::Result<()> {
+        let output = expand(quote!(struct S {
+            #[deny(x)] a: A = A(0),
+            #[deny(y)] B = A => f,
+            #[deny(z)] &[u8] => g,
+        }))?;
+        for item in [
+            "# [deny (x)] a : A",
+            "# [deny (x)] let __outcrop_a",
+            "# [deny (x)] a : __outcrop_a",
+            "# [deny (x)] if changed",
+            "# [deny (x)] impl :: outcrop :: Feed < A",
+            "# [deny (x)] impl :: outcrop :: Get < A",
+            "# [deny (y)] fn __outcrop_view_1",
+            "# [deny (y)] if changed",
+            "# [deny (y)] impl :: outcrop :: Get < B",
+            "# [deny (z)] fn __outcrop_route_2",
+            "# [deny (z)] impl :: outcrop :: Feed < & [u8]",
+        ] {
+            assert!(output.contains(item), "{item} in {output}");
+        }
+        Ok(())
     }
 
     #[test]
@@ -796,9 +802,7 @@ mod tests {
             .map(|error| error.to_string());
         assert_eq!(
             error.as_deref(),
-            Some(
-                "routers have no field; put attributes on their function with `#[strata(fn(..))]`"
-            )
+            Some("routers have no field, so `field(..)` does not apply to them")
         );
     }
 
@@ -837,11 +841,21 @@ mod tests {
     }
 
     #[test]
-    fn negates_every_cfg_of_an_entry_for_its_absent_bound() -> syn::Result<()> {
+    fn counts_bits_and_bounds_visitors_through_the_entry_attributes() -> syn::Result<()> {
         let output = expand(quote!(
-            struct S { #[cfg(a)] #[cfg(b)] a: A = A(0) }
+            struct S { #[cfg(a)] #[cfg_attr(b, cfg(c))] a: A = A(0) }
         ))?;
-        assert!(output.contains("# [cfg (not (all (a , b)))]"), "{output}");
+        assert!(
+            output.contains(
+                "# [cfg (a)] # [cfg_attr (b , cfg (c))] # [allow (unused_macros)] macro_rules ! __outcrop_compiled0"
+            ),
+            "{output}"
+        );
+        assert!(
+            output.contains("__OUTCROP_BIT0 + __outcrop_compiled0 ! (present) as usize"),
+            "{output}"
+        );
+        assert!(output.contains("__outcrop_compiled0 ! (bound)"), "{output}");
         Ok(())
     }
 

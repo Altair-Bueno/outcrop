@@ -27,7 +27,7 @@ struct Declaration {
 }
 
 struct Entry {
-    cfgs: Vec<Attribute>,
+    attrs: Vec<Attribute>,
     kind: Kind,
 }
 
@@ -90,11 +90,13 @@ struct Router {
 ///
 /// So the struct's fields are exactly the stored signals.
 ///
-/// `cfg` attributes apply to everything an entry generates. Other attributes
-/// go on the entry's field, so only inputs and memos accept them. To put
-/// attributes on the function generated from `f` instead, list them in
-/// `#[strata(fn(..))]`; `#[strata(field(..))]` lists attributes for the field
-/// the same way:
+/// Attributes written directly on an entry apply to the whole entry: they are
+/// copied unchanged onto everything it generates, which is what `cfg` and
+/// `cfg_attr` need to compile an entry in or out. To put attributes on a
+/// single item, list them in `#[strata(field(..))]` for the field of an input
+/// or memo, or in `#[strata(fn(..))]` for the function generated from the `f`
+/// of a memo, view or router. Doc comments, derive helpers such as `serde`,
+/// and lints such as `expect` belong there:
 ///
 /// ```
 /// #[derive(PartialEq)]
@@ -105,6 +107,7 @@ struct Router {
 /// outcrop::strata! {
 ///     struct Probe {
 ///         kelvin: Kelvin = Kelvin(293),
+///         #[cfg(not(feature = "raw"))]
 ///         #[strata(fn(inline), field(doc = "The last reading in degrees Celsius."))]
 ///         celsius: Celsius = Kelvin => |k| Celsius(i32::from(k.0) - 273),
 ///     }

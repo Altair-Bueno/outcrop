@@ -191,6 +191,24 @@ outcrop::strata! {
 }
 
 outcrop::strata! {
+    struct Conditional {
+        #[cfg_attr(all(), cfg(all()))]
+        temperature: Temperature = Temperature(20),
+        #[cfg_attr(all(), cfg(any()))]
+        missing: Missing = Missing,
+        #[cfg_attr(all(), cfg(any()))]
+        Alarm = Missing => |_| Alarm(true),
+        #[cfg_attr(all(), cfg(any()))]
+        &Missing => |_, _| {},
+        #[cfg(all())]
+        #[strata(fn(expect(unused_variables, reason = "reaches the view's closure")))]
+        AntiFreeze = Temperature => |t| AntiFreeze(false),
+        #[deny(unsafe_code)]
+        Heating = Temperature => |t| Heating(t.0 > 0),
+    }
+}
+
+outcrop::strata! {
     struct Empty {}
 }
 
@@ -206,7 +224,7 @@ outcrop::strata! {
         // The closures below ignore their arguments, so each `#[expect]` is
         // fulfilled only if it reaches the function generated from it.
         #[strata(fn(expect(unused_variables, reason = "reaches the memo's closure")))]
-        /// Doc comments on stored signals still go on their field.
+        #[strata(field(doc = "Docs go on the field when targeted at it."))]
         anti_freeze: AntiFreeze = Temperature => |t| AntiFreeze(false),
         #[strata(fn(expect(unused_variables, reason = "reaches the view's closure")))]
         Alarm = Temperature => |t| Alarm(true),
@@ -387,6 +405,18 @@ fn attributes_reach_the_functions_they_target() {
     assert_eq!(
         poll(&mut formation),
         ["Temperature(0)", "AntiFreeze(false)", "Alarm(true)"]
+    );
+}
+
+#[test]
+fn bare_attributes_apply_to_the_whole_entry() {
+    assert_eq!(size_of::<<Conditional as Strata>::Flags>(), 1);
+
+    let mut formation = Formation::from(Conditional::default());
+
+    assert_eq!(
+        poll(&mut formation),
+        ["Temperature(20)", "AntiFreeze(false)", "Heating(true)"]
     );
 }
 
