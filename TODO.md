@@ -41,9 +41,10 @@ purpose.
       (12094 B before the refactor, 12396 B after) and peak stack to its old
       values. A blanket `#[inline]` on the layer methods made it worse.
       `crates/outcrop/src/stratum.rs`
-- [ ] **Report banks by byte.** Bank reports test every element's bit on every
-      poll that reports anything; skipping zero bytes and walking set bits with
-      `trailing_zeros` would test about a byte per eight elements.
+- [x] **Report banks by byte.** Bank reports skip bytes with no change bit set
+      and jump to each set bit with `trailing_zeros`, in both APIs. With one
+      word of 100 changing per round, fuel 2915 -> 842 (-71%); with every word
+      changing, unchanged (10228 -> 10222); peak stack +16 B.
       `crates/outcrop/src/bank.rs`
 - [ ] **Test a memo's dependencies with one mask.** `strata!` checks each
       dependency with its own `is_set`; a `const` mask of all of them tested

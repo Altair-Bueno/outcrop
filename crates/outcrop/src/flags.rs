@@ -41,6 +41,10 @@ pub struct Chunk<const BYTES: usize>([u8; BYTES]);
 impl<const BYTES: usize> Chunk<BYTES> {
     pub(crate) const ALL: Self = Self([u8::MAX; BYTES]);
 
+    pub(crate) const fn bytes(&self) -> &[u8; BYTES] {
+        &self.0
+    }
+
     pub(crate) const fn get(&self, index: usize) -> bool {
         self.0[index / 8] & 1 << (index % 8) != 0
     }

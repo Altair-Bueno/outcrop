@@ -246,7 +246,7 @@ where
     Tail: LayeredImpl,
 {
     fn report(&self, _: &Tail, changed: &Self::Flags, visitor: &mut V) {
-        Element::report(&self.0, |index| changed.1.get(index), visitor);
+        Element::report(&self.0, changed.1.bytes(), 0, visitor);
     }
 }
 

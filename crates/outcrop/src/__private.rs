@@ -130,7 +130,7 @@ pub fn report<V, T, const N: usize>(bank: &[T], changed: &[u8; N], base: usize, 
 where
     V: for<'a> Visit<Element<'a, T>>,
 {
-    Element::report(bank, |index| is_set(changed, base + index), visitor);
+    Element::report(bank, changed, base, visitor);
 }
 
 pub const fn input<T, C>(value: T, chain: C) -> (Input<T>, C) {

@@ -82,15 +82,33 @@ pub struct Element<'a, T> {
 }
 
 impl<'a, T> Element<'a, T> {
-    /// Visits every element of `bank` for which `changed` holds.
-    pub(crate) fn report<V>(bank: &'a [T], changed: impl Fn(usize) -> bool, visitor: &mut V)
+    /// Visits every element of `bank` whose change bit is set, the bits
+    /// starting at bit `start` of `bits`. Bytes with no bit set are skipped
+    /// whole.
+    pub(crate) fn report<V>(bank: &'a [T], bits: &[u8], start: usize, visitor: &mut V)
     where
         V: Visit<Self>,
     {
-        for (index, value) in bank.iter().enumerate() {
-            if changed(index) {
-                visitor.visit(&Self { index, value });
+        let end = start + bank.len();
+        let mut byte = start / 8;
+        while 8 * byte < end {
+            let mut set = bits[byte];
+            if 8 * byte < start {
+                set &= u8::MAX << (start % 8);
             }
+            if 8 * byte + 8 > end {
+                set &= u8::MAX >> (8 * byte + 8 - end);
+            }
+            while set != 0 {
+                let low = usize::try_from(set.trailing_zeros()).unwrap_or_default();
+                set &= set - 1;
+                let index = 8 * byte + low - start;
+                visitor.visit(&Self {
+                    index,
+                    value: &bank[index],
+                });
+            }
+            byte += 1;
         }
     }
 }
