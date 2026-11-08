@@ -329,6 +329,23 @@ outcrop::strata! {
     }
 }
 
+outcrop::strata! {
+    struct Words {
+        #[strata(bank)]
+        words: [u16; 100] = [0; 100],
+    }
+}
+
+macro_rules! nested {
+    () => {
+        Formation::new()
+            .nest(Words::default())
+            .view(|w: &Word<3>| Flag(w.0 != 0))
+            .view(|w: &Word<50>| Unrelated(w.0))
+            .memo(spread)
+    };
+}
+
 macro_rules! bank_scenarios {
     ($make:expr, $one:ident, $all:ident) => {
         /// Writes one word of the bank, with no signal on it, every round.
@@ -366,9 +383,10 @@ macro_rules! bank_scenarios {
 
 bank_scenarios!(banked!(), builder_bank_one, builder_bank_all);
 bank_scenarios!(Formation::from(Banked::default()), macro_bank_one, macro_bank_all);
+bank_scenarios!(nested!(), nest_bank_one, nest_bank_all);
 
 /// Every scenario, by name.
-pub const SCENARIOS: [(&str, extern "C" fn(u32) -> u32); 16] = [
+pub const SCENARIOS: [(&str, extern "C" fn(u32) -> u32); 18] = [
     ("builder_idle", builder_idle),
     ("builder_feed_bottom", builder_feed_bottom),
     ("builder_feed_unrelated", builder_feed_unrelated),
@@ -385,6 +403,8 @@ pub const SCENARIOS: [(&str, extern "C" fn(u32) -> u32); 16] = [
     ("builder_bank_all", builder_bank_all),
     ("macro_bank_one", macro_bank_one),
     ("macro_bank_all", macro_bank_all),
+    ("nest_bank_one", nest_bank_one),
+    ("nest_bank_all", nest_bank_all),
 ];
 
 /// Formation sizes in bytes, builder then macro.
