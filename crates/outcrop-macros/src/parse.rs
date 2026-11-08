@@ -1,7 +1,9 @@
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 
+use proc_macro2::Span;
 use syn::Attribute;
+use syn::Expr;
 use syn::Ident;
 use syn::Meta;
 use syn::Token;
@@ -17,7 +19,13 @@ use syn::spanned::Spanned as _;
 
 use crate::Declaration;
 use crate::Entry;
+use crate::Field;
+use crate::Function;
+use crate::Input;
 use crate::Kind;
+use crate::Memo;
+use crate::Router;
+use crate::View;
 
 impl Parse for Declaration {
     fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
@@ -91,59 +99,87 @@ impl Parse for Entry {
         } else {
             None
         };
-        let kind = match (input.parse()?, &name) {
-            (Kind::Memo { ty, deps, f }, None) => Kind::View { ty, deps, f },
-            (Kind::Input { ty, .. }, None) => {
+        let field = |name| Field {
+            name,
+            attrs: field_attrs,
+        };
+        let function = |f| Function { attrs: fn_attrs, f };
+        let kind = match (input.parse()?, name) {
+            (Shape::Stored { ty, .. }, None) => {
                 return Err(syn::Error::new_spanned(
                     ty,
                     "inputs are stored, so they need a field name: `name: Type = initial`",
                 ));
             }
-            (Kind::Router { .. }, Some(name)) => {
+            (Shape::Routed { .. }, Some(name)) => {
                 return Err(syn::Error::new(
                     name.span(),
                     "routers have no field, so they cannot be named",
                 ));
             }
-            (kind, _) => kind,
+            (Shape::Stored { ty, init }, Some(name)) => {
+                if let Some(span) = first_fn {
+                    return Err(syn::Error::new(
+                        span,
+                        "inputs have no function, so `fn(..)` does not apply to them",
+                    ));
+                }
+                Kind::Input(Input {
+                    field: field(name),
+                    ty,
+                    init,
+                })
+            }
+            (Shape::Derived { ty, deps, f }, Some(name)) => Kind::Memo(Memo {
+                field: field(name),
+                function: function(f),
+                ty,
+                deps,
+            }),
+            (Shape::Derived { ty, deps, f }, None) => {
+                fieldless("views", first_field)?;
+                Kind::View(View {
+                    function: function(f),
+                    ty,
+                    deps,
+                })
+            }
+            (Shape::Routed { ty, f }, None) => {
+                fieldless("routers", first_field)?;
+                Kind::Router(Router {
+                    function: function(f),
+                    ty,
+                })
+            }
         };
-        let fieldless = match kind {
-            Kind::View { .. } => Some("views"),
-            Kind::Router { .. } => Some("routers"),
-            Kind::Input { .. } | Kind::Memo { .. } => None,
-        };
-        if let (Some(fieldless), Some((span, doc))) = (fieldless, first_field) {
-            let message = if doc {
-                format!("{fieldless} have no field to document; use a `//` comment instead")
-            } else {
-                format!(
-                    "{fieldless} have no field; put attributes on their function with `#[strata(fn(..))]`"
-                )
-            };
-            return Err(syn::Error::new(span, message));
-        }
-        if let (Kind::Input { .. }, Some(span)) = (&kind, first_fn) {
-            return Err(syn::Error::new(
-                span,
-                "inputs have no function, so `fn(..)` does not apply to them",
-            ));
-        }
-        Ok(Self {
-            cfgs,
-            field_attrs,
-            fn_attrs,
-            name,
-            kind,
-        })
+        Ok(Self { cfgs, kind })
     }
 }
 
-impl Parse for Kind {
+fn fieldless(kind: &str, first_field: Option<(Span, bool)>) -> syn::Result<()> {
+    let Some((span, doc)) = first_field else {
+        return Ok(());
+    };
+    let message = if doc {
+        format!("{kind} have no field to document; use a `//` comment instead")
+    } else {
+        format!("{kind} have no field; put attributes on their function with `#[strata(fn(..))]`")
+    };
+    Err(syn::Error::new(span, message))
+}
+
+enum Shape {
+    Stored { ty: Type, init: Expr },
+    Derived { ty: Type, deps: Box<Type>, f: Expr },
+    Routed { ty: Type, f: Expr },
+}
+
+impl Parse for Shape {
     fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
         let ty = input.parse()?;
         if input.peek(Token![=>]) {
             input.parse::<Token![=>]>()?;
-            return Ok(Self::Router {
+            return Ok(Self::Routed {
                 ty,
                 f: input.parse()?,
             });
@@ -155,13 +191,13 @@ impl Parse for Kind {
         {
             input.advance_to(&fork);
             input.parse::<Token![=>]>()?;
-            return Ok(Self::Memo {
+            return Ok(Self::Derived {
                 ty,
                 deps: Box::new(deps),
                 f: input.parse()?,
             });
         }
-        Ok(Self::Input {
+        Ok(Self::Stored {
             ty,
             init: input.parse()?,
         })

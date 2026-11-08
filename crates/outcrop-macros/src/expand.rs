@@ -11,7 +11,6 @@ use syn::Attribute;
 use syn::Error;
 use syn::Expr;
 use syn::Ident;
-use syn::Meta;
 use syn::Pat;
 use syn::Path;
 use syn::Type;
@@ -19,28 +18,33 @@ use syn::spanned::Spanned as _;
 
 use crate::Declaration;
 use crate::Entry;
+use crate::Field;
+use crate::Function;
+use crate::Input;
 use crate::Kind;
+use crate::Memo;
+use crate::Router;
+use crate::View;
 
 struct Signal {
     cfgs: Vec<Attribute>,
     key: String,
-    field: Ident,
+    storage: Storage,
     bit: Ident,
-    view: Option<View>,
     stale: Vec<usize>,
     moved: Vec<usize>,
 }
 
-struct View {
-    helper: Ident,
-    deps: Vec<usize>,
+enum Storage {
+    Field(Ident),
+    Computed { helper: Ident, deps: Vec<usize> },
+}
+
+fn local(field: &Ident) -> Ident {
+    format_ident!("__outcrop_{field}", span = Span::mixed_site())
 }
 
 impl Signal {
-    fn local(&self) -> Ident {
-        format_ident!("__outcrop_{}", self.field, span = Span::mixed_site())
-    }
-
     fn is_changed(&self) -> TokenStream {
         let bit = &self.bit;
         quote!(changed[#bit / 8] & 1 << (#bit % 8) != 0)
@@ -124,13 +128,13 @@ impl Declaration {
             signals,
             ..
         } = expansion;
-        let names = signals
-            .iter()
-            .filter(|signal| signal.view.is_none())
-            .map(|signal| {
-                let (cfgs, field, local) = (&signal.cfgs, &signal.field, signal.local());
-                quote!(#(#cfgs)* #field: #local)
-            });
+        let names = signals.iter().filter_map(|signal| {
+            let Storage::Field(field) = &signal.storage else {
+                return None;
+            };
+            let (cfgs, local) = (&signal.cfgs, local(field));
+            Some(quote!(#(#cfgs)* #field: #local))
+        });
         let changed_flags = if evaluations.is_empty() {
             quote!(_)
         } else {
@@ -186,11 +190,12 @@ impl Declaration {
 impl Expansion<'_> {
     fn entries(&mut self, entries: &[Entry]) {
         for (position, entry) in entries.iter().enumerate() {
+            let cfgs = &entry.cfgs;
             match &entry.kind {
-                Kind::Input { ty, init } => self.input(entry, ty, init),
-                Kind::Memo { ty, deps, f } => self.memo(entry, ty, deps, f),
-                Kind::View { ty, deps, f } => self.view(entry, ty, deps, f),
-                Kind::Router { ty, f } => self.router(entry, position, ty, f),
+                Kind::Input(input) => self.input(cfgs, input),
+                Kind::Memo(memo) => self.memo(cfgs, memo),
+                Kind::View(view) => self.view(cfgs, view),
+                Kind::Router(router) => self.router(cfgs, position, router),
             }
         }
     }
@@ -202,13 +207,7 @@ impl Expansion<'_> {
         }
     }
 
-    fn signal(&mut self, entry: &Entry, ty: &Type, view: Option<View>) -> Option<usize> {
-        let Entry {
-            cfgs,
-            field_attrs,
-            name,
-            ..
-        } = entry;
+    fn signal(&mut self, cfgs: &[Attribute], ty: &Type, storage: Storage) -> Option<usize> {
         let key = key(ty);
         if self.signals.iter().any(|signal| signal.key == key) {
             self.error(Error::new(
@@ -218,7 +217,6 @@ impl Expansion<'_> {
             return None;
         }
         let index = self.signals.len();
-        let field = name.clone().unwrap_or_else(|| format_ident!("s{index}"));
         let bit = format_ident!("__OUTCROP_BIT{index}", span = Span::mixed_site());
         let next = &self.next;
         self.bits.push(quote!(const #bit: usize = #next;));
@@ -228,16 +226,11 @@ impl Expansion<'_> {
             let predicates = predicates(cfgs);
             quote!(#bit + ::core::cfg!(all(#(#predicates),*)) as usize)
         };
-        if view.is_none() {
-            self.fields
-                .push(quote!(#(#cfgs)* #(#[#field_attrs])* #field: #ty));
-        }
         self.signals.push(Signal {
-            cfgs: cfgs.clone(),
+            cfgs: cfgs.to_vec(),
             key,
-            field,
+            storage,
             bit,
-            view,
             stale: Vec::new(),
             moved: Vec::from([index]),
         });
@@ -272,17 +265,13 @@ impl Expansion<'_> {
     }
 
     fn value(&self, index: usize, local: bool) -> TokenStream {
-        let signal = &self.signals[index];
-        match &signal.view {
-            Some(View { helper, deps }) => {
+        match &self.signals[index].storage {
+            Storage::Computed { helper, deps } => {
                 let arguments = deps.iter().map(|dep| self.value(*dep, local));
                 quote!(#helper(#(&#arguments),*))
             }
-            None if local => signal.local().into_token_stream(),
-            None => {
-                let field = &signal.field;
-                quote!(self.#field)
-            }
+            Storage::Field(field) if local => self::local(field).into_token_stream(),
+            Storage::Field(field) => quote!(self.#field),
         }
     }
 
@@ -306,13 +295,13 @@ impl Expansion<'_> {
     fn helper(
         &mut self,
         cfgs: &[Attribute],
-        attrs: &[Meta],
+        function: &Function,
         name: &Ident,
         parameters: &[TokenStream],
         output: &TokenStream,
-        f: &Expr,
     ) {
-        match function(name, parameters, output, f) {
+        let Function { attrs, f } = function;
+        match self::function(name, parameters, output, f) {
             Ok(function) => self.helpers.push(quote!(#(#cfgs)* #(#[#attrs])* #function)),
             Err(error) => self.error(error),
         }
@@ -321,20 +310,24 @@ impl Expansion<'_> {
     fn derivation(
         &mut self,
         cfgs: &[Attribute],
-        attrs: &[Meta],
+        function: &Function,
         name: &Ident,
         deps: &[Type],
         ty: &Type,
-        f: &Expr,
     ) {
         let parameters = deps.iter().map(|dep| quote!(&#dep)).collect::<Vec<_>>();
-        self.helper(cfgs, attrs, name, &parameters, &quote!(-> #ty), f);
+        self.helper(cfgs, function, name, &parameters, &quote!(-> #ty));
+    }
+
+    fn field(&mut self, cfgs: &[Attribute], field: &Field, ty: &Type) {
+        let Field { name, attrs } = field;
+        self.fields.push(quote!(#(#cfgs)* #(#[#attrs])* #name: #ty));
     }
 
     fn link(&mut self, index: usize, deps: &[usize]) {
         let mut stale = Vec::new();
         let mut moved = Vec::from([index]);
-        let memo = self.signals[index].view.is_none();
+        let memo = matches!(self.signals[index].storage, Storage::Field(_));
         for &dep in deps {
             let signal = &self.signals[dep];
             if memo {
@@ -372,21 +365,22 @@ impl Expansion<'_> {
         })
     }
 
-    fn input(&mut self, entry: &Entry, ty: &Type, init: &Expr) {
-        let cfgs = &entry.cfgs;
-        let (Some(index), Some(fed)) = (self.signal(entry, ty, None), self.fed(cfgs, ty)) else {
+    fn input(&mut self, cfgs: &[Attribute], input: &Input) {
+        let Input { field, ty, init } = input;
+        let storage = Storage::Field(field.name.clone());
+        let (Some(index), Some(fed)) = (self.signal(cfgs, ty, storage), self.fed(cfgs, ty)) else {
             return;
         };
+        self.field(cfgs, field, ty);
         let (ident, krate, flags) = (self.ident, self.krate, &self.flags);
-        let signal = &self.signals[index];
-        let (field, local, mark) = (&signal.field, signal.local(), signal.mark());
-        let differs = quote_spanned!(ty.span()=> ::core::cmp::PartialEq::ne(&self.#field, &value));
+        let (name, local, mark) = (&field.name, local(&field.name), self.signals[index].mark());
+        let differs = quote_spanned!(ty.span()=> ::core::cmp::PartialEq::ne(&self.#name, &value));
         self.impls.push(quote! {
             #(#cfgs)*
             impl #krate::Feed<#ty, ()> for #ident {
                 fn feed(&mut self, changed: &mut #flags, value: #ty) {
                     if #differs {
-                        self.#field = value;
+                        self.#name = value;
                         #mark
                     }
                 }
@@ -398,30 +392,35 @@ impl Expansion<'_> {
         self.get(index, ty);
     }
 
-    fn memo(&mut self, entry: &Entry, ty: &Type, deps: &Type, f: &Expr) {
-        let cfgs = &entry.cfgs;
+    fn memo(&mut self, cfgs: &[Attribute], memo: &Memo) {
+        let Memo {
+            field,
+            function,
+            ty,
+            deps,
+        } = memo;
         let (types, deps) = self.dependencies(deps);
-        let Some(index) = self.signal(entry, ty, None) else {
+        let Some(index) = self.signal(cfgs, ty, Storage::Field(field.name.clone())) else {
             return;
         };
+        self.field(cfgs, field, ty);
         let helper = format_ident!("__outcrop_memo_{index}");
-        self.derivation(cfgs, &entry.fn_attrs, &helper, &types, ty, f);
+        self.derivation(cfgs, function, &helper, &types, ty);
         self.link(index, &deps);
-        let local = self.signals[index].local();
+        let (name, local) = (&field.name, local(&field.name));
         let values = deps.iter().map(|dep| self.value(*dep, true));
         let default = quote!(#(#cfgs)* let #local: #ty = #helper(#(&#values),*););
         self.defaults.push(default);
         let dirty = self.changed(&deps);
         let arguments = deps.iter().map(|dep| self.value(*dep, false));
-        let signal = &self.signals[index];
-        let (field, mark) = (&signal.field, signal.mark());
-        let differs = quote_spanned!(ty.span()=> ::core::cmp::PartialEq::ne(&value, &self.#field));
+        let mark = self.signals[index].mark();
+        let differs = quote_spanned!(ty.span()=> ::core::cmp::PartialEq::ne(&value, &self.#name));
         let evaluation = quote! {
             #(#cfgs)*
             if #dirty {
                 let value = #helper(#(&#arguments),*);
                 if #differs {
-                    self.#field = value;
+                    self.#name = value;
                     #mark
                 }
             }
@@ -437,21 +436,21 @@ impl Expansion<'_> {
         quote!(#(#checks)||*)
     }
 
-    fn view(&mut self, entry: &Entry, ty: &Type, deps: &Type, f: &Expr) {
+    fn view(&mut self, cfgs: &[Attribute], view: &View) {
+        let View { function, ty, deps } = view;
         let (types, deps) = self.dependencies(deps);
         let helper = format_ident!("__outcrop_view_{}", self.signals.len());
-        self.derivation(&entry.cfgs, &entry.fn_attrs, &helper, &types, ty, f);
-        let view = View {
+        self.derivation(cfgs, function, &helper, &types, ty);
+        let storage = Storage::Computed {
             helper,
             deps: deps.clone(),
         };
-        let Some(index) = self.signal(entry, ty, Some(view)) else {
+        let Some(index) = self.signal(cfgs, ty, storage) else {
             return;
         };
         self.link(index, &deps);
         let dirty = self.changed(&deps);
-        let signal = &self.signals[index];
-        let (cfgs, mark) = (&signal.cfgs, signal.mark());
+        let mark = self.signals[index].mark();
         let evaluation = quote! {
             #(#cfgs)*
             if #dirty {
@@ -465,10 +464,13 @@ impl Expansion<'_> {
     fn get(&mut self, index: usize, ty: &Type) {
         let (ident, krate, flags) = (self.ident, self.krate, &self.flags);
         let Signal {
-            cfgs, stale, view, ..
+            cfgs,
+            stale,
+            storage,
+            ..
         } = &self.signals[index];
         let reading = quote!(#krate::Reading);
-        let (output, value) = if view.is_some() {
+        let (output, value) = if let Storage::Computed { .. } = storage {
             (quote!(#ty), self.value(index, false))
         } else {
             let value = self.value(index, false);
@@ -500,8 +502,8 @@ impl Expansion<'_> {
         self.impls.push(implementation);
     }
 
-    fn router(&mut self, entry: &Entry, position: usize, ty: &Type, f: &Expr) {
-        let cfgs = &entry.cfgs;
+    fn router(&mut self, cfgs: &[Attribute], position: usize, router: &Router) {
+        let Router { function, ty } = router;
         let Some(fed) = self.fed(cfgs, ty) else {
             return;
         };
@@ -511,11 +513,10 @@ impl Expansion<'_> {
         let sink = quote!(&mut #krate::Sink<'_, #view<'_>>);
         self.helper(
             cfgs,
-            &entry.fn_attrs,
+            function,
             &helper,
             &[quote!(#ty), sink],
             &TokenStream::new(),
-            f,
         );
         let (ident, flags) = (self.ident, &self.flags);
         let below = self.fed.iter().map(

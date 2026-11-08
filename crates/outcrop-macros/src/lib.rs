@@ -28,17 +28,48 @@ struct Declaration {
 
 struct Entry {
     cfgs: Vec<Attribute>,
-    field_attrs: Vec<Meta>,
-    fn_attrs: Vec<Meta>,
-    name: Option<Ident>,
     kind: Kind,
 }
 
 enum Kind {
-    Input { ty: Type, init: Expr },
-    Memo { ty: Type, deps: Box<Type>, f: Expr },
-    View { ty: Type, deps: Box<Type>, f: Expr },
-    Router { ty: Type, f: Expr },
+    Input(Input),
+    Memo(Memo),
+    View(View),
+    Router(Router),
+}
+
+struct Field {
+    name: Ident,
+    attrs: Vec<Meta>,
+}
+
+struct Function {
+    attrs: Vec<Meta>,
+    f: Expr,
+}
+
+struct Input {
+    field: Field,
+    ty: Type,
+    init: Expr,
+}
+
+struct Memo {
+    field: Field,
+    function: Function,
+    ty: Type,
+    deps: Box<Type>,
+}
+
+struct View {
+    function: Function,
+    ty: Type,
+    deps: Box<Type>,
+}
+
+struct Router {
+    function: Function,
+    ty: Type,
 }
 
 /// Declares a named strata type, for formations whose type must be written
