@@ -18,6 +18,8 @@ pub trait Bits: Copy + Eq + Hash + Debug + Default {
 }
 
 pub trait Cursor {
+    /// The bits left unused in the top byte of the flags.
+    const SPARE: usize;
     type Next: Cursor;
     type Grow<F: Bits>: Bits;
 
@@ -33,8 +35,9 @@ pub trait Cursor {
     note = "strata declared with `strata!` are complete and cannot be extended"
 )]
 pub trait LayeredImpl: Strata<Flags: Bits> {
-    const LEN: usize;
     type Cursor: Cursor;
+    /// The index of the next bit.
+    const LEN: usize = <Self::Flags as Bits>::BITS - <Self::Cursor as Cursor>::SPARE;
 }
 
 /// One stratum, deposited on the strata `Tail`.
@@ -45,9 +48,9 @@ pub trait LayeredImpl: Strata<Flags: Bits> {
 pub trait Layer<Tail: LayeredImpl>: Sized {
     /// The flags of `Tail` with this layer's bits added.
     type Flags: Bits;
-    /// The index of the next bit, once this layer is deposited.
-    const LEN: usize;
     type Cursor: Cursor;
+    /// The index of the next bit, once this layer is deposited.
+    const LEN: usize = <Self::Flags as Bits>::BITS - <Self::Cursor as Cursor>::SPARE;
     /// Flags marking every signal as changed.
     const CHANGED: Self::Flags = <Self::Flags as Bits>::ALL;
 

@@ -128,7 +128,6 @@ impl Strata for () {
 }
 
 impl LayeredImpl for () {
-    const LEN: usize = 0;
     type Cursor = Used<0>;
 }
 
@@ -144,13 +143,11 @@ impl<L: Layer<Tail>, Tail: LayeredImpl> Strata for (L, Tail) {
 }
 
 impl<L: Layer<Tail>, Tail: LayeredImpl> LayeredImpl for (L, Tail) {
-    const LEN: usize = L::LEN;
     type Cursor = L::Cursor;
 }
 
 impl<E: Value + Settle<Tail>, Tail: LayeredImpl> Layer<Tail> for E {
     type Flags = Grown<Tail>;
-    const LEN: usize = Tail::LEN + 1;
     type Cursor = Next<Tail>;
 
     fn deposit(flags: Tail::Flags) -> Grown<Tail> {
@@ -195,7 +192,6 @@ where
 
 impl<In: ?Sized, F, Tail: LayeredImpl> Layer<Tail> for Router<In, F> {
     type Flags = Tail::Flags;
-    const LEN: usize = Tail::LEN;
     type Cursor = Tail::Cursor;
     const CHANGED: Tail::Flags = Tail::CHANGED;
 
@@ -225,7 +221,6 @@ where
     Tail: LayeredImpl,
 {
     type Flags = Banked<Tail, BYTES>;
-    const LEN: usize = <Self::Flags as Bits>::BITS;
     type Cursor = Used<8>;
 
     fn deposit(flags: Tail::Flags) -> Self::Flags {

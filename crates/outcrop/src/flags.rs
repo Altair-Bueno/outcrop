@@ -131,6 +131,7 @@ impl<Tail: Bits, const BYTES: usize> Bits for (Tail, Chunk<BYTES>) {
 macro_rules! impl_partial {
     ($($used:literal => $next:literal),+) => {$(
         impl Cursor for Used<$used> {
+            const SPARE: usize = 8 - $used;
             type Next = Used<$next>;
             type Grow<F: Bits> = F;
 
@@ -152,6 +153,7 @@ macro_rules! impl_partial {
 impl_partial!(0 => 1, 1 => 2, 2 => 3, 3 => 4, 4 => 5, 5 => 6, 6 => 7, 7 => 8);
 
 impl Cursor for Used<8> {
+    const SPARE: usize = 0;
     type Next = Used<1>;
     type Grow<F: Bits> = (F, u8);
 

@@ -119,13 +119,18 @@ Invariants the crates rely on without enforcing them, found by an audit of
 
 ### Held by construction only
 
-- [ ] **`Layer::LEN`, `Cursor` and `Flags` must agree.** A `Used<8>` cursor must
-      mean `LEN == Flags::BITS`; `Bank` and `Nested` set them by hand and
-      nothing ties them together. `crates/outcrop/src/plumbing.rs`
-- [ ] **Bit indexes are never range-checked.** `(Tail, u8)::set_top` and
-      `clear_top` underflow below `Tail::BITS`, and `u8::get`, `set_top` and
+- [x] **`Layer::LEN`, `Cursor` and `Flags` had to agree.** `Bank` and `Nested`
+      set `LEN` by hand. Each cursor now states the bits it leaves spare in the
+      top byte, and `Layer::LEN` and `LayeredImpl::LEN` default to
+      `Flags::BITS - Cursor::SPARE`, so no layer writes `LEN` any more.
+      `crates/outcrop/src/plumbing.rs`
+- [x] **Bit indexes are never range-checked.** Accepted. `(Tail, u8)::set_top`
+      and `clear_top` underflow below `Tail::BITS`, and `u8::get`, `set_top` and
       `clear_top` with an index of 8 or more panic in debug and alias another
-      bit in release. `crates/outcrop/src/flags.rs`
+      bit in release. But every caller passes its layer's `LEN`, now derived
+      from the flags, or a `Chunk` index, which the array bounds-checks, and
+      `Bits` is private. A release-mode check would cost code size and fuel on
+      every bit operation. `crates/outcrop/src/flags.rs`
 - [ ] **Hand-written `Strata`, `Feed`, `Get`, `Report` and `__private::Signal`
       impls can break all of the above.** A wrong `Signal::BIT` or mask makes a
       `Nested` lookup read the wrong bit, calling `evaluate`, `report` and
@@ -200,9 +205,9 @@ Documented here so that changes keep them consistent.
   `Used<_>` cursor by N bits needs const generic arithmetic, unstable in Rust;
   at most two bytes are lost per bank or nested struct. `strata!` packs its
   banks with its other signals. Documented on `Formation::bank` and `nest`.
-- The `Layer` impls of `Bank` and `Nested` repeat `LEN`, `Cursor = Used<8>`,
-  `below` and `below_mut`: sharing them through a helper trait needs a second
-  blanket `Layer` impl, which overlaps the one over `Value + Settle<Tail>`.
+- The `Layer` impls of `Bank` and `Nested` repeat `Cursor = Used<8>`, `below`
+  and `below_mut`: sharing them through a helper trait needs a second blanket
+  `Layer` impl, which overlaps the one over `Value + Settle<Tail>`.
 - `Distinct` and `Routed` look like plain aliases of `Get` and `Feed`, but work
   around rustc#152409, where such a where-bound shadows `Strata::Flags`.
 - The two copies of `read` in `stratum.rs` and `__private.rs`: sharing a free

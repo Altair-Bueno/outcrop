@@ -28,7 +28,6 @@ where
     Stacked<Tail, S>: Bits,
 {
     type Flags = Stacked<Tail, S>;
-    const LEN: usize = <Self::Flags as Bits>::BITS;
     type Cursor = Used<8>;
 
     fn deposit(flags: Tail::Flags) -> Self::Flags {
