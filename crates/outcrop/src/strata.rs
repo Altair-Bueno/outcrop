@@ -61,6 +61,7 @@ pub trait Get<T, I>: Strata {
 
 /// Strata whose every signal can be reported to the visitor `V`.
 pub trait Report<V>: Strata {
-    /// Reports every signal marked in `changed` to `visitor`.
-    fn report(&self, changed: &Self::Flags, visitor: &mut V);
+    /// Reports every signal marked in `changed` to `visitor`, clearing the
+    /// bit of each signal before visiting it.
+    fn report(&self, changed: &mut Self::Flags, visitor: &mut V);
 }

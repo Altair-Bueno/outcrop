@@ -185,8 +185,9 @@ where
         reason = "inlined before argument promotion hoists the signal's load above `changed.get`"
     )]
     #[inline(always)]
-    fn report(&self, tail: &Tail, changed: &Grown<Tail>, visitor: &mut V) {
+    fn report(&self, tail: &Tail, changed: &mut Grown<Tail>, visitor: &mut V) {
         if changed.get(Tail::LEN) {
+            changed.clear_top(Tail::LEN);
             visitor.visit(self.value(tail).borrow());
         }
     }
@@ -214,7 +215,7 @@ impl<In: ?Sized, F, Tail: LayeredImpl> Layer<Tail> for Router<In, F> {
 }
 
 impl<V, In: ?Sized, F, Tail: LayeredImpl> LayerReport<V, Tail> for Router<In, F> {
-    fn report(&self, _: &Tail, _: &Tail::Flags, _: &mut V) {}
+    fn report(&self, _: &Tail, _: &mut Tail::Flags, _: &mut V) {}
 }
 
 type Banked<Tail, const BYTES: usize> = (<Tail as Strata>::Flags, Chunk<BYTES>);
@@ -247,8 +248,8 @@ where
     V: for<'a> Visit<Element<'a, T>>,
     Tail: LayeredImpl,
 {
-    fn report(&self, _: &Tail, changed: &Self::Flags, visitor: &mut V) {
-        Element::report(&self.0, changed.1.bytes(), 0, visitor);
+    fn report(&self, _: &Tail, changed: &mut Self::Flags, visitor: &mut V) {
+        Element::report(&self.0, changed.1.bytes_mut(), 0, visitor);
     }
 }
 
@@ -483,7 +484,7 @@ where
 }
 
 impl<V> Report<V> for () {
-    fn report(&self, _: &u8, _: &mut V) {}
+    fn report(&self, _: &mut u8, _: &mut V) {}
 }
 
 impl<V, L, Tail> Report<V> for (L, Tail)
@@ -491,8 +492,8 @@ where
     L: LayerReport<V, Tail>,
     Tail: LayeredImpl + Report<V>,
 {
-    fn report(&self, changed: &Self::Flags, visitor: &mut V) {
-        self.1.report(L::below(changed), visitor);
+    fn report(&self, changed: &mut Self::Flags, visitor: &mut V) {
+        self.1.report(L::below_mut(changed), visitor);
         self.0.report(&self.1, changed, visitor);
     }
 }

@@ -434,6 +434,11 @@ impl<S: Strata> Formation<S> {
     /// value did not change is neither reported nor propagated
     /// to its dependents. A view is reported and propagated whenever one of
     /// its dependencies changed, whether or not its own value did.
+    ///
+    /// Each signal is unmarked just before it is visited. If `visitor`
+    /// panics and the panic is caught, the signals it had not reached yet are
+    /// reported by the next poll; the one it panicked on is not, so a visitor
+    /// that always panics on a value cannot block the others.
     pub fn poll<V>(&mut self, visitor: &mut V)
     where
         S: Report<V>,
@@ -442,7 +447,7 @@ impl<S: Strata> Formation<S> {
             return;
         }
         self.strata.evaluate(&mut self.changed);
-        self.strata
-            .report(&core::mem::take(&mut self.changed), visitor);
+        self.strata.report(&mut self.changed, visitor);
+        self.changed = S::Flags::default();
     }
 }

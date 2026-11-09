@@ -13,6 +13,8 @@ pub trait Bits: Copy + Eq + Hash + Debug + Default {
     fn get(&self, index: usize) -> bool;
 
     fn set_top(&mut self, index: usize);
+
+    fn clear_top(&mut self, index: usize);
 }
 
 pub trait Cursor {
@@ -62,7 +64,9 @@ pub trait Layer<Tail: LayeredImpl>: Sized {
 
 /// A layer whose changed signals can be reported to the visitor `V`.
 pub trait LayerReport<V, Tail: LayeredImpl>: Layer<Tail> {
-    fn report(&self, tail: &Tail, changed: &Self::Flags, visitor: &mut V);
+    /// Reports the changed signals, clearing the bit of each before visiting
+    /// it.
+    fn report(&self, tail: &Tail, changed: &mut Self::Flags, visitor: &mut V);
 }
 
 /// A layer holding a single signal. Not generic, unlike [`Settle`], so that

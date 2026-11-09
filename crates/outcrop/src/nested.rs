@@ -54,8 +54,8 @@ where
     Tail: LayeredImpl,
     Stacked<Tail, S>: Bits,
 {
-    fn report(&self, _: &Tail, changed: &Self::Flags, visitor: &mut V) {
-        self.0.report(&changed.1, visitor);
+    fn report(&self, _: &Tail, changed: &mut Self::Flags, visitor: &mut V) {
+        self.0.report(&mut changed.1, visitor);
     }
 }
 

@@ -15,6 +15,10 @@ impl Bits for u8 {
     fn set_top(&mut self, index: usize) {
         *self |= 1 << index;
     }
+
+    fn clear_top(&mut self, index: usize) {
+        *self &= !(1 << index);
+    }
 }
 
 impl<Tail: Bits> Bits for (Tail, u8) {
@@ -31,6 +35,10 @@ impl<Tail: Bits> Bits for (Tail, u8) {
 
     fn set_top(&mut self, index: usize) {
         self.1.set_top(index - Tail::BITS);
+    }
+
+    fn clear_top(&mut self, index: usize) {
+        self.1.clear_top(index - Tail::BITS);
     }
 }
 
@@ -78,6 +86,14 @@ impl<const BYTES: usize> Chunk<BYTES> {
         self.0[index / 8].set_top(index % 8);
     }
 
+    pub(crate) fn clear(&mut self, index: usize) {
+        self.0[index / 8].clear_top(index % 8);
+    }
+
+    pub(crate) const fn bytes_mut(&mut self) -> &mut [u8; BYTES] {
+        &mut self.0
+    }
+
     /// Whether `self` and `other` share any set bit.
     #[cfg(feature = "macros")]
     pub(crate) fn intersects(&self, other: &Self) -> bool {
@@ -105,6 +121,10 @@ impl<Tail: Bits, const BYTES: usize> Bits for (Tail, Chunk<BYTES>) {
 
     fn set_top(&mut self, index: usize) {
         self.1.set(index - Tail::BITS);
+    }
+
+    fn clear_top(&mut self, index: usize) {
+        self.1.clear(index - Tail::BITS);
     }
 }
 

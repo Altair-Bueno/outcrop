@@ -761,3 +761,36 @@ fn fields_may_share_names_with_the_generated_code() {
         ["Temperature(20)", "Setpoint(18)", "Heating(false)"]
     );
 }
+
+outcrop::strata! {
+    struct Interrupted {
+        temperature: Temperature = Temperature(20),
+        setpoint: Setpoint = Setpoint(18),
+        heating: Heating = (Temperature, Setpoint) => heating,
+    }
+}
+
+/// Panics on the first signal whose `Debug` output starts with its prefix.
+struct PanicOn(&'static str);
+
+impl<T: Debug> Visit<T> for PanicOn {
+    fn visit(&mut self, value: &T) {
+        assert!(!format!("{value:?}").starts_with(self.0), "visitor panics");
+    }
+}
+
+#[test]
+fn a_panicking_visitor_leaves_the_signals_after_it_to_the_next_poll() {
+    let mut formation = Formation::from(Interrupted::default());
+    poll(&mut formation);
+    formation.feed(Temperature(10));
+    formation.feed(Setpoint(19));
+
+    let panicked = std::panic::catch_unwind(core::panic::AssertUnwindSafe(|| {
+        formation.poll(&mut PanicOn("Setpoint"));
+    }));
+
+    assert!(panicked.is_err());
+    assert_eq!(poll(&mut formation), ["Heating(true)"]);
+    assert_eq!(poll(&mut formation), [""; 0]);
+}

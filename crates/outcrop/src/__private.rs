@@ -82,6 +82,10 @@ pub fn set<const N: usize>(changed: &mut Chunk<N>, bit: usize) {
     changed.set(bit);
 }
 
+pub fn clear<const N: usize>(changed: &mut Chunk<N>, bit: usize) {
+    changed.clear(bit);
+}
+
 #[diagnostic::on_unimplemented(
     message = "`{Self}` is not an array",
     label = "a bank must be an array `[T; N]`"
@@ -116,11 +120,15 @@ pub fn write<T: Eq + Clone, const N: usize>(
     write.apply(bank, |index| changed.set(base + index));
 }
 
-pub fn report<V, T, const N: usize>(bank: &[T], changed: &Chunk<N>, base: usize, visitor: &mut V)
-where
+pub fn report<V, T, const N: usize>(
+    bank: &[T],
+    changed: &mut Chunk<N>,
+    base: usize,
+    visitor: &mut V,
+) where
     V: for<'a> Visit<Element<'a, T>>,
 {
-    Element::report(bank, changed.bytes(), base, visitor);
+    Element::report(bank, changed.bytes_mut(), base, visitor);
 }
 
 pub const fn input<T, C>(value: T, chain: C) -> (Input<T>, C) {

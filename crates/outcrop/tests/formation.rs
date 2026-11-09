@@ -379,3 +379,31 @@ fn strata_deposited_after_a_poll_are_reported_by_the_next() {
 
     assert_eq!(poll(&mut formation), ["Setpoint(18)", "AntiFreeze(false)"]);
 }
+
+/// Panics on the first signal whose `Debug` output starts with its prefix.
+struct PanicOn(&'static str);
+
+impl<T: Debug> Visit<T> for PanicOn {
+    fn visit(&mut self, value: &T) {
+        assert!(!format!("{value:?}").starts_with(self.0), "visitor panics");
+    }
+}
+
+#[test]
+fn a_panicking_visitor_leaves_the_signals_after_it_to_the_next_poll() {
+    let mut formation = Formation::new()
+        .input(Temperature(20))
+        .input(Setpoint(18))
+        .memo(|t: &Temperature, s: &Setpoint| Heating(t.0 < s.0));
+    poll(&mut formation);
+    formation.feed(Temperature(10));
+    formation.feed(Setpoint(19));
+
+    let panicked = std::panic::catch_unwind(core::panic::AssertUnwindSafe(|| {
+        formation.poll(&mut PanicOn("Setpoint"));
+    }));
+
+    assert!(panicked.is_err());
+    assert_eq!(poll(&mut formation), ["Heating(true)"]);
+    assert_eq!(poll(&mut formation), [""; 0]);
+}

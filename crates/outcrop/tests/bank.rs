@@ -271,3 +271,33 @@ mod declared {
         assert_eq!(formation.get::<Celsius, _>(), Reading::Stale(&Celsius(0)));
     }
 }
+
+/// Panics on the bank element at its index.
+struct PanicAt(usize);
+
+impl Visit<Element<'_, u16>> for PanicAt {
+    fn visit(&mut self, element: &Element<'_, u16>) {
+        assert_ne!(element.index, self.0, "visitor panics");
+    }
+}
+
+#[test]
+fn a_panicking_visitor_leaves_the_elements_after_it_to_the_next_poll() {
+    let mut formation = Formation::new().bank::<2, _, _, _>([0_u16; 10]);
+    poll(&mut formation);
+    formation.feed(Write::new(1, &[1, 2, 3]));
+    formation.feed(Write::new(9, &[4]));
+
+    let panicked = std::panic::catch_unwind(core::panic::AssertUnwindSafe(|| {
+        formation.poll(&mut PanicAt(2));
+    }));
+
+    assert!(panicked.is_err());
+    assert_eq!(
+        poll(&mut formation),
+        [
+            "Element { index: 3, value: 3 }",
+            "Element { index: 9, value: 4 }"
+        ]
+    );
+}

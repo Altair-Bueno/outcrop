@@ -115,14 +115,17 @@ impl<V> Report<V> for Thermostat
 where
     V: Visit<Temperature> + Visit<Setpoint> + Visit<Heating>,
 {
-    fn report(&self, changed: &[u8; 1], visitor: &mut V) {
+    fn report(&self, changed: &mut [u8; 1], visitor: &mut V) {
         if changed[0] & 0b1 != 0 {
+            changed[0] &= !0b1;
             <V as Visit<Temperature>>::visit(visitor, &self.s0);
         }
         if changed[0] & 0b10 != 0 {
+            changed[0] &= !0b10;
             <V as Visit<Setpoint>>::visit(visitor, &self.s1);
         }
         if changed[0] & 0b100 != 0 {
+            changed[0] &= !0b100;
             <V as Visit<Heating>>::visit(visitor, &self.s2);
         }
     }

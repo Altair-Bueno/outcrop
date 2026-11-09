@@ -103,11 +103,17 @@ Invariants the crates rely on without enforcing them, found by an audit of
       picked a memo's dependencies one by one. It now computes memos through
       `ComputeImpl` too, so memos and views take at most eight in both APIs,
       with the builder's diagnostic. `crates/outcrop/src/__private.rs`
-- [ ] **A panicking visitor loses reports.** `poll` takes the flags before
-      `report`, so under `panic=unwind` the changes not yet visited are never
-      reported, although the memos were updated. Clear bits as they are
-      reported, or document that visitors must not panic.
-      `crates/outcrop/src/formation.rs`
+- [x] **A panicking visitor lost reports.** `poll` took the flags before
+      `report`, so under `panic=unwind` the changes not yet visited were never
+      reported. `Report::report` now takes the flags by `&mut` and clears each
+      bit just before visiting its signal, and `poll` resets the spare bits
+      afterwards. The signal the visitor panicked on is not reported again, so
+      a visitor that always panics on it cannot block the rest. Cost: code size
+      builder 12108 -> 12498 B, macro 7486 -> 7650 B; fuel +1-3%, a fully
+      changed 100-word bank +9% (10222 -> 11140); peak stack -16 B on banks.
+      Storing the remaining bits once per element instead cut the full bank to
+      10870 but raised a single changed word from 854 to 896, so it was
+      dropped. `crates/outcrop/src/formation.rs`
 
 ### Held by construction only
 

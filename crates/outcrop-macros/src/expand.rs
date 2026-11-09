@@ -170,7 +170,7 @@ impl Declaration {
             where
                 __OutcropVisitor: #(#visits)+*,
             {
-                fn report(&self, changed: &#flags, visitor: &mut __OutcropVisitor) {
+                fn report(&self, changed: &mut #flags, visitor: &mut __OutcropVisitor) {
                     #(#reports)*
                 }
             }
@@ -259,6 +259,7 @@ impl<'d> Expansion<'d> {
         self.reports.push(quote! {
             #(#attrs)*
             if #private::is_set(changed, #bit) {
+                #private::clear(changed, #bit);
                 <__OutcropVisitor as #visit>::visit(
                     visitor,
                     ::core::borrow::Borrow::<#ty>::borrow(&<Self as #signal>::value(self)),
