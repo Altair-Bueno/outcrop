@@ -743,3 +743,21 @@ fn views_see_the_last_of_several_feeds() {
         ]
     );
 }
+
+outcrop::strata! {
+    struct Internal {
+        chain: Temperature = Temperature(20),
+        f: Setpoint = Setpoint(18),
+        a0: Heating = (Temperature, Setpoint) => heating,
+    }
+}
+
+#[test]
+fn fields_may_share_names_with_the_generated_code() {
+    let mut formation = Formation::from(Internal::default());
+
+    assert_eq!(
+        poll(&mut formation),
+        ["Temperature(20)", "Setpoint(18)", "Heating(false)"]
+    );
+}

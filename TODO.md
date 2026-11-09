@@ -142,11 +142,11 @@ Invariants the crates rely on without enforcing them, found by an audit of
       fail only `cargo build`, and never fire for unreachable code. In
       `strata!`, a slot index in a bank's spare bits computes a `BIT` aliasing
       the next signal; only the assert in `read` stops it.
-- [ ] **A `strata!` field named `chain` fails to compile.** _Verified._ Its
-      local `__outcrop_chain` clashes with the chain binding (E0416). The
-      `__outcrop_memo_N`, `__outcrop_view_N` and `__outcrop_route_N` helpers
-      also use call-site spans, unlike every other generated name.
-      `crates/outcrop-macros/src/expand.rs`
+- [x] **A `strata!` field named `chain` failed to compile.** Its local
+      `__outcrop_chain` clashed with the chain binding (E0416). Field locals
+      are now `__outcrop_field_*`, which no other generated name starts with.
+      The helper functions keep their call-site spans: a mixed-site span only
+      makes locals hygienic, not items. `crates/outcrop-macros/src/expand.rs`
 - [x] **`strata!` attribute forwarding.** Only plain `#[cfg]` on the struct
       reached the generated impls, so `#[cfg_attr(.., cfg(..))]` removed the
       struct and left its impls behind. The struct's attributes now stay on the

@@ -36,7 +36,7 @@ struct Fed<'d> {
 }
 
 fn local(field: &Ident) -> Ident {
-    format_ident!("__outcrop_{field}", span = Span::mixed_site())
+    format_ident!("__outcrop_field_{field}", span = Span::mixed_site())
 }
 
 fn mixed(name: &str) -> Ident {
@@ -831,11 +831,11 @@ mod tests {
         }))?;
         for item in [
             "# [deny (x)] a : A",
-            "# [deny (x)] let __outcrop_a",
-            "# [deny (x)] a : __outcrop_a",
+            "# [deny (x)] let __outcrop_field_a",
+            "# [deny (x)] a : __outcrop_field_a",
             "# [deny (x)] if :: outcrop :: __private :: is_set (changed",
             "# [deny (x)] impl :: outcrop :: __private :: Signal < A",
-            "# [deny (x)] let (__outcrop_a , __outcrop_chain) = :: outcrop :: __private :: unstore",
+            "# [deny (x)] let (__outcrop_field_a , __outcrop_chain) = :: outcrop :: __private :: unstore",
             "# [deny (x)] impl :: outcrop :: Feed < A",
             "# [deny (y)] fn __outcrop_view_1",
             "# [deny (y)] if :: outcrop :: __private :: is_set (changed",
