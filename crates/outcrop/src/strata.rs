@@ -10,6 +10,32 @@ use crate::reading::Reading;
 /// [`Formation::input`](crate::Formation::input), `memo`, `view` and `route`,
 /// and by the types declared with `strata!`. Each signal owns one change bit in
 /// [`Flags`](Self::Flags).
+///
+/// # Implementing it by hand
+///
+/// `Strata`, [`Feed`], [`Get`] and [`Report`] are open because `strata!`
+/// implements them in the crate that declares the struct, so they can also be
+/// implemented by hand. [`Formation`](crate::Formation) relies on such an
+/// impl keeping these rules, which `strata!` and the builder keep:
+///
+/// - Every signal owns exactly one bit of `Flags`, and `Flags::default()` marks
+///   none.
+/// - [`CHANGED`](Self::CHANGED) marks every signal.
+/// - [`evaluate`](Self::evaluate) visits the signals bottom-up, so each sees
+///   the bits set by those beneath it. It recomputes a memo only if a
+///   dependency's bit is set, marks the memo only if its value changed, marks a
+///   view whenever a dependency's bit is set, and never clears a bit.
+/// - [`Feed::feed`] marks an input only if the value differs from the stored
+///   one, and evaluates nothing.
+/// - [`Get::get`] is [`Stale`](Reading::Stale) exactly when the signal is a
+///   memo, or is computed from one, any of whose dependencies is marked or
+///   computed from a marked signal.
+/// - [`Report::report`] visits exactly the marked signals, bottom-up, and
+///   clears each bit just before visiting its signal.
+///
+/// An impl breaking them makes its own formations report or compute wrong
+/// values; it cannot cause undefined behaviour, as the crate has no unsafe
+/// code.
 #[diagnostic::on_unimplemented(
     message = "`{Self}` is not a stack of strata",
     note = "strata are built with `Formation::input`, `memo`, `view` and `route`, or declared with `strata!`"

@@ -72,9 +72,10 @@ Deviations from the [Rust API Guidelines][guidelines] found by the
       `strata!` have them. `Reading`, `Sink`, `Visit`, `Feed`, `Get` and
       `Report` have none, and neither do `Write` and `Element` beyond the
       `Formation::bank` docs.
-- [ ] **Seal or document `Strata`, `Feed`, `Get` and `Report` (C-SEALED).** They
-      are public and open, so a hand-written impl can break the change-bit
-      invariants. Seal them, or state that implementing them is unsupported.
+- [x] **Seal or document `Strata`, `Feed`, `Get` and `Report` (C-SEALED).**
+      Documented, not sealed: `strata!` implements them in the user's crate, so
+      anything it can name the user can too, and `tests/manual.rs` implements
+      them by hand. The `Strata` docs list the rules an impl must keep.
 - [ ] **`Element` has public fields (C-STRUCT-PRIVATE).** `index` and `value`
       can never be joined by another field without a breaking change.
       `#[non_exhaustive]` would do, at the cost of callers constructing one.
@@ -131,12 +132,15 @@ Invariants the crates rely on without enforcing them, found by an audit of
       from the flags, or a `Chunk` index, which the array bounds-checks, and
       `Bits` is private. A release-mode check would cost code size and fuel on
       every bit operation. `crates/outcrop/src/flags.rs`
-- [ ] **Hand-written `Strata`, `Feed`, `Get`, `Report` and `__private::Signal`
-      impls can break all of the above.** A wrong `Signal::BIT` or mask makes a
-      `Nested` lookup read the wrong bit, calling `evaluate`, `report` and
-      `feed` directly skips the order `Formation::poll` keeps, and a `Report`
-      that does not clear the bits it visits reports them again after a
-      panicking visitor. See C-SEALED above. `crates/outcrop/src/nested.rs`
+- [x] **Hand-written `Strata`, `Feed`, `Get`, `Report` and `__private::Signal`
+      impls can break all of the above.** Documented with the rules they must
+      keep, on `Strata` and `__private::Signal`; breaking them only affects the
+      impl's own formations, with no unsafe code to misuse. A wrong
+      `Signal::BIT` or mask makes a `Nested` lookup read the wrong bit, calling
+      `evaluate`, `report` and `feed` directly skips the order `Formation::poll`
+      keeps, and a `Report` that does not clear the bits it visits reports them
+      again after a panicking visitor. See C-SEALED above.
+      `crates/outcrop/src/nested.rs`
 
 ### Partial checks
 

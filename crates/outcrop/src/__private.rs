@@ -17,6 +17,11 @@ use crate::stratum::Input;
 use crate::stratum::View;
 use crate::visit::Visit;
 
+/// A signal `T` of a `strata!` struct, found by type. `BIT` is the signal's
+/// bit in the struct's `Chunk` flags. `STALE` holds the bits any of which makes
+/// reading the signal [`Stale`](Reading::Stale), and `MOVED` the bits any of
+/// which means its value may differ from the last poll: its own and every bit
+/// it is computed from, directly or not.
 pub trait Signal<T, I>: Strata {
     const BIT: usize;
     const STALE: Self::Flags;
