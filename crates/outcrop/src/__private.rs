@@ -157,8 +157,8 @@ pub fn unbank<T, const N: usize, const BYTES: usize, C>(
     (items, chain)
 }
 
-pub fn select<T, I, C: Select<T, I>>(chain: &C) -> C::Ref<'_> {
-    chain.select()
+pub fn compute<F: ComputeImpl<C, M>, C, M>(f: &F, chain: &C) -> F::Output {
+    f.compute(chain)
 }
 
 pub fn distinct<T, I, C: Select<T, I>>(_: &C) {}

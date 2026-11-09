@@ -103,14 +103,14 @@ struct Router {
 /// or router accepts the same functions its `Formation` counterpart does,
 /// taking each argument by reference for any lifetime: a path such as
 /// `Celsius::from` whose `From<&Kelvin>` impl fixes the lifetime is rejected,
-/// and a closure `|k| Celsius::from(k)` is accepted. Two differences remain:
+/// and a closure `|k| Celsius::from(k)` is accepted. Memos and views take at
+/// most eight dependencies in both.
 ///
-/// - `f` cannot capture anything, because the struct must name every type it
-///   holds. For a memo or view that is no loss, since it should depend only on
-///   its arguments, and a value that varies belongs in an input. A router that
-///   keeps state between feeds can only be built with `Formation`.
-/// - A memo or view may have any number of dependencies, where `Formation`
-///   allows eight.
+/// One difference remains: `f` cannot capture anything, because the struct
+/// must name every type it holds. For a memo or view that is no loss, since it
+/// should depend only on its arguments, and a value that varies belongs in an
+/// input. A router that keeps state between feeds can only be built with
+/// `Formation`.
 ///
 /// The generated `Default` finds each dependency by its type, one level of
 /// trait resolution per signal above it, so a declaration of around 120
@@ -173,6 +173,22 @@ struct Router {
 ///         a: [u16; 2] = [0; 2],
 ///         #[strata(bank)]
 ///         b: [u16; 3] = [0; 3],
+///     }
+/// }
+/// ```
+///
+/// As is a memo or view of more than eight dependencies:
+///
+/// ```compile_fail,E0277
+/// #[derive(PartialEq, Eq)]
+/// struct Sum(u8);
+///
+/// outcrop::strata! {
+///     struct S {
+///         a: u8 = 0, b: u16 = 0, c: u32 = 0, d: u64 = 0, e: u128 = 0,
+///         f: i8 = 0, g: i16 = 0, h: i32 = 0, i: i64 = 0,
+///         sum: Sum = (u8, u16, u32, u64, u128, i8, i16, i32, i64)
+///             => |_, _, _, _, _, _, _, _, _| Sum(0),
 ///     }
 /// }
 /// ```

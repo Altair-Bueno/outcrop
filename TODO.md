@@ -98,10 +98,11 @@ Invariants the crates rely on without enforcing them, found by an audit of
       reported on every feed, and a NaN memo on every recomputation. Inputs,
       memos and banks now require `Eq` in both APIs.
       `crates/outcrop/src/formation.rs`
-- [ ] **`strata!` views take at most eight dependencies.** _Verified._ The
-      `strata!` docs claim any number, but `Default` builds views with
-      `__private::view`, bounded by `ComputeImpl`, which stops at eight. Memos
-      have no limit. `crates/outcrop/src/__private.rs`
+- [x] **`strata!` views took at most eight dependencies, memos any number.**
+      `Default` checked views with `ComputeImpl`, as the builder does, but
+      picked a memo's dependencies one by one. It now computes memos through
+      `ComputeImpl` too, so memos and views take at most eight in both APIs,
+      with the builder's diagnostic. `crates/outcrop/src/__private.rs`
 - [ ] **A panicking visitor loses reports.** `poll` takes the flags before
       `report`, so under `panic=unwind` the changes not yet visited are never
       reported, although the memos were updated. Clear bits as they are
@@ -187,8 +188,6 @@ Documented here so that changes keep them consistent.
 - The two copies of `read` in `stratum.rs` and `__private.rs`: sharing a free
   function from a private module trips `redundant_pub_crate` or
   `unreachable_pub`.
-- `arguments` and `picks` in `expand.rs` stay separate: merging them needs a
-  closure building tokens, which reads worse than two short named helpers.
 - The loops in `tools/measure/workload` stay hand-written: rewriting them with
   `core::array::from_fn` could shift the baselines the workload measures.
 - The Aidoo example keeps its `From<u16>` unit impls and `bit()` matches written

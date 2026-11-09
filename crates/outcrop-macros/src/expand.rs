@@ -311,18 +311,6 @@ impl<'d> Expansion<'d> {
             .collect()
     }
 
-    /// The value of each dependency, picked from the signals built so far.
-    fn picks(&self, deps: &[&Type], chain: &TokenStream) -> Vec<TokenStream> {
-        let private = &self.private;
-        deps.iter()
-            .map(|dep| {
-                quote! {
-                    ::core::borrow::Borrow::<#dep>::borrow(&#private::select::<#dep, _, _>(#chain))
-                }
-            })
-            .collect()
-    }
-
     /// Whether any dependency changed since the last poll.
     fn dirty(&self, deps: &[&Type]) -> TokenStream {
         let private = &self.private;
@@ -509,10 +497,9 @@ impl<'d> Expansion<'d> {
         let local = local(name);
         let helper = format_ident!("__outcrop_memo_{}", self.signals.len());
         let (private, chain) = (self.private.clone(), self.chain.clone());
-        let picks = self.picks(&deps, &quote!(&#chain));
         self.builds.push(quote! {
             #(#attrs)*
-            let #local: #ty = #helper(#(#picks),*);
+            let #local: #ty = #private::compute(&#helper, &#chain);
             #(#attrs)*
             let #chain = #private::input(#local, #chain);
         });
