@@ -6,7 +6,8 @@ use crate::visit::Visit;
 /// `#[strata(bank)]`, holds an array `[Item; N]` and tracks a change bit per
 /// element. Each element is read as the signal type whose `INDEX` points at
 /// it, so a memo depending on `&Self` is recomputed only when that element
-/// changed. `INDEX` must be below `N`, which is checked at compile time.
+/// changed. `INDEX` must be below `N`, which is checked when the code using
+/// the slot is compiled to machine code: by `cargo build`, not `cargo check`.
 ///
 /// ```
 /// use outcrop::Slot;

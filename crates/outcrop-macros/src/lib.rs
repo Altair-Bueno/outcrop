@@ -193,6 +193,37 @@ struct Router {
 /// }
 /// ```
 ///
+/// And so is a slot past the end of its bank, once compiled with `cargo build`
+/// rather than `cargo check`:
+///
+/// ```compile_fail,E0080
+/// # use outcrop::{Formation, Slot};
+/// #[derive(PartialEq, Eq)]
+/// struct Register<const ADDRESS: usize>(u16);
+///
+/// impl<const ADDRESS: usize> Slot for Register<ADDRESS> {
+///     type Item = u16;
+///     const INDEX: usize = ADDRESS;
+///
+///     fn read(item: &u16) -> Self {
+///         Self(*item)
+///     }
+/// }
+///
+/// #[derive(PartialEq, Eq)]
+/// struct Celsius(u16);
+///
+/// outcrop::strata! {
+///     struct S {
+///         #[strata(bank)]
+///         registers: [u16; 4] = [0; 4],
+///         celsius: Celsius = Register<4> => |r| Celsius(r.0 / 10),
+///     }
+/// }
+///
+/// Formation::from(S::default()).poll(&mut ());
+/// ```
+///
 /// Inputs and memos must implement `Eq`, as with `Formation`:
 ///
 /// ```compile_fail,E0277

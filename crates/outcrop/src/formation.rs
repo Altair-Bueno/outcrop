@@ -206,6 +206,29 @@ impl<S: Layered> Formation<S> {
     /// # use outcrop::Formation;
     /// let formation = Formation::new().bank::<1, _, _, _>([0_u16; 9]);
     /// ```
+    ///
+    /// Or a slot past the end of the bank:
+    ///
+    /// ```compile_fail,E0080
+    /// # use outcrop::{Formation, Slot};
+    /// # #[derive(PartialEq, Eq)]
+    /// # struct Register<const ADDRESS: usize>(u16);
+    /// # impl<const ADDRESS: usize> Slot for Register<ADDRESS> {
+    /// #     type Item = u16;
+    /// #     const INDEX: usize = ADDRESS;
+    /// #     fn read(item: &u16) -> Self { Self(*item) }
+    /// # }
+    /// # #[derive(PartialEq, Eq)]
+    /// # struct Celsius(u16);
+    /// let mut formation = Formation::new()
+    ///     .bank::<1, _, _, _>([0_u16; 4])
+    ///     .memo(|r: &Register<4>| Celsius(r.0 / 10));
+    /// formation.poll(&mut ());
+    /// ```
+    ///
+    /// Both checks are evaluated when the code is compiled to machine code, so
+    /// `cargo build` and `cargo test` report them but `cargo check` does not,
+    /// and a formation that is never used is not checked.
     #[must_use]
     pub fn bank<const BYTES: usize, T: Eq + Clone, const N: usize, I>(
         self,

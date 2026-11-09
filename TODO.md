@@ -145,11 +145,14 @@ Invariants the crates rely on without enforcing them, found by an audit of
       struct after such an input, a bank whose `Slot`s clash with earlier
       signals, or an input clashing with an earlier router's `&In` only fail
       with E0283 where used or fed. `nest` checks no feed collisions at all.
-- [ ] **Compile-time asserts are post-monomorphisation.** _Verified._ The slot
-      `INDEX < N` and `BYTES == N.div_ceil(8)` asserts pass `cargo check` and
-      fail only `cargo build`, and never fire for unreachable code. In
-      `strata!`, a slot index in a bank's spare bits computes a `BIT` aliasing
-      the next signal; only the assert in `read` stops it.
+- [x] **Compile-time asserts are post-monomorphisation.** Accepted and
+      documented: the slot `INDEX < N` and `BYTES == N.div_ceil(8)` asserts pass
+      `cargo check` and fail only `cargo build`, and never fire for unreachable
+      code. Checking them before needs `generic_const_exprs`. A slot index of
+      `N` or more aliased the next signal's bit, caught only by the assert in
+      `read`; the assert now lives in `slot`, the `const fn` computing the
+      slot's bit in both APIs, so every use of the bit trips it. `compile_fail`
+      doctests cover both APIs.
 - [x] **A `strata!` field named `chain` failed to compile.** Its local
       `__outcrop_chain` clashed with the chain binding (E0416). Field locals are
       now `__outcrop_field_*`, which no other generated name starts with. The
@@ -210,8 +213,8 @@ Documented here so that changes keep them consistent.
   `Layer` impl, which overlaps the one over `Value + Settle<Tail>`.
 - `Distinct` and `Routed` look like plain aliases of `Get` and `Feed`, but work
   around rustc#152409, where such a where-bound shadows `Strata::Flags`.
-- The two copies of `read` in `stratum.rs` and `__private.rs`: sharing a free
-  function from a private module trips `redundant_pub_crate` or
+- The two copies of `slot` and `read` in `stratum.rs` and `__private.rs`:
+  sharing a free function from a private module trips `redundant_pub_crate` or
   `unreachable_pub`.
 - The loops in `tools/measure/workload` stay hand-written: rewriting them with
   `core::array::from_fn` could shift the baselines the workload measures.

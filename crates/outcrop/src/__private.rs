@@ -100,15 +100,16 @@ impl<T, const N: usize> Array for [T; N] {
     const LEN: usize = N;
 }
 
-pub const fn slot<E: Slot>(base: usize) -> usize {
+/// The bit of the slot `E` in a bank of `N` elements whose bits start at
+/// `base`, rejecting at compile time a slot past its end.
+pub const fn slot<E: Slot, const N: usize>(base: usize) -> usize {
+    assert!(E::INDEX < N, "the slot is past the end of the bank");
     base + E::INDEX
 }
 
-/// Reads the slot `E` from `bank`, rejecting at compile time a slot past its
-/// end.
+/// Reads the slot `E` from `bank`.
 pub fn read<E: Slot, const N: usize>(bank: &[E::Item; N]) -> E {
-    const { assert!(E::INDEX < N, "the slot is past the end of the bank") };
-    E::read(&bank[E::INDEX])
+    E::read(&bank[const { slot::<E, N>(0) }])
 }
 
 pub fn write<T: Eq + Clone, const N: usize>(

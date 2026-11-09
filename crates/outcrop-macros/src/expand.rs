@@ -452,7 +452,7 @@ impl<'d> Expansion<'d> {
         self.impls.push(quote! {
             #(#attrs)*
             impl<#slot: #krate::Slot<Item = #item>> #signal for #ident {
-                const BIT: usize = #private::slot::<#slot>(#base);
+                const BIT: usize = #private::slot::<#slot, { #len }>(#base);
                 const STALE: #flags = #private::union([]);
                 const MOVED: #flags = #private::mask(<Self as #signal>::BIT);
                 type Ref<'a> = #slot where Self: 'a;
