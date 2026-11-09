@@ -1,5 +1,7 @@
 use core::marker::PhantomData;
 
+#[cfg(feature = "macros")]
+use crate::__private::Nestable;
 use crate::bank::Write;
 #[cfg(feature = "macros")]
 use crate::nested::Nested;
@@ -200,6 +202,10 @@ impl<S: Layered> Formation<S> {
     /// assert_eq!(*formation.get::<Celsius, _>().into_inner(), Celsius(21));
     /// ```
     ///
+    /// A slot is any type implementing [`Slot`](crate::Slot) for the bank's
+    /// item type, so a bank cannot list its slots when it is deposited: a slot
+    /// of the same type as another signal is only rejected where it is read.
+    ///
     /// Two banks of the same item type are rejected, since a `Write` could
     /// not tell them apart:
     ///
@@ -349,8 +355,10 @@ impl<S: Layered> Formation<S> {
     /// [`poll`](Self::poll). The struct depends only on its own signals,
     /// never on those beneath it, and counts as one signal towards the
     /// recursion limit, however many it holds. Its signals are found by type
-    /// like any other, so nesting the same struct twice, or a struct holding
-    /// a type already declared, makes looking that type up ambiguous.
+    /// like any other, so each must be distinct from the signals of the
+    /// formation, and the types it is fed from those the formation is fed.
+    /// The struct's bank slots are the exception: a slot clashing with a
+    /// signal of the formation is only rejected where it is read.
     ///
     /// As with a [`bank`](Self::bank), the struct's change bits start on a
     /// byte of their own and the next signal starts another, so up to two
@@ -382,15 +390,13 @@ impl<S: Layered> Formation<S> {
     /// assert_eq!(*formation.get::<Freezing, _>().into_inner(), Freezing(true));
     /// ```
     ///
-    /// A type declared both in the struct and in the formation cannot be
-    /// depended on:
+    /// So nesting a struct that declares a type the formation already holds
+    /// is rejected, as is nesting the same struct twice:
     ///
     /// ```compile_fail
     /// # use outcrop::Formation;
     /// #[derive(PartialEq, Eq)]
     /// struct Kelvin(u16);
-    /// #[derive(PartialEq, Eq)]
-    /// struct Hot(bool);
     ///
     /// outcrop::strata! {
     ///     struct Probe {
@@ -400,13 +406,13 @@ impl<S: Layered> Formation<S> {
     ///
     /// let formation = Formation::new()
     ///     .input(Kelvin(0))
-    ///     .nest(Probe::default())
-    ///     .memo(|k: &Kelvin| Hot(k.0 > 300));
+    ///     .nest(Probe::default());
     /// ```
     #[cfg(feature = "macros")]
     #[must_use]
-    pub fn nest<N: Strata>(self, strata: N) -> Deposited<Nested<N>, S>
+    pub fn nest<N, I>(self, strata: N) -> Deposited<Nested<N>, S>
     where
+        N: Strata + Nestable<S, I>,
         Nested<N>: Layer<S>,
     {
         self.deposit(Nested(strata))

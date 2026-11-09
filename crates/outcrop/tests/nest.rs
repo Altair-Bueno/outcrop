@@ -206,3 +206,23 @@ fn structs_of_any_width_are_nested() {
         ["Element { index: 299, value: 4 }", "Corrected(4)"]
     );
 }
+
+outcrop::strata! {
+    struct Partial {
+        #[cfg(any())]
+        kelvin: Kelvin = Kelvin(0),
+        offset: Offset = Offset(1),
+        #[cfg(any())]
+        u16 => |_, _| {},
+    }
+}
+
+#[test]
+fn entries_compiled_out_do_not_clash_with_the_formation() {
+    let mut formation = Formation::new()
+        .input(Kelvin(300))
+        .route(|_: &u16, _| {})
+        .nest(Partial::default());
+
+    assert_eq!(poll(&mut formation), ["Kelvin(300)", "Offset(1)"]);
+}

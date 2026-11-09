@@ -35,6 +35,14 @@ struct Fed<'d> {
     marker: Ident,
 }
 
+/// A type of the struct that the strata it is nested on must not also hold:
+/// a signal when `kind` is `Signals`, a fed type when it is `Feeds`.
+struct Check<'d> {
+    attrs: &'d [Attribute],
+    kind: Ident,
+    ty: TokenStream,
+}
+
 fn local(field: &Ident) -> Ident {
     format_ident!("__outcrop_field_{field}", span = Span::mixed_site())
 }
@@ -53,6 +61,7 @@ struct Expansion<'d> {
     bits: Vec<TokenStream>,
     signals: Vec<Signal<'d>>,
     fed: Vec<Fed<'d>>,
+    checks: Vec<Check<'d>>,
     fields: Vec<TokenStream>,
     builds: Vec<TokenStream>,
     takes: Vec<TokenStream>,
@@ -83,6 +92,7 @@ impl Declaration {
             bits: Vec::new(),
             signals: Vec::new(),
             fed: Vec::new(),
+            checks: Vec::new(),
             fields: Vec::new(),
             builds: Vec::new(),
             takes: Vec::new(),
@@ -115,6 +125,7 @@ impl Declaration {
             reports,
             visits,
             signals,
+            checks,
             private,
             ..
         } = expansion;
@@ -125,6 +136,7 @@ impl Declaration {
         });
         let takes = takes.iter().rev();
         let get = lookup_by_type(ident, krate, &private, &flags);
+        let nestable = nestable(ident, &private, &checks);
         let changed_flags = if evaluations.is_empty() {
             quote!(_)
         } else {
@@ -176,6 +188,8 @@ impl Declaration {
             }
 
             #(#impls)*
+
+            #nestable
             };
         }
     }
@@ -271,6 +285,7 @@ impl<'d> Expansion<'d> {
             #private::distinct::<#ty, _, _>(&#chain);
         });
         self.signals.push(Signal { attrs, field });
+        self.check(attrs, "Signals", ty.to_token_stream());
         (bit, marker)
     }
 
@@ -358,6 +373,16 @@ impl<'d> Expansion<'d> {
             .push(quote!(#(#attrs)* #(#[#targeted])* #name: #ty));
     }
 
+    /// Checks, when the struct is nested, that the strata beneath it do not
+    /// also hold `ty`.
+    fn check(&mut self, attrs: &'d [Attribute], kind: &str, ty: TokenStream) {
+        self.checks.push(Check {
+            attrs,
+            kind: mixed(kind),
+            ty,
+        });
+    }
+
     /// Declares the type telling apart the lookups of one entry.
     fn marker(&mut self, attrs: &[Attribute], marker: &Ident) {
         self.impls.push(quote! {
@@ -418,6 +443,7 @@ impl<'d> Expansion<'d> {
             }
         });
         self.unstore(attrs, &local);
+        self.check(attrs, "Feeds", ty.to_token_stream());
         self.fed.push(Fed {
             attrs,
             ty: ty.to_token_stream(),
@@ -481,6 +507,7 @@ impl<'d> Expansion<'d> {
             attrs,
             field: Some(name),
         });
+        self.check(attrs, "Feeds", quote!(#krate::Write<'static, #item>));
         self.fed.push(Fed {
             attrs,
             ty: write,
@@ -641,6 +668,7 @@ impl<'d> Expansion<'d> {
             #(#attrs)*
             #private::routed::<Self, #ty, _>();
         });
+        self.check(attrs, "Feeds", quote!(&'static #pointee));
         self.fed.push(Fed { attrs, ty, marker });
     }
 }
@@ -664,6 +692,49 @@ fn lookup_by_type(
             fn get(&self, changed: &#flags) -> #krate::Reading<Self::Ref<'_>> {
                 #private::get(self, changed)
             }
+        }
+    }
+}
+
+/// Implements `Nestable`, checking every signal and fed type of the struct
+/// against the strata it is nested on. A check is picked by a macro that its
+/// entry's attributes can compile out, leaving one that always holds.
+fn nestable(ident: &Ident, private: &TokenStream, checks: &[Check<'_>]) -> TokenStream {
+    let strata = mixed("__OutcropS");
+    let mut indices = Vec::new();
+    let mut macros = Vec::new();
+    let mut predicates = Vec::new();
+    for (position, Check { attrs, kind, ty }) in checks.iter().enumerate() {
+        let index = format_ident!("__OutcropN{position}", span = Span::mixed_site());
+        let checked = quote!(#private::#kind<#private::Over<#ident, #strata>, #ty, #index>);
+        if attrs.is_empty() {
+            predicates.push(quote!(#checked: #private::Holds));
+        } else {
+            let pick = format_ident!("__outcrop_nest{position}", span = Span::mixed_site());
+            macros.push(quote! {
+                #[allow(unused_macros)]
+                macro_rules! #pick {
+                    ($strata:ty, $index:ty) => { #private::Skipped<$index> };
+                }
+                #(#attrs)*
+                #[allow(unused_macros)]
+                macro_rules! #pick {
+                    ($strata:ty, $index:ty) => {
+                        #private::#kind<#private::Over<#ident, $strata>, #ty, $index>
+                    };
+                }
+            });
+            predicates.push(quote!(#pick!(#strata, #index): #private::Holds));
+        }
+        indices.push(index);
+    }
+    quote! {
+        #(#macros)*
+
+        impl<#strata, #(#indices),*> #private::Nestable<#strata, (#(#indices,)*)> for #ident
+        where
+            #(#predicates,)*
+        {
         }
     }
 }

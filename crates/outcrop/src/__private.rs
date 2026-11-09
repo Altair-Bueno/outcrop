@@ -7,7 +7,10 @@ use crate::bank::Element;
 use crate::bank::Slot;
 use crate::bank::Write;
 pub use crate::flags::Chunk;
+use crate::nested::Nested;
 use crate::plumbing::ComputeImpl;
+use crate::plumbing::Distinct;
+use crate::plumbing::Routed;
 use crate::plumbing::Select;
 use crate::reading::Reading;
 use crate::strata::Feed;
@@ -176,6 +179,40 @@ pub fn compute<F: ComputeImpl<C, M>, C, M>(f: &F, chain: &C) -> F::Output {
 }
 
 pub fn distinct<T, I, C: Select<T, I>>(_: &C) {}
+
+/// A `strata!` struct that can be nested on the strata `S`: none of its
+/// signals or fed types is also a signal or fed type of `S`. Implemented by
+/// `strata!` with one index in `I` per signal and fed type.
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` cannot be nested on these strata",
+    label = "a type of this struct is also a signal or fed type of the formation",
+    note = "only structs declared with `strata!` can be nested, and every signal and fed type must be distinct across the formation"
+)]
+pub trait Nestable<S, I> {}
+
+/// The strata with `N` nested on `S`.
+pub type Over<N, S> = (Nested<N>, S);
+
+/// A check on the strata a struct is nested on.
+pub trait Holds {}
+
+/// Holds if `O` has a single signal `T`.
+#[derive(Debug)]
+pub struct Signals<O, T, I>(PhantomData<(O, T, I)>);
+
+impl<O: Distinct<T, I>, T, I> Holds for Signals<O, T, I> {}
+
+/// Holds if `O` accepts `T` in a single place.
+#[derive(Debug)]
+pub struct Feeds<O, T, I>(PhantomData<(O, T, I)>);
+
+impl<O: Routed<T, I>, T, I> Holds for Feeds<O, T, I> {}
+
+/// The check of an entry compiled out, holding for the index `()` alone.
+#[derive(Debug)]
+pub struct Skipped<I>(PhantomData<I>);
+
+impl Holds for Skipped<()> {}
 
 #[cfg(test)]
 mod tests {
