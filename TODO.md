@@ -94,9 +94,10 @@ Invariants the crates rely on without enforcing them, found by an audit of
       value, so `feed(A(1)); feed(A(0))` between polls reports `A(0)`. Kept: the
       crate docs, `feed`, `poll` and `Write` now say so, with a doctest on
       `feed`. `crates/outcrop/src/formation.rs`
-- [ ] **`PartialEq` is assumed reflexive.** _Verified._ An input holding
-      `f32::NAN` is reported on every feed, and a NaN memo on every
-      recomputation. Require `Eq`, or document it.
+- [x] **`PartialEq` was assumed reflexive.** An input holding `f32::NAN` was
+      reported on every feed, and a NaN memo on every recomputation. Inputs,
+      memos and banks now require `Eq` in both APIs.
+      `crates/outcrop/src/formation.rs`
 - [ ] **`strata!` views take at most eight dependencies.** _Verified._ The
       `strata!` docs claim any number, but `Default` builds views with
       `__private::view`, bounded by `ComputeImpl`, which stops at eight. Memos

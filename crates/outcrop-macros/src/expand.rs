@@ -414,7 +414,7 @@ impl<'d> Expansion<'d> {
             (quote!(&'a #ty), quote!(&self.#name)),
         );
         let (ident, krate, flags) = (self.ident, self.krate, &self.flags);
-        let ne = quote_spanned!(ty.span()=> ::core::cmp::PartialEq::ne);
+        let ne = quote_spanned!(ty.span()=> #private::ne);
         self.impls.push(quote! {
             #(#attrs)*
             impl #krate::Feed<#ty, #marker> for #ident {
@@ -533,7 +533,7 @@ impl<'d> Expansion<'d> {
         );
         let dirty = self.dirty(&deps);
         let arguments = self.arguments(&deps);
-        let ne = quote_spanned!(ty.span()=> ::core::cmp::PartialEq::ne);
+        let ne = quote_spanned!(ty.span()=> #private::ne);
         self.evaluations.push(quote! {
             #(#attrs)*
             if #dirty {

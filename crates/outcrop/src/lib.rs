@@ -19,9 +19,9 @@
 //! use core::fmt::Debug;
 //! use outcrop::{Formation, Visit};
 //!
-//! #[derive(Debug, PartialEq)]
+//! #[derive(Debug, PartialEq, Eq)]
 //! struct Temperature(i16);
-//! #[derive(Debug, PartialEq)]
+//! #[derive(Debug, PartialEq, Eq)]
 //! struct AntiFreeze(bool);
 //!
 //! struct Print;

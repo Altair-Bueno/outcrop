@@ -8,16 +8,16 @@ use outcrop::Reading;
 use outcrop::Report;
 use outcrop::Visit;
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq)]
 struct Temperature(i16);
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq)]
 struct AntiFreeze(bool);
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq)]
 struct Setpoint(i16);
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq)]
 struct Heating(bool);
 
 #[derive(Default)]
@@ -173,9 +173,9 @@ fn derived_signals_see_values_derived_in_the_same_poll() {
 
 #[test]
 fn derived_signals_accept_up_to_eight_dependencies() {
-    #[derive(Debug, PartialEq)]
+    #[derive(Debug, PartialEq, Eq)]
     struct Bit<const I: u8>(bool);
-    #[derive(Debug, PartialEq)]
+    #[derive(Debug, PartialEq, Eq)]
     struct Byte(u8);
 
     let mut formation = Formation::new()
@@ -271,7 +271,7 @@ fn the_empty_formation_is_nameable() {
     assert_eq!(poll(&mut formation), Vec::<String>::new());
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq)]
 struct Alarm(bool);
 
 #[test]

@@ -24,7 +24,7 @@ struct AntiFreeze(bool);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 struct Alarm(bool);
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq)]
 struct ModbusRegister {
     address: u16,
     value: u16,
@@ -141,7 +141,7 @@ outcrop::strata! {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq)]
 struct V(i16);
 
 #[expect(

@@ -59,7 +59,7 @@ impl<'a, T> Write<'a, T> {
     /// `changed` with the index of every element that differed.
     pub(crate) fn apply(self, bank: &mut [T], mut changed: impl FnMut(usize))
     where
-        T: PartialEq + Clone,
+        T: Eq + Clone,
     {
         let elements = bank.iter_mut().enumerate().skip(self.start);
         for ((index, element), item) in elements.zip(self.items) {

@@ -58,6 +58,10 @@ where
 
 pub fn routed<S: Feed<T, I>, T, I>() {}
 
+pub fn ne<T: Eq>(a: &T, b: &T) -> bool {
+    a != b
+}
+
 pub const fn all<const N: usize>() -> Chunk<N> {
     Chunk::ALL
 }
@@ -103,7 +107,7 @@ pub fn read<E: Slot, const N: usize>(bank: &[E::Item; N]) -> E {
     E::read(&bank[E::INDEX])
 }
 
-pub fn write<T: PartialEq + Clone, const N: usize>(
+pub fn write<T: Eq + Clone, const N: usize>(
     bank: &mut [T],
     changed: &mut Chunk<N>,
     base: usize,

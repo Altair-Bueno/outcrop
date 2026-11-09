@@ -123,9 +123,9 @@ struct Router {
 /// A signal can only depend on signals declared above it:
 ///
 /// ```compile_fail,E0277
-/// #[derive(PartialEq)]
+/// #[derive(PartialEq, Eq)]
 /// struct A(u8);
-/// #[derive(PartialEq)]
+/// #[derive(PartialEq, Eq)]
 /// struct B(u8);
 ///
 /// outcrop::strata! {
@@ -140,7 +140,7 @@ struct Router {
 /// however it is spelled:
 ///
 /// ```compile_fail
-/// #[derive(PartialEq)]
+/// #[derive(PartialEq, Eq)]
 /// struct A(u8);
 /// type Alias = A;
 ///
@@ -177,6 +177,16 @@ struct Router {
 /// }
 /// ```
 ///
+/// Inputs and memos must implement `Eq`, as with `Formation`:
+///
+/// ```compile_fail,E0277
+/// outcrop::strata! {
+///     struct S {
+///         ratio: f32 = 0.5,
+///     }
+/// }
+/// ```
+///
 /// Attributes written directly on an entry apply to the whole entry: they are
 /// copied unchanged onto everything it generates, which is what `cfg` and
 /// `cfg_attr` need to compile an entry in or out. To put attributes on a
@@ -186,9 +196,9 @@ struct Router {
 /// and lints such as `expect` belong there:
 ///
 /// ```
-/// #[derive(PartialEq)]
+/// #[derive(PartialEq, Eq)]
 /// struct Kelvin(u16);
-/// #[derive(PartialEq)]
+/// #[derive(PartialEq, Eq)]
 /// struct Celsius(i32);
 ///
 /// outcrop::strata! {
@@ -215,7 +225,7 @@ struct Router {
 /// On the struct, it would remove the struct and leave its impls behind:
 ///
 /// ```
-/// #[derive(PartialEq)]
+/// #[derive(PartialEq, Eq)]
 /// struct Kelvin(u16);
 ///
 /// #[cfg(feature = "probe")]
@@ -233,13 +243,13 @@ struct Router {
 /// use core::fmt::Debug;
 /// use outcrop::{Formation, Visit};
 ///
-/// #[derive(Debug, Clone, PartialEq)]
+/// #[derive(Debug, Clone, PartialEq, Eq)]
 /// struct Temperature(i16);
-/// #[derive(Debug, Clone, PartialEq)]
+/// #[derive(Debug, Clone, PartialEq, Eq)]
 /// struct AntiFreeze(bool);
 ///
 /// outcrop::strata! {
-///     #[derive(Debug, Clone, PartialEq)]
+///     #[derive(Debug, Clone, PartialEq, Eq)]
 ///     struct Thermostat {
 ///         temperature: Temperature = Temperature(20),
 ///         AntiFreeze = Temperature => |t| AntiFreeze(t.0 < 10),

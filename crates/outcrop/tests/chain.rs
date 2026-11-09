@@ -6,16 +6,16 @@ use outcrop::Formation;
 use outcrop::Report;
 use outcrop::Visit;
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq)]
 struct ModbusReg(u16);
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq)]
 struct Temperature(i16);
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq)]
 struct Celsius(i16);
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq)]
 struct AntiFreezeAvail(bool);
 
 #[derive(Default)]

@@ -36,9 +36,9 @@ type Deposited<E, S> = Formation<(E, S)>;
 ///
 /// ```compile_fail,E0277
 /// # use outcrop::Formation;
-/// #[derive(PartialEq)]
+/// #[derive(PartialEq, Eq)]
 /// struct A(u8);
-/// #[derive(PartialEq)]
+/// #[derive(PartialEq, Eq)]
 /// struct B(u8);
 /// let formation = Formation::new().memo(|a: &A| B(a.0));
 /// ```
@@ -47,9 +47,9 @@ type Deposited<E, S> = Formation<(E, S)>;
 ///
 /// ```compile_fail,E0277
 /// # use outcrop::Formation;
-/// #[derive(PartialEq)]
+/// #[derive(PartialEq, Eq)]
 /// struct A(u8);
-/// #[derive(PartialEq)]
+/// #[derive(PartialEq, Eq)]
 /// struct B(u8);
 /// let mut formation = Formation::new().input(A(0)).view(|a: &A| B(a.0));
 /// formation.feed(B(1));
@@ -59,7 +59,7 @@ type Deposited<E, S> = Formation<(E, S)>;
 ///
 /// ```compile_fail
 /// # use outcrop::Formation;
-/// #[derive(PartialEq)]
+/// #[derive(PartialEq, Eq)]
 /// struct A(u8);
 /// let formation = Formation::new().input(A(0)).input(A(1));
 /// ```
@@ -116,8 +116,18 @@ impl<S: Layered> Formation<S> {
     /// Deposits an input signal with its initial value.
     ///
     /// The value is reported by the next [`poll`](Self::poll).
+    ///
+    /// Inputs and memos are compared to tell whether they changed, so they
+    /// must implement `Eq`: a value unequal to itself, such as a floating-point
+    /// NaN, would be reported as changed every time. Wrap such values in a type
+    /// whose `Eq` compares them by their bits, for instance.
+    ///
+    /// ```compile_fail,E0277
+    /// # use outcrop::Formation;
+    /// let formation = Formation::new().input(0.5_f32);
+    /// ```
     #[must_use]
-    pub fn input<T: PartialEq, I>(self, initial: T) -> Deposited<Input<T>, S>
+    pub fn input<T: Eq, I>(self, initial: T) -> Deposited<Input<T>, S>
     where
         (Input<T>, S): Distinct<T, I>,
     {
@@ -141,7 +151,7 @@ impl<S: Layered> Formation<S> {
     /// ```
     /// use outcrop::{Formation, Slot, Write};
     ///
-    /// #[derive(Debug, PartialEq)]
+    /// #[derive(Debug, PartialEq, Eq)]
     /// struct Register<const ADDRESS: usize>(u16);
     ///
     /// impl<const ADDRESS: usize> Slot for Register<ADDRESS> {
@@ -153,7 +163,7 @@ impl<S: Layered> Formation<S> {
     ///     }
     /// }
     ///
-    /// #[derive(Debug, PartialEq)]
+    /// #[derive(Debug, PartialEq, Eq)]
     /// struct Celsius(u16);
     ///
     /// let mut formation = Formation::new()
@@ -182,7 +192,7 @@ impl<S: Layered> Formation<S> {
     /// let formation = Formation::new().bank::<1, _, _, _>([0_u16; 9]);
     /// ```
     #[must_use]
-    pub fn bank<const BYTES: usize, T: PartialEq + Clone, const N: usize, I>(
+    pub fn bank<const BYTES: usize, T: Eq + Clone, const N: usize, I>(
         self,
         initial: [T; N],
     ) -> Deposited<Bank<T, N, BYTES>, S>
@@ -216,7 +226,7 @@ impl<S: Layered> Formation<S> {
     pub fn memo<F, M, I>(self, f: F) -> Deposited<Memo<F, M, F::Output>, S>
     where
         F: Compute<S, M>,
-        F::Output: PartialEq,
+        F::Output: Eq,
         (Memo<F, M, F::Output>, S): Distinct<F::Output, I>,
     {
         let value = f.compute(&self.strata);
@@ -233,7 +243,7 @@ impl<S: Layered> Formation<S> {
     /// The dependencies are inferred as for [`memo`](Self::memo). A view
     /// takes no memory of its own and is computed again on every
     /// [`get`](Self::get), report and computation of the signals above it.
-    /// Its value is never compared, so it needs no `PartialEq`:
+    /// Its value is never compared, so it needs no `Eq`:
     /// [`poll`](Self::poll) reports it whenever a dependency changed, even if
     /// its own value did not, and memos above it are then recomputed.
     ///
@@ -263,9 +273,9 @@ impl<S: Layered> Formation<S> {
     ///
     /// ```compile_fail,E0277
     /// # use outcrop::Formation;
-    /// #[derive(PartialEq)]
+    /// #[derive(PartialEq, Eq)]
     /// struct A(u8);
-    /// #[derive(PartialEq)]
+    /// #[derive(PartialEq, Eq)]
     /// struct B(u8);
     /// let formation = Formation::new()
     ///     .input(A(0))
@@ -297,11 +307,11 @@ impl<S: Layered> Formation<S> {
     /// ```
     /// use outcrop::Formation;
     ///
-    /// #[derive(Debug, PartialEq)]
+    /// #[derive(Debug, PartialEq, Eq)]
     /// struct Kelvin(u16);
-    /// #[derive(Debug, PartialEq)]
+    /// #[derive(Debug, PartialEq, Eq)]
     /// struct Celsius(i32);
-    /// #[derive(Debug, PartialEq)]
+    /// #[derive(Debug, PartialEq, Eq)]
     /// struct Freezing(bool);
     ///
     /// outcrop::strata! {
@@ -325,9 +335,9 @@ impl<S: Layered> Formation<S> {
     ///
     /// ```compile_fail
     /// # use outcrop::Formation;
-    /// #[derive(PartialEq)]
+    /// #[derive(PartialEq, Eq)]
     /// struct Kelvin(u16);
-    /// #[derive(PartialEq)]
+    /// #[derive(PartialEq, Eq)]
     /// struct Hot(bool);
     ///
     /// outcrop::strata! {
@@ -371,7 +381,7 @@ impl<S: Strata> Formation<S> {
     ///
     /// ```
     /// # use outcrop::{Formation, Visit};
-    /// #[derive(Debug, PartialEq)]
+    /// #[derive(Debug, PartialEq, Eq)]
     /// struct A(u8);
     ///
     /// struct Count(usize);

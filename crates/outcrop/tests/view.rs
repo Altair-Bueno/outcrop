@@ -9,19 +9,19 @@ use outcrop::Reading;
 use outcrop::Report;
 use outcrop::Visit;
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq)]
 struct Register<const ADDRESS: u16>(u16);
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq)]
 struct AntiFreezeSupported(bool);
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq)]
 struct Name([u8; 4]);
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq)]
 struct Doubled(u32);
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq)]
 struct Even(bool);
 
 #[derive(Default)]

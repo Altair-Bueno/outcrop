@@ -291,7 +291,7 @@ impl<T, Tail> Settle<Tail> for Input<T> {
 impl<F, M, O, Tail> Settle<Tail> for Memo<F, M, O>
 where
     F: ComputeImpl<Tail, M, Output = O>,
-    O: PartialEq,
+    O: Eq,
 {
     type Ref<'a>
         = &'a O
@@ -437,7 +437,7 @@ impl<T, I, S: LayeredImpl + Select<T, I>> Get<T, I> for S {
     }
 }
 
-impl<T: PartialEq, Tail: LayeredImpl> Feed<T, ()> for (Input<T>, Tail) {
+impl<T: Eq, Tail: LayeredImpl> Feed<T, ()> for (Input<T>, Tail) {
     fn feed(&mut self, changed: &mut Self::Flags, value: T) {
         if self.0.0 != value {
             self.0.0 = value;
@@ -459,7 +459,7 @@ where
 impl<'w, T, const N: usize, const BYTES: usize, Tail> Feed<Write<'w, T>, Slotted>
     for (Bank<T, N, BYTES>, Tail)
 where
-    T: PartialEq + Clone,
+    T: Eq + Clone,
     Tail: LayeredImpl,
 {
     fn feed(&mut self, changed: &mut Self::Flags, write: Write<'w, T>) {

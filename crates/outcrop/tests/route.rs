@@ -5,16 +5,16 @@ use core::fmt::Debug;
 use outcrop::Formation;
 use outcrop::Visit;
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq)]
 struct ModbusRegister {
     address: u16,
     value: u16,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Register<const ADDRESS: u16>(u16);
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Version {
     major: u16,
     minor: u16,

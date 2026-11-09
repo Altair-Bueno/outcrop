@@ -14,7 +14,7 @@ use outcrop::Slot;
 use outcrop::Visit;
 use outcrop::Write;
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Register<const ADDRESS: usize>(u16);
 
 impl<const ADDRESS: usize> Slot for Register<ADDRESS> {
@@ -26,13 +26,13 @@ impl<const ADDRESS: usize> Slot for Register<ADDRESS> {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq)]
 struct Celsius(u16);
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq)]
 struct Total(u32);
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq)]
 struct Label(&'static str);
 
 #[derive(Default)]
@@ -207,7 +207,7 @@ fn builder_banks_pack_a_change_bit_per_element() {
 mod declared {
     use super::*;
 
-    #[derive(Debug, PartialEq)]
+    #[derive(Debug, PartialEq, Eq)]
     struct Missing;
 
     outcrop::strata! {
