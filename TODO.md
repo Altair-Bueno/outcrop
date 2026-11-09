@@ -142,9 +142,11 @@ Invariants the crates rely on without enforcing them, found by an audit of
 
 - [ ] **Uniqueness depends on declaration order.** An input after a nested
       struct or bank holding its type is rejected at declaration, but a nested
-      struct after such an input, a bank whose `Slot`s clash with earlier
-      signals, or an input clashing with an earlier router's `&In` only fail
-      with E0283 where used or fed. `nest` checks no feed collisions at all.
+      struct after such an input, or a bank whose `Slot`s clash with earlier
+      signals, only fail with E0283 where used or fed. `nest` checks no feed
+      collisions at all. An input clashing with an earlier router's `&In` is now
+      rejected at declaration in both APIs: `input` checks feeds as well, at the
+      cost of a third type parameter (`input::<T, _, _>`).
 - [x] **Compile-time asserts are post-monomorphisation.** Accepted and
       documented: the slot `INDEX < N` and `BYTES == N.div_ceil(8)` asserts pass
       `cargo check` and fail only `cargo build`, and never fire for unreachable

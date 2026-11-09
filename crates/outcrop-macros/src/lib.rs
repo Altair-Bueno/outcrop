@@ -163,6 +163,17 @@ struct Router {
 /// }
 /// ```
 ///
+/// As is an input of a type a router is also fed, in either order:
+///
+/// ```compile_fail
+/// outcrop::strata! {
+///     struct S {
+///         u8 => |_, _| {},
+///         value: &'static u8 = &0,
+///     }
+/// }
+/// ```
+///
 /// As are two banks of the same item type, which a `Write` could not tell
 /// apart:
 ///

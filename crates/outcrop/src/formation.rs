@@ -133,10 +133,20 @@ impl<S: Layered> Formation<S> {
     /// # use outcrop::Formation;
     /// let formation = Formation::new().input(0.5_f32);
     /// ```
+    ///
+    /// An input cannot share its type with a router beneath it, since feeding
+    /// that type could not tell them apart:
+    ///
+    /// ```compile_fail
+    /// # use outcrop::Formation;
+    /// let formation = Formation::new()
+    ///     .route(|_: &u8, _| {})
+    ///     .input::<&'static u8, _, _>(&0);
+    /// ```
     #[must_use]
-    pub fn input<T: Eq, I>(self, initial: T) -> Deposited<Input<T>, S>
+    pub fn input<T: Eq, I, J>(self, initial: T) -> Deposited<Input<T>, S>
     where
-        (Input<T>, S): Distinct<T, I>,
+        (Input<T>, S): Distinct<T, I> + Routed<T, J>,
     {
         self.deposit(Input(initial))
     }

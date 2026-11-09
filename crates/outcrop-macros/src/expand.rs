@@ -392,6 +392,8 @@ impl<'d> Expansion<'d> {
             let #local: #ty = #init;
             #(#attrs)*
             let #chain = #private::input(#local, #chain);
+            #(#attrs)*
+            #private::routed::<Self, #ty, _>();
         });
         let (bit, marker) = self.signal(attrs, ty, Some(name));
         self.field(attrs, field, ty);
