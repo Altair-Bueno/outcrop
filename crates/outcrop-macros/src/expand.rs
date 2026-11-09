@@ -98,7 +98,6 @@ impl Declaration {
             return errors.to_compile_error();
         }
         let Self { attrs, vis, .. } = self;
-        let cfgs = attrs.iter().filter(|attr| attr.path().is_ident("cfg"));
         let count = mixed("__OUTCROP_BITS");
         let Expansion {
             ident,
@@ -137,7 +136,6 @@ impl Declaration {
                 #(#fields,)*
             }
 
-            #(#cfgs)*
             const _: () = {
             #(#bits)*
             const #count: usize = #next;
@@ -1006,7 +1004,7 @@ mod tests {
     }
 
     #[test]
-    fn forwards_cfg_attributes_to_the_generated_items() -> syn::Result<()> {
+    fn keeps_struct_attributes_on_the_struct() -> syn::Result<()> {
         let output = expand(quote!(
             #[cfg(feature = "x")]
             #[derive(Debug)]
@@ -1014,7 +1012,11 @@ mod tests {
         ))?;
         assert_eq!(
             output.matches("# [cfg (feature = \"x\")]").count(),
-            2,
+            1,
+            "{output}"
+        );
+        assert!(
+            output.contains("# [cfg (feature = \"x\")] # [derive (Debug)] struct S"),
             "{output}"
         );
         assert_eq!(output.matches("# [derive (Debug)]").count(), 1, "{output}");

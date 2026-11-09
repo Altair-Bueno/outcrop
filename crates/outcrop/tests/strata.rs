@@ -272,10 +272,17 @@ outcrop::strata! {
     }
 }
 
+#[cfg(any())]
 outcrop::strata! {
-    #[cfg(any())]
     struct Absent {
         temperature: Temperature = Temperature(0),
+    }
+}
+
+#[cfg_attr(all(), cfg(any()))]
+outcrop::strata! {
+    struct AbsentByAttr {
+        temperature: Temperature = Missing,
     }
 }
 

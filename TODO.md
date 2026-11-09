@@ -147,8 +147,11 @@ Invariants the crates rely on without enforcing them, found by an audit of
       `__outcrop_memo_N`, `__outcrop_view_N` and `__outcrop_route_N` helpers
       also use call-site spans, unlike every other generated name.
       `crates/outcrop-macros/src/expand.rs`
-- [ ] **`strata!` attribute forwarding.** Only plain `#[cfg]` on the struct
-      reaches the generated `const _` block, not `#[cfg_attr(.., cfg(..))]`.
+- [x] **`strata!` attribute forwarding.** Only plain `#[cfg]` on the struct
+      reached the generated impls, so `#[cfg_attr(.., cfg(..))]` removed the
+      struct and left its impls behind. The struct's attributes now stay on the
+      struct alone, and `cfg` or `cfg_attr` on the macro call gates the whole
+      expansion. `crates/outcrop-macros/src/expand.rs`
 
 ### Implicit state machines
 

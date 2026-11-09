@@ -205,10 +205,26 @@ struct Router {
 /// closure. A path to a function is called from the generated function, so
 /// lints inside it are unaffected.
 ///
-/// Attributes are kept, so the struct can derive `Clone`, `PartialEq` and
-/// other traits its signals implement. `Default` is implemented from the
-/// initial values, and wrapping the struct in a `Formation` marks every signal
-/// as changed.
+/// Attributes on the struct are kept on the struct alone, so it can derive
+/// `Clone`, `PartialEq` and other traits its signals implement. `Default` is
+/// implemented from the initial values, and wrapping the struct in a
+/// `Formation` marks every signal as changed.
+///
+/// To compile the struct in or out, put `cfg` or `cfg_attr` on the macro
+/// call, which removes the struct and everything generated for it together.
+/// On the struct, it would remove the struct and leave its impls behind:
+///
+/// ```
+/// #[derive(PartialEq)]
+/// struct Kelvin(u16);
+///
+/// #[cfg(feature = "probe")]
+/// outcrop::strata! {
+///     struct Probe {
+///         kelvin: Kelvin = Kelvin(293),
+///     }
+/// }
+/// ```
 ///
 /// The generated code refers to `::outcrop`. Where the dependency is renamed
 /// or re-exported, pass its path with `#[strata(crate = path::to::outcrop)]`.
