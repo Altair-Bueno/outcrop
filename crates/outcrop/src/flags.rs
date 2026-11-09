@@ -74,6 +74,7 @@ impl<const BYTES: usize> Chunk<BYTES> {
         Self(union)
     }
 
+    #[cfg(feature = "macros")]
     pub(crate) const fn bytes(&self) -> &[u8; BYTES] {
         &self.0
     }
