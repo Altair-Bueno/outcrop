@@ -78,6 +78,13 @@ type Deposited<E, S> = Formation<(E, S)>;
 /// warn that exceeding it will become a hard error. Raise the limit in the
 /// crate that builds the formation, with `#![recursion_limit = "256"]`.
 /// `strata!` is subject to the same limit.
+///
+/// Two formations are equal, and hash alike, when their signals hold equal
+/// values and the same changes await the next [`poll`](Self::poll). Until
+/// then a memo may still hold its value from before a feed, so the pending
+/// changes are part of the state: poll both formations before comparing them
+/// by value. Only formations of strata that implement these traits, such as a
+/// `strata!` struct deriving them, can be compared.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Formation<S: Strata = ()> {
     changed: S::Flags,
@@ -147,6 +154,14 @@ impl<S: Layered> Formation<S> {
     /// `N.div_ceil(8)` and is given explicitly, since stable Rust cannot
     /// compute it from `N`. The whole bank costs one level of the recursion
     /// limit, however many elements it holds.
+    ///
+    /// Those bytes are the bank's alone: the bits left in the byte beneath it
+    /// and in its own last byte go unused, and the next signal starts a new
+    /// byte. Tracking how many bits a bank takes would need arithmetic on
+    /// const generics, which stable Rust lacks. So an input, a bank of four
+    /// and another input take three bytes of change bits where one would do,
+    /// at most two bytes lost per bank. `strata!` packs its banks with the
+    /// signals around them.
     ///
     /// ```
     /// use outcrop::{Formation, Slot, Write};
@@ -303,6 +318,10 @@ impl<S: Layered> Formation<S> {
     /// recursion limit, however many it holds. Its signals are found by type
     /// like any other, so nesting the same struct twice, or a struct holding
     /// a type already declared, makes looking that type up ambiguous.
+    ///
+    /// As with a [`bank`](Self::bank), the struct's change bits start on a
+    /// byte of their own and the next signal starts another, so up to two
+    /// bytes of bits go unused.
     ///
     /// ```
     /// use outcrop::Formation;

@@ -63,13 +63,15 @@ Deviations from the [Rust API Guidelines][guidelines] found by the
       `clippy::cargo_common_metadata` is allowed in the root `Cargo.toml` until
       a licence is chosen.
 - [ ] **Derives `Formation` cannot use (C-COMMON-TRAITS).** `Formation` derives
-      `PartialEq`, `Eq`, `Hash` and `Default`, but `Input`, `Bank`, `Memo` and
-      `View` implement none of them, so no built formation has them. Memos and
-      views hold closures and can never be `PartialEq`; `Input<T>` and `Bank`
-      could derive all four for input-only formations.
-- [ ] **Doc examples (C-EXAMPLE).** Only `formation.rs` has them. `Reading`,
-      `Sink`, `Visit`, `Feed`, `Get` and `Report` have none, and neither do
-      `Write` and `Element` beyond the `Formation::bank` docs.
+      `PartialEq`, `Eq` and `Hash`, but `Input`, `Bank`, `Memo` and `View`
+      implement none of them, so only formations of `strata!` structs have them;
+      `Default` is implemented for the empty formation alone. Memos and views
+      hold closures and can never be `PartialEq`; `Input<T>` and `Bank` could
+      derive all four for input-only formations.
+- [ ] **Doc examples (C-EXAMPLE).** The crate root, `Formation`, `Slot` and
+      `strata!` have them. `Reading`, `Sink`, `Visit`, `Feed`, `Get` and
+      `Report` have none, and neither do `Write` and `Element` beyond the
+      `Formation::bank` docs.
 - [ ] **Seal or document `Strata`, `Feed`, `Get` and `Report` (C-SEALED).** They
       are public and open, so a hand-written impl can break the change-bit
       invariants. Seal them, or state that implementing them is unsupported.
@@ -107,28 +109,29 @@ Invariants the crates rely on without enforcing them, found by an audit of
       `report`, so under `panic=unwind` the changes not yet visited were never
       reported. `Report::report` now takes the flags by `&mut` and clears each
       bit just before visiting its signal, and `poll` resets the spare bits
-      afterwards. The signal the visitor panicked on is not reported again, so
-      a visitor that always panics on it cannot block the rest. Cost: code size
+      afterwards. The signal the visitor panicked on is not reported again, so a
+      visitor that always panics on it cannot block the rest. Cost: code size
       builder 12108 -> 12498 B, macro 7486 -> 7650 B; fuel +1-3%, a fully
       changed 100-word bank +9% (10222 -> 11140); peak stack -16 B on banks.
       Storing the remaining bits once per element instead cut the full bank to
-      10870 but raised a single changed word from 854 to 896, so it was
-      dropped. `crates/outcrop/src/formation.rs`
+      10870 but raised a single changed word from 854 to 896, so it was dropped.
+      `crates/outcrop/src/formation.rs`
 
 ### Held by construction only
 
 - [ ] **`Layer::LEN`, `Cursor` and `Flags` must agree.** A `Used<8>` cursor must
       mean `LEN == Flags::BITS`; `Bank` and `Nested` set them by hand and
       nothing ties them together. `crates/outcrop/src/plumbing.rs`
-- [ ] **Bit indexes are never range-checked.** `(Tail, u8)::set_top` underflows
-      below `Tail::BITS`, and `u8::get`/`set_top` with an index of 8 or more
-      panic in debug and alias another bit in release.
-      `crates/outcrop/src/flags.rs`
+- [ ] **Bit indexes are never range-checked.** `(Tail, u8)::set_top` and
+      `clear_top` underflow below `Tail::BITS`, and `u8::get`, `set_top` and
+      `clear_top` with an index of 8 or more panic in debug and alias another
+      bit in release. `crates/outcrop/src/flags.rs`
 - [ ] **Hand-written `Strata`, `Feed`, `Get`, `Report` and `__private::Signal`
       impls can break all of the above.** A wrong `Signal::BIT` or mask makes a
-      `Nested` lookup read the wrong bit, and calling `evaluate`, `report` and
-      `feed` directly skips the order `Formation::poll` keeps. See C-SEALED
-      above. `crates/outcrop/src/nested.rs`
+      `Nested` lookup read the wrong bit, calling `evaluate`, `report` and
+      `feed` directly skips the order `Formation::poll` keeps, and a `Report`
+      that does not clear the bits it visits reports them again after a
+      panicking visitor. See C-SEALED above. `crates/outcrop/src/nested.rs`
 
 ### Partial checks
 
@@ -143,10 +146,10 @@ Invariants the crates rely on without enforcing them, found by an audit of
       `strata!`, a slot index in a bank's spare bits computes a `BIT` aliasing
       the next signal; only the assert in `read` stops it.
 - [x] **A `strata!` field named `chain` failed to compile.** Its local
-      `__outcrop_chain` clashed with the chain binding (E0416). Field locals
-      are now `__outcrop_field_*`, which no other generated name starts with.
-      The helper functions keep their call-site spans: a mixed-site span only
-      makes locals hygienic, not items. `crates/outcrop-macros/src/expand.rs`
+      `__outcrop_chain` clashed with the chain binding (E0416). Field locals are
+      now `__outcrop_field_*`, which no other generated name starts with. The
+      helper functions keep their call-site spans: a mixed-site span only makes
+      locals hygienic, not items. `crates/outcrop-macros/src/expand.rs`
 - [x] **`strata!` attribute forwarding.** Only plain `#[cfg]` on the struct
       reached the generated impls, so `#[cfg_attr(.., cfg(..))]` removed the
       struct and left its impls behind. The struct's attributes now stay on the
@@ -162,7 +165,9 @@ Documented here so that changes keep them consistent.
    reported and cleared by `poll`.
 2. **Formation lifecycle**, seen through `Reading`: built (every bit set, memos
    stale) → fed (dependent memos stale) → polled (fresh). Freshness is derived
-   from the flags, never stored.
+   from the flags, never stored. The flags take part in `Formation`'s
+   `PartialEq` and `Hash`, so formations are compared after polling them, as
+   documented on `Formation` and `strata!`.
 3. **Memo cache:** valid, stale, recomputed equal (no bit) or recomputed changed
    (bit). Equal to `f(deps)` only after a poll; `From` and `nest` set every bit,
    repairing fields written directly in the declaring module.
@@ -170,8 +175,9 @@ Documented here so that changes keep them consistent.
    structs jump to `Used<8>`, leaving the current byte's spare bits unused.
 5. **Builder vs closed:** `Layered` strata can be extended, `strata!` structs
    cannot; enforced by the trait bound.
-6. **`poll` protocol:** skip if clean → evaluate → clear → report, fixed only
-   inside `Formation::poll`.
+6. **`poll` protocol:** skip if clean → evaluate → report, clearing each bit
+   just before its signal is visited → reset the spare bits. Fixed only inside
+   `Formation::poll`.
 7. **Router state:** builder routers keep state in their `FnMut`; `strata!`
    routers cannot capture, so their state lives untracked in statics.
 8. **`strata!` `Default` chain:** pushed in declaration order, popped in
@@ -186,6 +192,14 @@ Documented here so that changes keep them consistent.
   the walk away. Measured with the `nest_bank_*` scenarios, which match the
   builder's (842 and 10222 fuel), and again with a 1000-word nested bank, the
   `trailing_zeros` walk left fuel, code size and stack unchanged.
+- Builder banks and nested structs take whole bytes of change bits: the bits
+  left in the byte beneath them and in their last byte go unused, and the next
+  signal starts a new byte. `input(A).bank([_; 4]).input(B)` takes three bytes
+  where one would do (formation 9 B instead of 7), and a bank deposited first
+  leaves the empty formation's byte unused (6 B instead of 5). Advancing the
+  `Used<_>` cursor by N bits needs const generic arithmetic, unstable in Rust;
+  at most two bytes are lost per bank or nested struct. `strata!` packs its
+  banks with its other signals. Documented on `Formation::bank` and `nest`.
 - The `Layer` impls of `Bank` and `Nested` repeat `LEN`, `Cursor = Used<8>`,
   `below` and `below_mut`: sharing them through a helper trait needs a second
   blanket `Layer` impl, which overlaps the one over `Value + Settle<Tail>`.

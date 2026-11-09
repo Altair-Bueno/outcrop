@@ -236,6 +236,37 @@ struct Router {
 /// implemented from the initial values, and wrapping the struct in a
 /// `Formation` marks every signal as changed.
 ///
+/// A `Formation` compares its pending changes along with its signals, since
+/// a memo is only brought up to date by `poll`. Poll before comparing:
+///
+/// ```
+/// use outcrop::Formation;
+///
+/// #[derive(Debug, Clone, PartialEq, Eq)]
+/// struct Kelvin(u16);
+/// #[derive(Debug, Clone, PartialEq, Eq)]
+/// struct Celsius(i32);
+///
+/// outcrop::strata! {
+///     #[derive(Debug, Clone, PartialEq, Eq)]
+///     struct Probe {
+///         kelvin: Kelvin = Kelvin(293),
+///         celsius: Celsius = Kelvin => |k| Celsius(i32::from(k.0) - 273),
+///     }
+/// }
+///
+/// let mut fed = Formation::from(Probe::default());
+/// fed.feed(Kelvin(300));
+/// let mut built = Formation::from(Probe::default());
+/// built.feed(Kelvin(300));
+/// built.poll(&mut ());
+///
+/// // `fed` still holds Celsius(20) and a pending change.
+/// assert_ne!(fed, built);
+/// fed.poll(&mut ());
+/// assert_eq!(fed, built);
+/// ```
+///
 /// To compile the struct in or out, put `cfg` or `cfg_attr` on the macro
 /// call, which removes the struct and everything generated for it together.
 /// On the struct, it would remove the struct and leave its impls behind:
