@@ -363,7 +363,34 @@ impl<S: Layered> Formation<S> {
 impl<S: Strata> Formation<S> {
     /// Feeds an input by value, or a router by reference.
     ///
-    /// Feeding an input its current value changes nothing.
+    /// Feeding an input its current value changes nothing. Feeding it a
+    /// different value marks it as changed until the next
+    /// [`poll`](Self::poll), even if a later feed restores the value it had
+    /// then: the input is compared with its current value, not with the last
+    /// one reported.
+    ///
+    /// ```
+    /// # use outcrop::{Formation, Visit};
+    /// #[derive(Debug, PartialEq)]
+    /// struct A(u8);
+    ///
+    /// struct Count(usize);
+    ///
+    /// impl<T> Visit<T> for Count {
+    ///     fn visit(&mut self, _: &T) {
+    ///         self.0 += 1;
+    ///     }
+    /// }
+    ///
+    /// let mut formation = Formation::new().input(A(0));
+    /// formation.poll(&mut ());
+    /// formation.feed(A(1));
+    /// formation.feed(A(0));
+    ///
+    /// let mut count = Count(0);
+    /// formation.poll(&mut count);
+    /// assert_eq!(count.0, 1); // A(0), written over since the last poll
+    /// ```
     pub fn feed<T, I>(&mut self, value: T)
     where
         S: Feed<T, I>,
@@ -392,7 +419,9 @@ impl<S: Strata> Formation<S> {
     /// Recomputes the memos whose dependencies changed and reports every
     /// changed signal, inputs and views included, to `visitor`.
     ///
-    /// A memo whose value did not change is neither reported nor propagated
+    /// An input is reported if it was [fed](Self::feed) a different value
+    /// since the last poll, even if a later feed restored it. A memo whose
+    /// value did not change is neither reported nor propagated
     /// to its dependents. A view is reported and propagated whenever one of
     /// its dependencies changed, whether or not its own value did.
     pub fn poll<V>(&mut self, visitor: &mut V)

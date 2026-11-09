@@ -10,8 +10,9 @@
 //! - a **view**, computed from the signals beneath it every time it is read,
 //!   for values cheap enough not to be stored.
 //!
-//! [`Formation::poll`] reports every input and memo whose value changed, and
-//! every view with a changed dependency. Nothing allocates: the whole graph
+//! [`Formation::poll`] reports every input fed a different value and every
+//! memo whose value changed since the last poll, and every view with a
+//! changed dependency. Nothing allocates: the whole graph
 //! lives in a single value whose type encodes its shape.
 //!
 //! ```

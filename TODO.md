@@ -89,13 +89,11 @@ Invariants the crates rely on without enforcing them, found by an audit of
 
 ### Broken promises
 
-- [ ] **A change bit means "written with a different value", not "differs from
-      the last report".** _Verified._ Inputs and banks compare a feed with the
-      current value, so `feed(A(1)); feed(A(0))` between polls reports `A(0)`
-      although nothing changed, and so does a router feeding an input twice. The
-      `poll` docs promise only changed values. Either compare with the
-      last-reported value (a stored copy) or reword the docs.
-      `crates/outcrop/src/stratum.rs`, `crates/outcrop/src/bank.rs`
+- [x] **A change bit means "written with a different value", not "differs from
+      the last report".** Inputs and banks compare a feed with the current
+      value, so `feed(A(1)); feed(A(0))` between polls reports `A(0)`. Kept: the
+      crate docs, `feed`, `poll` and `Write` now say so, with a doctest on
+      `feed`. `crates/outcrop/src/formation.rs`
 - [ ] **`PartialEq` is assumed reflexive.** _Verified._ An input holding
       `f32::NAN` is reported on every feed, and a NaN memo on every
       recomputation. Require `Eq`, or document it.

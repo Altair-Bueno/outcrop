@@ -40,8 +40,8 @@ pub trait Slot: Sized {
 /// Consecutive elements written to a bank, starting at `start`.
 ///
 /// Feeding a `Write` compares each element with the one in the bank and marks
-/// only those that differ as changed. Elements past the end of the bank are
-/// ignored.
+/// only those that differ as changed, until the next poll, as feeding an input
+/// does. Elements past the end of the bank are ignored.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Write<'a, T> {
     start: usize,
