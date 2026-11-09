@@ -118,12 +118,6 @@ Invariants the crates rely on without enforcing them, found by an audit of
       below `Tail::BITS`, and `u8::get`/`set_top` with an index of 8 or more
       panic in debug and alias another bit in release.
       `crates/outcrop/src/flags.rs`
-- [ ] **`strata!` evaluates in declaration order.** The generated `evaluate`
-      compiles with a dependency declared below; only the chain built by
-      `Default` rejects it. `crates/outcrop-macros/src/expand.rs`
-- [ ] **`Flags::default()` means "nothing changed".** `poll` skips on it. Spare
-      bits past the last signal are set by `CHANGED` and bank deposits, harmless
-      only because poll clears them and bank reports mask them out.
 - [ ] **Hand-written `Strata`, `Feed`, `Get`, `Report` and `__private::Signal`
       impls can break all of the above.** A wrong `Signal::BIT` or mask makes a
       `Nested` lookup read the wrong bit, and calling `evaluate`, `report` and
