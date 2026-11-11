@@ -53,6 +53,51 @@ purpose.
       changing, unchanged (10228 -> 10222); peak stack +16 B.
       `crates/outcrop/src/bank.rs`
 
+## Redesigns
+
+Left out of the 2026-11-11 `/simplify` pass as too large for a cleanup.
+
+- [ ] **One uniqueness check per layer.** "Every type a formation holds is a
+      single signal and fed in a single place" is never stated once: each
+      builder method picks its own `Distinct`/`Routed` bounds, and `strata!`
+      writes it three times (a `distinct` per signal, a `routed` per input,
+      bank and router, and the `checks` list behind `Nestable`, which repeats
+      `fed` entry for entry). 490c2b6 fixed an `input` that checked `Distinct`
+      but not `Routed`. Each layer would declare what it holds (`Input<T>`:
+      `Distinct<T>` + `Routed<T>`, `Memo`/`View`: `Distinct<Output>`, `Bank`:
+      `Routed<Write<T>>`, `Router`: `Routed<&In>`, `Nested<N>`: what `strata!`
+      generates), checked once in `deposit`; `strata!` then needs only
+      `Self: Nestable<(), _>`. Cost: builder methods collapse `I`, `J` into one
+      index, breaking turbofish callers like `input::<T, _, _>`, and errors
+      point at the struct or `deposit` rather than the entry unless per-entry
+      spans are kept for diagnostics. `crates/outcrop/src/formation.rs`,
+      `crates/outcrop-macros/src/expand.rs`
+- [ ] **Builder memo staleness without walking the dependency tree.**
+      `Formation::get` on a memo or view calls `Memo::stale` → `F::moved` →
+      `Select::moved` of every dependency, recursively, with no deduplication
+      of shared dependencies: a diamond-shaped graph grows exponentially, and
+      LLVM folds it only when it inlines the whole tree. A constant list of the
+      bit indices that move the memo, built by const concatenation, would make
+      it a loop over a constant array. Measure first: `strata!` tried one
+      constant mask with `intersects` and lost 30% fuel on a 100-word bank (see
+      _Kept as is_); a list of indices tested with `get` avoids walking bank
+      bytes. `crates/outcrop/src/stratum.rs`, `crates/outcrop/src/compute.rs`
+- [ ] **`strata!` `Default` without moving values through the chain.** Each
+      entry does `let chain = input(local, chain)`, moving the value and the
+      whole chain into a new tuple, and `unstore`/`unbank` move them back out:
+      about n²/2 bytes copied and a stack slot per shadowed `chain` without
+      optimisation, which matters for large banks in debug or `opt-level = "s"`
+      builds. A borrowed layer (`Settle::Ref = &'a T`, `Signal = T`) and a
+      borrowed bank would let `compute` and `distinct` see the same types while
+      the values stay in their locals. Measure peak stack in a debug build.
+      `crates/outcrop-macros/src/expand.rs`, `crates/outcrop/src/__private.rs`
+- [ ] **One forwarding impl per fed entry instead of per router × entry.**
+      Revisits the _Kept as is_ entry on router forwarding: a `Below<'s, P>`
+      wrapper generic over a const position, bounded by a "declared before `P`"
+      trait each fed entry implements once. Only worth it if it keeps the
+      "cannot be fed" error at type-check time; the earlier attempt traded it
+      for a post-monomorphisation one. `crates/outcrop-macros/src/expand.rs`
+
 ## API guidelines
 
 Deviations from the [Rust API Guidelines][guidelines] found by the
@@ -203,11 +248,12 @@ Documented here so that changes keep them consistent.
 
 ## Kept as is
 
-- `nested::intersects` walks every bit of a nested signal's mask rather than
-  only the set ones with `trailing_zeros`: the mask is a constant, so LLVM folds
-  the walk away. Measured with the `nest_bank_*` scenarios, which match the
-  builder's (842 and 10222 fuel), and again with a 1000-word nested bank, the
-  `trailing_zeros` walk left fuel, code size and stack unchanged.
+- `nested::intersects` walks the mask byte by byte through `Bits::byte`,
+  skipping zero bytes, since the 2026-11-11 `/simplify` pass: code size, fuel
+  and peak stack unchanged against the bit-by-bit walk (builder 12498 B, macro
+  7650 B). An earlier `trailing_zeros` walk likewise left
+  fuel, code size and stack unchanged on the `nest_bank_*` scenarios and a
+  1000-word nested bank, as LLVM folds the constant mask.
 - Builder banks and nested structs take whole bytes of change bits: the bits
   left in the byte beneath them and in their last byte go unused, and the next
   signal starts a new byte. `input(A).bank([_; 4]).input(B)` takes three bytes
@@ -221,17 +267,16 @@ Documented here so that changes keep them consistent.
   `Layer` impl, which overlaps the one over `Value + Settle<Tail>`.
 - `Distinct` and `Routed` look like plain aliases of `Get` and `Feed`, but work
   around rustc#152409, where such a where-bound shadows `Strata::Flags`.
-- The two copies of `slot` and `read` in `stratum.rs` and `__private.rs`:
-  sharing a free function from a private module trips `redundant_pub_crate` or
-  `unreachable_pub`.
+- `slot` and `read` live once, `pub` in `stratum.rs` and re-exported by
+  `__private`, with `expect(unreachable_pub)` when the `macros` feature is off.
 - The loops in `tools/measure/workload` stay hand-written: rewriting them with
   `core::array::from_fn` could shift the baselines the workload measures.
 - The Aidoo example keeps its `From<u16>` unit impls and `bit()` matches written
   out: no `macro_rules` in the example, and `as` casts trip `as_conversions`.
-- `signal()` and `bank()` in `expand.rs` stay separate: since `bits()` and
-  `marker()` hold what they share, the rest differs (N bits, one generic impl
-  for every slot, reporting `Element`s, no per-signal duplicate check), and
-  merging them would need several bank-only parameters.
+- `signal()` and `bank()` in `expand.rs` stay separate apart from `declare()`,
+  which holds the marker, bit and signal bookkeeping they share; the rest
+  differs (N bits, one generic impl for every slot, reporting `Element`s, no
+  per-signal duplicate check).
 - `strata!` tests a memo's or view's dependencies one `is_set` each rather than
   one constant mask with `intersects`: measured, the mask saved 0.2% of fuel on
   the workload's 4-byte flags but cost 30% (831 -> 1079) with a 100-word bank,
