@@ -6,11 +6,15 @@
 
 mod common;
 
+use common::Recorder;
 use common::Register;
 use common::poll;
 use outcrop::Element;
+use outcrop::Feed;
 use outcrop::Formation;
 use outcrop::Reading;
+use outcrop::Report;
+use outcrop::Slot;
 use outcrop::Visit;
 use outcrop::Write;
 
@@ -29,6 +33,54 @@ fn celsius(r: &Register<1>) -> Celsius {
 
 fn total(low: &Register<2>, high: &Register<3>) -> Total {
     Total(u32::from(high.0) << 16 | u32::from(low.0))
+}
+
+/// A coil, read from a bank of `bool`.
+#[derive(Debug, PartialEq, Eq)]
+struct Coil<const ADDRESS: usize>(bool);
+
+impl<const ADDRESS: usize> Slot for Coil<ADDRESS> {
+    type Item = bool;
+    const INDEX: usize = ADDRESS;
+
+    fn read(item: &bool) -> Self {
+        Self(*item)
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct Status(u16, bool);
+
+fn status(word: &Register<2>, coil: &Coil<8>) -> Status {
+    Status(word.0, coil.0)
+}
+
+/// Feeds one bank, then the other, of a formation holding a bank of `u16`
+/// and a bank of nine `bool`, with [`status`] above them.
+fn feed_each_bank<S, I, J>(formation: &mut Formation<S>) -> [Vec<String>; 2]
+where
+    S: Feed<Write<'static, u16>, I> + Feed<Write<'static, bool>, J> + Report<Recorder>,
+{
+    formation.feed(Write::new(2, &[7_u16]));
+    let words = poll(formation);
+    formation.feed(Write::new(8, &[true]));
+    [words, poll(formation)]
+}
+
+const FED_APART: [&[&str]; 2] = [
+    &["Element { index: 2, value: 7 }", "Status(7, false)"],
+    &["Element { index: 8, value: true }", "Status(7, true)"],
+];
+
+#[test]
+fn banks_of_different_items_are_fed_and_read_apart() {
+    let mut formation = Formation::new()
+        .bank::<1, _, _, _>([0_u16; 4])
+        .bank::<2, _, _, _>([false; 9])
+        .memo(status);
+    poll(&mut formation);
+
+    assert_eq!(feed_each_bank(&mut formation), FED_APART);
 }
 
 #[test]
@@ -195,6 +247,24 @@ mod declared {
                 sink.feed(Write::new(0, &words));
             },
         }
+    }
+
+    outcrop::strata! {
+        struct Device {
+            #[strata(bank)]
+            words: [u16; 4] = [0; 4],
+            #[strata(bank)]
+            coils: [bool; 9] = [false; 9],
+            status: Status = (Register<2>, Coil<8>) => status,
+        }
+    }
+
+    #[test]
+    fn declared_banks_of_different_items_are_fed_and_read_apart() {
+        let mut formation = Formation::from(Device::default());
+        poll(&mut formation);
+
+        assert_eq!(feed_each_bank(&mut formation), FED_APART);
     }
 
     #[test]
