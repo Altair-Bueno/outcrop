@@ -6,7 +6,6 @@ use crate::__private::Nestable;
 use crate::nested::Nested;
 use crate::plumbing::Layer;
 use crate::plumbing::Sound;
-use crate::reading::Reading;
 use crate::sink::Sink;
 use crate::strata::Feed;
 use crate::strata::Get;
@@ -152,7 +151,7 @@ impl<S: Layered> Formation<S> {
     ///
     /// formation.feed(Write::new(1, &[7, 215]));
     /// formation.poll(&mut ());
-    /// assert_eq!(*formation.get::<Celsius, _>().into_inner(), Celsius(21));
+    /// assert_eq!(formation.get::<Celsius, _>(), &Celsius(21));
     /// ```
     ///
     /// A slot is any type implementing [`Slot`](crate::Slot) for the bank's
@@ -320,7 +319,7 @@ impl<S: Layered> Formation<S> {
     ///
     /// formation.feed(Kelvin(270));
     /// formation.poll(&mut ());
-    /// assert_eq!(*formation.get::<Freezing, _>().into_inner(), Freezing(true));
+    /// assert_eq!(formation.get::<Freezing, _>(), &Freezing(true));
     /// ```
     ///
     /// So nesting a struct that declares a type the formation already holds
@@ -389,19 +388,37 @@ impl<S: Strata> Formation<S> {
     /// Reads the signal `T` without recomputing any memo.
     ///
     /// Inputs and memos are read by reference, while views are computed on
-    /// the spot and returned by value.
+    /// the spot and returned by value, as are bank slots.
     ///
-    /// Inputs, bank slots and views computed from them alone are always
-    /// [`Fresh`](Reading::Fresh). Memos, and views computed from a memo, are
-    /// [`Stale`](Reading::Stale) whenever anything in the formation changed
-    /// since the last [`poll`](Self::poll), related to them or not: telling
-    /// the two apart would cost a walk of their dependencies on every read.
-    /// Signals declared since then count as changed.
-    pub fn get<T, I>(&self) -> Reading<<S as Get<T, I>>::Ref<'_>>
+    /// Inputs, bank slots and views computed from them alone read their
+    /// current value. Memos, and views computed from a memo, read the value of
+    /// the last [`poll`](Self::poll), or of their declaration if later, until
+    /// the next poll recomputes them. Only the caller feeds and polls, so it
+    /// knows whether a feed is pending:
+    ///
+    /// ```
+    /// # use outcrop::Formation;
+    /// #[derive(Debug, PartialEq, Eq)]
+    /// struct Celsius(i16);
+    /// #[derive(Debug, PartialEq, Eq)]
+    /// struct Frost(bool);
+    ///
+    /// let mut formation = Formation::new()
+    ///     .input(Celsius(5))
+    ///     .memo(|c: &Celsius| Frost(c.0 < 0));
+    ///
+    /// formation.feed(Celsius(-2));
+    /// assert_eq!(formation.get::<Celsius, _>(), &Celsius(-2));
+    /// assert_eq!(formation.get::<Frost, _>(), &Frost(false));
+    ///
+    /// formation.poll(&mut ());
+    /// assert_eq!(formation.get::<Frost, _>(), &Frost(true));
+    /// ```
+    pub fn get<T, I>(&self) -> <S as Get<T, I>>::Ref<'_>
     where
         S: Get<T, I>,
     {
-        self.strata.get(&self.changed)
+        self.strata.get()
     }
 
     /// Recomputes the memos whose dependencies changed and reports every

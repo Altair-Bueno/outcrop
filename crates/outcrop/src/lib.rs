@@ -15,6 +15,11 @@
 //! changed dependency. Nothing allocates: the whole graph
 //! lives in a single value whose type encodes its shape.
 //!
+//! [`Formation::get`] reads a signal without computing anything it would not
+//! compute anyway: inputs, bank slots and views read their current value,
+//! while a memo, and a view computed from one, read the value of the last
+//! poll until the next one brings them up to date.
+//!
 //! ```
 //! use core::fmt::Debug;
 //! use outcrop::{Formation, Visit};
@@ -62,7 +67,6 @@ mod formation;
 #[cfg(feature = "macros")]
 mod nested;
 mod plumbing;
-mod reading;
 mod sink;
 mod strata;
 mod stratum;
@@ -74,7 +78,6 @@ pub use bank::Write;
 pub use formation::Formation;
 #[cfg(feature = "macros")]
 pub use outcrop_macros::strata;
-pub use reading::Reading;
 pub use sink::Sink;
 pub use strata::Feed;
 pub use strata::Get;

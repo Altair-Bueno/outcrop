@@ -129,7 +129,7 @@ impl Declaration {
             let (attrs, local) = (&signal.attrs, local(field));
             Some(quote!(#(#attrs)* #field: #local))
         });
-        let get = lookup_by_type(ident, krate, &private, &flags);
+        let get = lookup_by_type(ident, krate, &private);
         let nestable = nestable(ident, &private, &checks);
         let changed_flags = if evaluations.is_empty() {
             quote!(_)
@@ -324,7 +324,6 @@ impl<'d> Expansion<'d> {
         attrs: &[Attribute],
         ty: &Type,
         (bit, marker): (&Ident, &Ident),
-        cached: &TokenStream,
         (output, value): (TokenStream, TokenStream),
     ) {
         let (ident, private) = (self.ident, &self.private);
@@ -332,7 +331,6 @@ impl<'d> Expansion<'d> {
             #(#attrs)*
             impl #private::Signal<#ty, #marker> for #ident {
                 const BIT: usize = #bit;
-                const CACHED: bool = #cached;
                 type Ref<'a> = #output where Self: 'a;
 
                 fn value(&self) -> Self::Ref<'_> {
@@ -448,7 +446,6 @@ impl<'d> Expansion<'d> {
             attrs,
             ty,
             (&bit, &marker),
-            &quote!(false),
             (quote!(&'a #ty), quote!(&self.#name)),
         );
         let (ident, krate, flags) = (self.ident, self.krate, &self.flags);
@@ -495,7 +492,6 @@ impl<'d> Expansion<'d> {
             #(#attrs)*
             impl<#slot: #krate::Slot<Item = #item>> #signal for #ident {
                 const BIT: usize = #private::slot::<#slot, { #len }>(#base);
-                const CACHED: bool = false;
                 type Ref<'a> = #slot where Self: 'a;
 
                 fn value(&self) -> #slot {
@@ -542,7 +538,6 @@ impl<'d> Expansion<'d> {
             attrs,
             ty,
             (&bit, &marker),
-            &quote!(true),
             (quote!(&'a #ty), quote!(&self.#name)),
         );
         let dirty = self.dirty(&deps);
@@ -572,15 +567,11 @@ impl<'d> Expansion<'d> {
         });
         let (bit, marker) = self.signal(attrs, ty, None);
         self.derivation(attrs, function, &helper, &deps, ty);
-        let cached = deps
-            .iter()
-            .map(|dep| quote!(#private::cached::<Self, #dep, _>()));
         let arguments = self.arguments(&deps);
         self.lookup(
             attrs,
             ty,
             (&bit, &marker),
-            &quote!(false #(|| #cached)*),
             (quote!(#ty), quote!(#helper(#(#arguments),*))),
         );
         let dirty = self.dirty(&deps);
@@ -658,12 +649,7 @@ impl<'d> Expansion<'d> {
 }
 
 /// Implements `Get` for every signal the struct implements `Signal` for.
-fn lookup_by_type(
-    ident: &Ident,
-    krate: &Path,
-    private: &TokenStream,
-    flags: &Ident,
-) -> TokenStream {
+fn lookup_by_type(ident: &Ident, krate: &Path, private: &TokenStream) -> TokenStream {
     let (t, i) = (mixed("__OutcropT"), mixed("__OutcropI"));
     let signal = quote!(#private::Signal<#t, #i>);
     quote! {
@@ -673,8 +659,8 @@ fn lookup_by_type(
         {
             type Ref<'a> = <Self as #signal>::Ref<'a> where Self: 'a;
 
-            fn get(&self, changed: &#flags) -> #krate::Reading<Self::Ref<'_>> {
-                #private::get(self, changed)
+            fn get(&self) -> Self::Ref<'_> {
+                #private::value::<Self, #t, #i>(self)
             }
         }
     }

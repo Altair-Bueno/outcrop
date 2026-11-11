@@ -10,7 +10,6 @@ mod common;
 use common::Register;
 use common::poll;
 use outcrop::Formation;
-use outcrop::Reading;
 use outcrop::Write;
 
 #[derive(Debug, PartialEq, Eq)]
@@ -113,16 +112,13 @@ fn nested_signals_are_read_by_type() {
     poll(&mut formation);
     formation.feed(Kelvin(373));
 
-    assert_eq!(formation.get::<Kelvin, _>(), Reading::Fresh(&Kelvin(373)));
-    assert_eq!(formation.get::<Celsius, _>(), Reading::Stale(&Celsius(20)));
-    assert_eq!(
-        formation.get::<Freezing, _>(),
-        Reading::Stale(Freezing(false))
-    );
+    assert_eq!(formation.get::<Kelvin, _>(), &Kelvin(373));
+    assert_eq!(formation.get::<Celsius, _>(), &Celsius(20));
+    assert_eq!(formation.get::<Freezing, _>(), Freezing(false));
 
     poll(&mut formation);
 
-    assert_eq!(formation.get::<Celsius, _>(), Reading::Fresh(&Celsius(100)));
+    assert_eq!(formation.get::<Celsius, _>(), &Celsius(100));
 }
 
 #[test]

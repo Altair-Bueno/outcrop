@@ -75,7 +75,6 @@ pub trait Value {
 
 /// A layer holding a single signal, at the bit `Tail::LEN`.
 pub trait Settle<Tail>: Value {
-    const CACHED: bool;
     type Ref<'a>: Borrow<Self::Signal>
     where
         Self: 'a,
@@ -94,7 +93,6 @@ pub trait Settle<Tail>: Value {
 )]
 pub trait Select<T, I> {
     const INDEX: usize;
-    const CACHED: bool;
     type Ref<'a>: Borrow<T>
     where
         Self: 'a;
@@ -109,7 +107,6 @@ pub trait Select<T, I> {
 )]
 pub trait ComputeImpl<S, M> {
     type Output;
-    const CACHED: bool;
 
     fn dirty<Fl: Bits>(changed: &Fl) -> bool;
 

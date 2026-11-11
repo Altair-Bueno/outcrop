@@ -92,7 +92,8 @@ each measured against a snapshot of the tree before it with
       cost, as `*_get` minus `*_feed_bottom`, builder 50 -> 22 fuel, macro 44
       -> 8. Code size, peak stack and formation size unchanged.
       `cargo check --workspace --all-targets --all-features` after cleaning both
-      crates, best of three: 1962 -> 1650 ms, items 1 and 2 included.
+      crates, best of three: 1962 -> 1650 ms, items 1 and 2 included. Superseded
+      by _Drop `Reading`_ below: `Reading` and `CACHED` are gone.
 - [x] **4. One uniqueness check per layer.** "Every type a formation holds is a
       single signal and fed in a single place" was never stated once: each
       builder method picked its own `Distinct`/`Routed` bounds, and `strata!`
@@ -135,6 +136,21 @@ each measured against a snapshot of the tree before it with
       bank, a view and a memo (read from `--emit asm` of a probe crate): 28064 B
       -> 2064 B. Release: code size, fuel, reports, peak stack and formation
       size unchanged; `cargo check` 1636 -> 1629 ms, noise.
+- [x] **7. Drop `Reading`.** `get` returned `Reading<Ref>`, `Stale` when the
+      signal was or depended on a memo and any change was pending. The caller
+      makes every feed and poll, so it already knows whether a memo may be
+      behind, and the wrapper only cost an `.into_inner()` per read.
+      `Formation::get` and `Get::get` now return the `Ref` itself: `&T` for
+      inputs and memos, `T` for views and bank slots. Inputs, slots and views
+      over inputs read their current value; memos, and views over them, the
+      value of the last poll or of their declaration. Removed: `Reading`,
+      `Get::get`'s `changed` argument, `CACHED` on `Settle`, `Select`,
+      `ComputeImpl` and `__private::Signal`, and `__private::cached` and `get`.
+      The workload's `*_get` reads the two values through `black_box` instead of
+      counting stale reads, so its reports drop from 151 to 119. The two reads
+      cost, as `*_get` minus `*_feed_bottom`, builder 22 -> 8 fuel, macro 8
+      -> 6. Code size, the other fuel figures, peak stack and formation size
+      unchanged.
 - [ ] ~~**Builder memo staleness without walking the dependency tree.**~~
       Replaced by 3: const concatenation sized by the dependency count is not
       expressible on stable Rust. `Formation::get` on a memo or view calls
@@ -344,8 +360,8 @@ reproduced in a scratch crate; item 4 with `cargo +nightly fmt --all --check`.
       example's `expect` and the `unreachable_pub` allow in `tests/common` are
       gone; `stratum.rs`, `nested.rs` and the Aidoo example use plain `pub`.
       Exception, by choice: inherent methods on types users can reach keep
-      `pub(crate)` so they stay out of the public API: `Reading::new`,
-      `Write::apply`, `Element::report` and `Chunk::bytes_mut` (`Chunk` is
+      `pub(crate)` so they stay out of the public API: `Write::apply`,
+      `Element::report` and `Chunk::bytes_mut` (`Chunk` is
       reachable through `__private`). `pub(crate) struct Spelled` in
       `tests/strata.rs` stays too, as input checking that `strata!` passes
       the visibility through. The generated code keeps its
@@ -367,9 +383,9 @@ Deviations from the [Rust API Guidelines][guidelines] found by the
       hold closures and can never be `PartialEq`; `Input<T>` and `Bank` could
       derive all four for input-only formations.
 - [ ] **Doc examples (C-EXAMPLE).** The crate root, `Formation`, `Slot` and
-      `strata!` have them. `Reading`, `Sink`, `Visit`, `Feed`, `Get` and
-      `Report` have none, and neither do `Write` and `Element` beyond the
-      `Formation::bank` docs.
+      `strata!` have them. `Sink`, `Visit`, `Feed`, `Get` and `Report` have
+      none, and neither do `Write` and `Element` beyond the `Formation::bank`
+      docs.
 - [x] **Seal or document `Strata`, `Feed`, `Get` and `Report` (C-SEALED).**
       Documented, not sealed: `strata!` implements them in the user's crate, so
       anything it can name the user can too, and `tests/manual.rs` implements
@@ -379,7 +395,7 @@ Deviations from the [Rust API Guidelines][guidelines] found by the
       `#[non_exhaustive]` would do, at the cost of callers constructing one.
 - [ ] **`Write` name.** It collides with `std::io::Write` and `core::fmt::Write`
       when imported beside them.
-- [ ] **`Reading` combinators.** No `map` or `as_ref`.
+- [ ] ~~**`Reading` combinators.**~~ Dropped with `Reading` itself.
 
 [guidelines]: https://rust-lang.github.io/api-guidelines/checklist.html
 
@@ -477,11 +493,12 @@ Documented here so that changes keep them consistent.
 1. **Change bit per signal:** clean → pending (declared, or fed a different
    value) → set by evaluation (memo changed, or a view's dependency moved) →
    reported and cleared by `poll`.
-2. **Formation lifecycle**, seen through `Reading`: built (every bit set, memos
-   stale) → fed (every memo stale) → polled (fresh). Freshness is derived from
-   whether any flag is set and whether the signal is `CACHED`, never stored. The
-   flags take part in `Formation`'s `PartialEq` and `Hash`, so formations are
-   compared after polling them, as documented on `Formation` and `strata!`.
+2. **Formation lifecycle**, seen through `get`: built (every bit set, memos hold
+   their declared value) → fed (inputs current, memos hold their last value) →
+   polled (memos current). The formation never tells the two apart: the caller
+   feeds and polls, so it knows. The flags take part in `Formation`'s
+   `PartialEq` and `Hash`, so formations are compared after polling them, as
+   documented on `Formation` and `strata!`.
 3. **Memo cache:** valid, stale, recomputed equal (no bit) or recomputed changed
    (bit). Equal to `f(deps)` only after a poll; `From` and `nest` set every bit,
    repairing fields written directly in the declaring module.

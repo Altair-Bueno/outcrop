@@ -7,7 +7,6 @@ use core::mem::size_of_val;
 
 use common::poll;
 use outcrop::Formation;
-use outcrop::Reading;
 
 #[derive(Debug, PartialEq, Eq)]
 struct Register<const ADDRESS: u16>(u16);
@@ -89,7 +88,7 @@ fn views_combine_several_signals() {
 
     formation.feed(Register::<0x11>(u16::from_be_bytes(*b"tr")));
 
-    assert_eq!(formation.get::<Name, _>(), Reading::Fresh(Name(*b"outr")));
+    assert_eq!(formation.get::<Name, _>(), Name(*b"outr"));
     assert_eq!(
         poll(&mut formation),
         ["Register(29810)", "Name([111, 117, 116, 114])"]
@@ -106,12 +105,12 @@ fn views_follow_memos_recomputed_by_the_poll() {
 
     formation.feed(Register::<0x42>(2));
 
-    assert_eq!(formation.get::<Even, _>(), Reading::Stale(Even(false)));
+    assert_eq!(formation.get::<Even, _>(), Even(false));
     assert_eq!(
         poll(&mut formation),
         ["Register(2)", "Doubled(4)", "Even(true)"]
     );
-    assert_eq!(formation.get::<Even, _>(), Reading::Fresh(Even(true)));
+    assert_eq!(formation.get::<Even, _>(), Even(true));
 }
 
 #[test]
@@ -128,7 +127,7 @@ fn memos_above_views_recompute_but_stop_unchanged_values() {
     let before = calls.get();
 
     formation.feed(Register::<0x42>(0x26));
-    assert_eq!(formation.get::<Even, _>(), Reading::Stale(&Even(false)));
+    assert_eq!(formation.get::<Even, _>(), &Even(false));
     assert_eq!(
         poll(&mut formation),
         ["Register(38)", "AntiFreezeSupported(false)"]
@@ -208,7 +207,7 @@ fn views_need_no_partial_eq() {
 
     formation.feed(Register::<0x42>(0x23));
 
-    assert_eq!(formation.get::<Label, _>().into_inner().0, "on");
+    assert_eq!(formation.get::<Label, _>().0, "on");
     assert_eq!(poll(&mut formation), ["Register(35)", "Label(\"on\")"]);
 }
 

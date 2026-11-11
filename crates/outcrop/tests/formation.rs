@@ -8,7 +8,6 @@ use common::PanicOn;
 use common::Recorder;
 use common::poll;
 use outcrop::Formation;
-use outcrop::Reading;
 use outcrop::Report;
 use outcrop::Visit;
 
@@ -261,47 +260,17 @@ fn the_empty_formation_is_nameable() {
 struct Alarm(bool);
 
 #[test]
-fn memos_declared_after_a_poll_are_stale_until_polled() {
-    let mut formation = Formation::new().input(Temperature(20));
+fn memos_are_computed_when_declared() {
+    let mut formation = Formation::new().input(Temperature(5));
     poll(&mut formation);
     let mut formation = formation.memo(|t: &Temperature| AntiFreeze(t.0 < 10));
 
-    assert_eq!(
-        formation.get::<AntiFreeze, _>(),
-        Reading::Stale(&AntiFreeze(false))
-    );
-    assert_eq!(poll(&mut formation), ["AntiFreeze(false)"]);
-    assert_eq!(
-        formation.get::<AntiFreeze, _>(),
-        Reading::Fresh(&AntiFreeze(false))
-    );
+    assert_eq!(formation.get::<AntiFreeze, _>(), &AntiFreeze(true));
+    assert_eq!(poll(&mut formation), ["AntiFreeze(true)"]);
 }
 
 #[test]
-fn derived_reads_are_stale_until_the_first_poll() {
-    let mut formation = Formation::new()
-        .input(Temperature(20))
-        .memo(|t: &Temperature| AntiFreeze(t.0 < 10));
-
-    assert_eq!(
-        formation.get::<Temperature, _>(),
-        Reading::Fresh(&Temperature(20))
-    );
-    assert_eq!(
-        formation.get::<AntiFreeze, _>(),
-        Reading::Stale(&AntiFreeze(false))
-    );
-
-    poll(&mut formation);
-
-    assert_eq!(
-        formation.get::<AntiFreeze, _>(),
-        Reading::Fresh(&AntiFreeze(false))
-    );
-}
-
-#[test]
-fn feeding_marks_every_memo_stale_until_the_next_poll() {
+fn memos_keep_their_value_until_the_next_poll() {
     let mut formation = Formation::new()
         .input(Temperature(20))
         .input(Setpoint(18))
@@ -311,33 +280,17 @@ fn feeding_marks_every_memo_stale_until_the_next_poll() {
 
     formation.feed(Setpoint(25));
 
-    assert_eq!(
-        formation.get::<Setpoint, _>(),
-        Reading::Fresh(&Setpoint(25))
-    );
-    assert_eq!(
-        formation.get::<Heating, _>(),
-        Reading::Stale(&Heating(false))
-    );
-    assert_eq!(
-        formation.get::<AntiFreeze, _>(),
-        Reading::Stale(&AntiFreeze(false))
-    );
+    assert_eq!(formation.get::<Setpoint, _>(), &Setpoint(25));
+    assert_eq!(formation.get::<Heating, _>(), &Heating(false));
 
     poll(&mut formation);
 
-    assert_eq!(
-        formation.get::<Heating, _>(),
-        Reading::Fresh(&Heating(true))
-    );
-    assert_eq!(
-        formation.get::<AntiFreeze, _>(),
-        Reading::Fresh(&AntiFreeze(false))
-    );
+    assert_eq!(formation.get::<Heating, _>(), &Heating(true));
+    assert_eq!(formation.get::<AntiFreeze, _>(), &AntiFreeze(false));
 }
 
 #[test]
-fn staleness_follows_derived_dependencies() {
+fn memo_chains_keep_their_values_until_the_next_poll() {
     let mut formation = Formation::new()
         .input(Temperature(20))
         .input(Setpoint(18))
@@ -346,20 +299,10 @@ fn staleness_follows_derived_dependencies() {
     poll(&mut formation);
 
     formation.feed(Temperature(10));
+    assert_eq!(formation.get::<Alarm, _>(), &Alarm(false));
 
-    assert_eq!(formation.get::<Alarm, _>(), Reading::Stale(&Alarm(false)));
-}
-
-#[test]
-fn feeding_the_current_value_keeps_dependents_fresh() {
-    let mut formation = Formation::new()
-        .input(Temperature(20))
-        .memo(|t: &Temperature| AntiFreeze(t.0 < 10));
     poll(&mut formation);
-
-    formation.feed(Temperature(20));
-
-    assert!(formation.get::<AntiFreeze, _>().is_fresh());
+    assert_eq!(formation.get::<Alarm, _>(), &Alarm(true));
 }
 
 #[test]

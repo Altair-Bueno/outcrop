@@ -11,7 +11,6 @@ use crate::plumbing::Bits as _;
 use crate::plumbing::ComputeImpl;
 use crate::plumbing::Distinct;
 use crate::plumbing::Routed;
-use crate::reading::Reading;
 use crate::strata::Strata;
 use crate::stratum::Bank;
 use crate::stratum::Input;
@@ -21,12 +20,9 @@ pub use crate::stratum::slot;
 use crate::visit::Visit;
 
 /// A signal `T` of a `strata!` struct, found by type. `BIT` is the signal's
-/// bit in the struct's `Chunk` flags. `CACHED` tells whether the signal is a
-/// memo or computed from one, so that reading it while any bit is set is
-/// [`Stale`](Reading::Stale).
+/// bit in the struct's `Chunk` flags.
 pub trait Signal<T, I>: Strata {
     const BIT: usize;
-    const CACHED: bool;
     type Ref<'a>: Borrow<T>
     where
         Self: 'a;
@@ -38,19 +34,8 @@ pub const fn bit<S: Signal<T, I>, T, I>() -> usize {
     S::BIT
 }
 
-pub const fn cached<S: Signal<T, I>, T, I>() -> bool {
-    S::CACHED
-}
-
 pub fn value<S: Signal<T, I>, T, I>(strata: &S) -> S::Ref<'_> {
     strata.value()
-}
-
-pub fn get<'s, S, T, I, const N: usize>(strata: &'s S, changed: &Chunk<N>) -> Reading<S::Ref<'s>>
-where
-    S: Signal<T, I, Flags = Chunk<N>>,
-{
-    Reading::new(strata.value(), S::CACHED && *changed != Chunk::default())
 }
 
 pub fn ne<T: Eq>(a: &T, b: &T) -> bool {
@@ -181,7 +166,6 @@ mod tests {
 
     impl Signal<u8, ()> for () {
         const BIT: usize = 3;
-        const CACHED: bool = true;
         type Ref<'a>
             = &'a u8
         where
@@ -195,7 +179,6 @@ mod tests {
     #[test]
     fn signal_constants_are_read_through_the_helpers() {
         assert_eq!(bit::<(), u8, ()>(), 3);
-        assert!(cached::<(), u8, ()>());
         assert_eq!(*value::<(), u8, ()>(&black_box(())), 7);
     }
 }

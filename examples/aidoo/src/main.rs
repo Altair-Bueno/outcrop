@@ -58,8 +58,5 @@ fn main() {
     println!("after switching to heat:");
     aidoo.poll(&mut Print);
 
-    println!(
-        "setpoint range: {:?}",
-        aidoo.get::<SetpointRange, _>().into_inner()
-    );
+    println!("setpoint range: {:?}", aidoo.get::<SetpointRange, _>());
 }

@@ -2,8 +2,6 @@ use core::borrow::Borrow;
 use core::fmt::Debug;
 use core::hash::Hash;
 
-use crate::reading::Reading;
-
 /// The signals a [`Formation`](crate::Formation) is made of.
 ///
 /// Implemented by the strata built with
@@ -27,8 +25,8 @@ use crate::reading::Reading;
 ///   view whenever a dependency's bit is set, and never clears a bit.
 /// - [`Feed::feed`] marks an input only if the value differs from the stored
 ///   one, and evaluates nothing.
-/// - [`Get::get`] is [`Stale`](Reading::Stale) exactly when the signal is a
-///   memo, or is computed from one, and any bit of `Flags` is set.
+/// - [`Get::get`] computes nothing but a view: a memo reads the value
+///   [`evaluate`](Self::evaluate) last stored.
 /// - [`Report::report`] visits exactly the marked signals, bottom-up, and under
 ///   `panic = "unwind"` clears each bit just before visiting its signal; under
 ///   `panic = "abort"` it may leave the bits for
@@ -81,9 +79,9 @@ pub trait Get<T, I>: Strata {
     where
         Self: 'a;
 
-    /// Returns the current value of `T`, [`Stale`](Reading::Stale) if it is
-    /// or depends on a memo and any signal is marked in `changed`.
-    fn get(&self, changed: &Self::Flags) -> Reading<Self::Ref<'_>>;
+    /// Returns the value of `T`: the stored value of an input or memo, or the
+    /// value of a view, computed from the values beneath it.
+    fn get(&self) -> Self::Ref<'_>;
 }
 
 /// Strata whose every signal can be reported to the visitor `V`.

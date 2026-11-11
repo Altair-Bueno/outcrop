@@ -12,7 +12,6 @@ macro_rules! impl_compute {
             $(S: Select<$dep, $index>,)+
         {
             type Output = O;
-            const CACHED: bool = false $(|| <S as Select<$dep, $index>>::CACHED)+;
 
             fn dirty<Fl: Bits>(changed: &Fl) -> bool {
                 false $(|| changed.get(<S as Select<$dep, $index>>::INDEX))+

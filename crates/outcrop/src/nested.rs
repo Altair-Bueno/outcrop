@@ -64,7 +64,6 @@ where
     Tail: LayeredImpl,
 {
     const INDEX: usize = <Tail::Flags as Bits>::BITS + S::BIT;
-    const CACHED: bool = S::CACHED;
     type Ref<'a>
         = S::Ref<'a>
     where

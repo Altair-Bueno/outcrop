@@ -277,15 +277,14 @@ macro_rules! scenarios {
             let mut formation = black_box($make);
             let mut sum = Sum::default();
             formation.poll(&mut sum);
-            let mut stale = 0;
             for i in 0..black_box(rounds) {
                 formation.feed(Register::<0>(black_box(i as u16)));
-                stale += u32::from(formation.get::<Summary, _>().is_stale());
-                stale += u32::from(formation.get::<Alarm, _>().is_stale());
+                black_box(formation.get::<Summary, _>());
+                black_box(formation.get::<Alarm, _>());
                 formation.poll(&mut sum);
             }
             black_box(&formation);
-            sum.0 + stale
+            sum.0
         }
     };
 }

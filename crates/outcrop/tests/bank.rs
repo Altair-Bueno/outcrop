@@ -12,7 +12,6 @@ use common::poll;
 use outcrop::Element;
 use outcrop::Feed;
 use outcrop::Formation;
-use outcrop::Reading;
 use outcrop::Report;
 use outcrop::Slot;
 use outcrop::Visit;
@@ -152,11 +151,8 @@ fn slots_are_read_by_type() {
         .memo(celsius);
     formation.feed(Write::new(1, &[300]));
 
-    assert_eq!(
-        formation.get::<Register<1>, _>(),
-        Reading::Fresh(Register(300))
-    );
-    assert_eq!(formation.get::<Celsius, _>(), Reading::Stale(&Celsius(0)));
+    assert_eq!(formation.get::<Register<1>, _>(), Register(300));
+    assert_eq!(formation.get::<Celsius, _>(), &Celsius(0));
 }
 
 #[test]
@@ -304,11 +300,8 @@ mod declared {
         let mut formation = Formation::from(Probe::default());
         formation.feed(Write::new(1, &[300]));
 
-        assert_eq!(
-            formation.get::<Register<1>, _>(),
-            Reading::Fresh(Register(300))
-        );
-        assert_eq!(formation.get::<Celsius, _>(), Reading::Stale(&Celsius(0)));
+        assert_eq!(formation.get::<Register<1>, _>(), Register(300));
+        assert_eq!(formation.get::<Celsius, _>(), &Celsius(0));
     }
 }
 

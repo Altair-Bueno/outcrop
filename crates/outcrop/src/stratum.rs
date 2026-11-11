@@ -21,7 +21,6 @@ use crate::plumbing::Select;
 use crate::plumbing::Settle;
 use crate::plumbing::Sound;
 use crate::plumbing::Value;
-use crate::reading::Reading;
 use crate::sink::Sink;
 use crate::strata::Feed;
 use crate::strata::Get;
@@ -277,7 +276,6 @@ impl<F, M, O> Value for View<F, M, O> {
 }
 
 impl<T, A: Borrow<T>, Tail> Settle<Tail> for Input<T, A> {
-    const CACHED: bool = false;
     type Ref<'a>
         = &'a T
     where
@@ -298,7 +296,6 @@ where
     F: ComputeImpl<Tail, M, Output = O>,
     O: Eq,
 {
-    const CACHED: bool = true;
     type Ref<'a>
         = &'a O
     where
@@ -326,7 +323,6 @@ impl<F, M, O, Tail> Settle<Tail> for View<F, M, O>
 where
     F: ComputeImpl<Tail, M, Output = O>,
 {
-    const CACHED: bool = F::CACHED;
     type Ref<'a>
         = O
     where
@@ -350,7 +346,6 @@ pub struct There<I>(PhantomData<I>);
 
 impl<E: Settle<Tail>, Tail: LayeredImpl> Select<E::Signal, Here> for (E, Tail) {
     const INDEX: usize = Tail::LEN;
-    const CACHED: bool = E::CACHED;
     type Ref<'a>
         = E::Ref<'a>
     where
@@ -374,7 +369,6 @@ where
     Tail: LayeredImpl,
 {
     const INDEX: usize = slot::<E, N>(<Tail::Flags as Bits>::BITS);
-    const CACHED: bool = false;
     type Ref<'a>
         = E
     where
@@ -387,7 +381,6 @@ where
 
 impl<T, I, E, Tail: Select<T, I>> Select<T, There<I>> for (E, Tail) {
     const INDEX: usize = Tail::INDEX;
-    const CACHED: bool = Tail::CACHED;
     type Ref<'a>
         = Tail::Ref<'a>
     where
@@ -404,11 +397,8 @@ impl<T, I, S: LayeredImpl + Select<T, I>> Get<T, I> for S {
     where
         Self: 'a;
 
-    fn get(&self, changed: &Self::Flags) -> Reading<Self::Ref<'_>> {
-        Reading::new(
-            self.select(),
-            <Self as Select<T, I>>::CACHED && *changed != Self::Flags::default(),
-        )
+    fn get(&self) -> Self::Ref<'_> {
+        self.select()
     }
 }
 

@@ -8,7 +8,6 @@ use common::decode;
 use common::poll;
 use outcrop as layers;
 use outcrop::Formation;
-use outcrop::Reading;
 use outcrop::Strata;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -518,10 +517,7 @@ fn signals_are_found_by_type_however_they_are_spelled() {
             "AntiFreeze(true)"
         ]
     );
-    assert_eq!(
-        formation.get::<Celsius, _>(),
-        Reading::Fresh(&Temperature(5))
-    );
+    assert_eq!(formation.get::<Celsius, _>(), &Temperature(5));
 }
 
 #[test]
@@ -621,65 +617,34 @@ fn generated_code_uses_the_given_crate_path() {
 }
 
 #[test]
-fn derived_reads_are_stale_until_the_first_poll() {
-    let mut formation = Formation::from(Thermostat::default());
-
-    assert_eq!(
-        formation.get::<Temperature, _>(),
-        Reading::Fresh(&Temperature(20))
-    );
-    assert_eq!(formation.get::<Alarm, _>(), Reading::Stale(&Alarm(false)));
-
-    poll(&mut formation);
-
-    assert_eq!(formation.get::<Alarm, _>(), Reading::Fresh(&Alarm(false)));
-}
-
-#[test]
-fn feeding_marks_every_memo_stale_until_the_next_poll() {
+fn memos_keep_their_value_until_the_next_poll() {
     let mut formation = Formation::from(Thermostat::default());
     poll(&mut formation);
 
     formation.feed(Setpoint(25));
 
-    assert_eq!(
-        formation.get::<Setpoint, _>(),
-        Reading::Fresh(&Setpoint(25))
-    );
-    assert_eq!(
-        formation.get::<Heating, _>(),
-        Reading::Stale(&Heating(false))
-    );
-    assert_eq!(
-        formation.get::<AntiFreeze, _>(),
-        Reading::Stale(&AntiFreeze(false))
-    );
-    assert_eq!(formation.get::<Alarm, _>(), Reading::Stale(&Alarm(false)));
+    assert_eq!(formation.get::<Setpoint, _>(), &Setpoint(25));
+    assert_eq!(formation.get::<Heating, _>(), &Heating(false));
 
     poll(&mut formation);
 
-    assert_eq!(
-        formation.get::<Heating, _>(),
-        Reading::Fresh(&Heating(true))
-    );
-    assert_eq!(formation.get::<Alarm, _>(), Reading::Fresh(&Alarm(false)));
+    assert_eq!(formation.get::<Heating, _>(), &Heating(true));
+    assert_eq!(formation.get::<Alarm, _>(), &Alarm(false));
 }
 
 #[test]
-fn signals_fed_through_routers_mark_dependents_stale() {
+fn inputs_fed_through_routers_are_current_before_the_poll() {
     let mut formation = Formation::from(Gated::default());
     poll(&mut formation);
 
     formation.feed(&3_i16);
 
-    assert_eq!(
-        formation.get::<Temperature, _>(),
-        Reading::Fresh(&Temperature(3))
-    );
-    assert_eq!(
-        formation.get::<AntiFreeze, _>(),
-        Reading::Stale(&AntiFreeze(false))
-    );
+    assert_eq!(formation.get::<Temperature, _>(), &Temperature(3));
+    assert_eq!(formation.get::<AntiFreeze, _>(), &AntiFreeze(false));
+
+    poll(&mut formation);
+
+    assert_eq!(formation.get::<AntiFreeze, _>(), &AntiFreeze(true));
 }
 
 #[test]
@@ -740,12 +705,9 @@ fn memos_and_views_build_on_each_other() {
         value: 0x01,
     });
 
-    assert_eq!(
-        formation.get::<Setpoint, _>(),
-        Reading::Fresh(Setpoint(0x2301))
-    );
-    assert_eq!(formation.get::<Alarm, _>(), Reading::Stale(&Alarm(false)));
-    assert_eq!(formation.get::<Heating, _>(), Reading::Stale(Heating(true)));
+    assert_eq!(formation.get::<Setpoint, _>(), Setpoint(0x2301));
+    assert_eq!(formation.get::<Alarm, _>(), &Alarm(false));
+    assert_eq!(formation.get::<Heating, _>(), Heating(true));
     assert_eq!(
         poll(&mut formation),
         [
@@ -757,22 +719,7 @@ fn memos_and_views_build_on_each_other() {
             "Heating(false)"
         ]
     );
-    assert_eq!(
-        formation.get::<Heating, _>(),
-        Reading::Fresh(Heating(false))
-    );
-}
-
-#[test]
-fn memos_above_views_are_stale_until_polled() {
-    let mut formation = Formation::from(ModbusMap::default());
-    poll(&mut formation);
-
-    formation.feed(Register::<0x42>(0x1122));
-
-    assert_eq!(formation.get::<Alarm, _>(), Reading::Stale(&Alarm(false)));
-    poll(&mut formation);
-    assert_eq!(formation.get::<Alarm, _>(), Reading::Fresh(&Alarm(false)));
+    assert_eq!(formation.get::<Heating, _>(), Heating(false));
 }
 
 #[derive(Debug)]
@@ -792,7 +739,7 @@ fn views_need_no_partial_eq() {
 
     formation.feed(Register::<0x42>(0x23));
 
-    assert_eq!(formation.get::<Label, _>().into_inner().0, "on");
+    assert_eq!(formation.get::<Label, _>().0, "on");
     assert_eq!(poll(&mut formation), ["Register(35)", "Label(\"on\")"]);
 }
 
