@@ -1,7 +1,8 @@
 //! Strata implemented by hand, the way `strata!` expands.
 
-use core::fmt::Debug;
+mod common;
 
+use common::poll;
 use outcrop::Feed;
 use outcrop::Formation;
 use outcrop::Report;
@@ -129,21 +130,6 @@ where
             <V as Visit<Heating>>::visit(visitor, &self.s2);
         }
     }
-}
-
-#[derive(Default)]
-struct Recorder(Vec<String>);
-
-impl<T: Debug> Visit<T> for Recorder {
-    fn visit(&mut self, value: &T) {
-        self.0.push(format!("{value:?}"));
-    }
-}
-
-fn poll<S: Report<Recorder>>(formation: &mut Formation<S>) -> Vec<String> {
-    let mut recorder = Recorder::default();
-    formation.poll(&mut recorder);
-    recorder.0
 }
 
 #[test]

@@ -4,7 +4,6 @@ use core::borrow::Borrow;
 use core::marker::PhantomData;
 
 use crate::bank::Element;
-use crate::bank::Slot;
 use crate::bank::Write;
 pub use crate::flags::Chunk;
 use crate::nested::Nested;
@@ -18,6 +17,8 @@ use crate::strata::Strata;
 use crate::stratum::Bank;
 use crate::stratum::Input;
 use crate::stratum::View;
+pub use crate::stratum::read;
+pub use crate::stratum::slot;
 use crate::visit::Visit;
 
 /// A signal `T` of a `strata!` struct, found by type. `BIT` is the signal's
@@ -56,12 +57,7 @@ pub fn get<'s, S, T, I, const N: usize>(strata: &'s S, changed: &Chunk<N>) -> Re
 where
     S: Signal<T, I, Flags = Chunk<N>>,
 {
-    let value = strata.value();
-    if changed.intersects(&S::STALE) {
-        Reading::Stale(value)
-    } else {
-        Reading::Fresh(value)
-    }
+    Reading::new(strata.value(), changed.intersects(&S::STALE))
 }
 
 pub fn routed<S: Feed<T, I>, T, I>() {}
@@ -106,18 +102,6 @@ pub trait Array {
 impl<T, const N: usize> Array for [T; N] {
     type Item = T;
     const LEN: usize = N;
-}
-
-/// The bit of the slot `E` in a bank of `N` elements whose bits start at
-/// `base`, rejecting at compile time a slot past its end.
-pub const fn slot<E: Slot, const N: usize>(base: usize) -> usize {
-    assert!(E::INDEX < N, "the slot is past the end of the bank");
-    base + E::INDEX
-}
-
-/// Reads the slot `E` from `bank`.
-pub fn read<E: Slot, const N: usize>(bank: &[E::Item; N]) -> E {
-    E::read(&bank[const { slot::<E, N>(0) }])
 }
 
 pub fn write<T: Eq + Clone, const N: usize>(

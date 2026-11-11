@@ -34,10 +34,6 @@ where
         (flags, S::CHANGED)
     }
 
-    fn below(flags: &Self::Flags) -> &Tail::Flags {
-        &flags.0
-    }
-
     fn below_mut(flags: &mut Self::Flags) -> &mut Tail::Flags {
         &mut flags.0
     }
@@ -96,6 +92,8 @@ where
 /// Whether `changed` has any bit of `mask` set, `mask` being the flags of a
 /// struct nested on `Tail`.
 fn intersects<Tail: LayeredImpl, Fl: Bits>(changed: &Fl, mask: &[u8]) -> bool {
-    let base = <Tail::Flags as Bits>::BITS;
-    (0..8 * mask.len()).any(|bit| mask[bit / 8].get(bit % 8) && changed.get(base + bit))
+    let base = <Tail::Flags as Bits>::BITS / 8;
+    mask.iter()
+        .enumerate()
+        .any(|(byte, &bits)| bits != 0 && changed.byte(base + byte) & bits != 0)
 }

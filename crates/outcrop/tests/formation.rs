@@ -1,8 +1,12 @@
 //! Behaviour of formations built from inputs and derived signals.
 
-use core::cell::Cell;
-use core::fmt::Debug;
+mod common;
 
+use core::cell::Cell;
+
+use common::PanicOn;
+use common::Recorder;
+use common::poll;
 use outcrop::Formation;
 use outcrop::Reading;
 use outcrop::Report;
@@ -19,24 +23,6 @@ struct Setpoint(i16);
 
 #[derive(Debug, PartialEq, Eq)]
 struct Heating(bool);
-
-#[derive(Default)]
-struct Recorder(Vec<String>);
-
-impl<T: Debug> Visit<T> for Recorder {
-    fn visit(&mut self, value: &T) {
-        self.0.push(format!("{value:?}"));
-    }
-}
-
-fn poll<S>(formation: &mut Formation<S>) -> Vec<String>
-where
-    S: Report<Recorder>,
-{
-    let mut recorder = Recorder::default();
-    formation.poll(&mut recorder);
-    recorder.0
-}
 
 fn heating(t: &Temperature, s: &Setpoint) -> Heating {
     Heating(t.0 < s.0)
@@ -378,15 +364,6 @@ fn strata_deposited_after_a_poll_are_reported_by_the_next() {
         .memo(|t: &Temperature| AntiFreeze(t.0 < 10));
 
     assert_eq!(poll(&mut formation), ["Setpoint(18)", "AntiFreeze(false)"]);
-}
-
-/// Panics on the first signal whose `Debug` output starts with its prefix.
-struct PanicOn(&'static str);
-
-impl<T: Debug> Visit<T> for PanicOn {
-    fn visit(&mut self, value: &T) {
-        assert!(!format!("{value:?}").starts_with(self.0), "visitor panics");
-    }
 }
 
 #[test]

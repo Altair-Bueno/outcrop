@@ -15,6 +15,9 @@ pub trait Bits: Copy + Eq + Hash + Debug + Default {
     fn set_top(&mut self, index: usize);
 
     fn clear_top(&mut self, index: usize);
+
+    /// The byte `index`, `BITS` being a multiple of eight.
+    fn byte(&self, index: usize) -> u8;
 }
 
 pub trait Cursor {
@@ -24,8 +27,6 @@ pub trait Cursor {
     type Grow<F: Bits>: Bits;
 
     fn grow<F: Bits>(flags: F) -> Self::Grow<F>;
-
-    fn below<F: Bits>(flags: &Self::Grow<F>) -> &F;
 
     fn below_mut<F: Bits>(flags: &mut Self::Grow<F>) -> &mut F;
 }
@@ -49,15 +50,11 @@ pub trait Layer<Tail: LayeredImpl>: Sized {
     /// The flags of `Tail` with this layer's bits added.
     type Flags: Bits;
     type Cursor: Cursor;
-    /// The index of the next bit, once this layer is deposited.
-    const LEN: usize = <Self::Flags as Bits>::BITS - <Self::Cursor as Cursor>::SPARE;
     /// Flags marking every signal as changed.
     const CHANGED: Self::Flags = <Self::Flags as Bits>::ALL;
 
     /// Adds this layer's bits to `flags`, marked as changed.
     fn deposit(flags: Tail::Flags) -> Self::Flags;
-
-    fn below(flags: &Self::Flags) -> &Tail::Flags;
 
     fn below_mut(flags: &mut Self::Flags) -> &mut Tail::Flags;
 

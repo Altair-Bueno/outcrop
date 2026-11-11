@@ -1,10 +1,9 @@
 //! Changes travel the whole length of a chain of signals.
 
-use core::fmt::Debug;
+mod common;
 
+use common::poll;
 use outcrop::Formation;
-use outcrop::Report;
-use outcrop::Visit;
 
 #[derive(Debug, PartialEq, Eq)]
 struct ModbusReg(u16);
@@ -17,21 +16,6 @@ struct Celsius(i16);
 
 #[derive(Debug, PartialEq, Eq)]
 struct AntiFreezeAvail(bool);
-
-#[derive(Default)]
-struct Recorder(Vec<String>);
-
-impl<T: Debug> Visit<T> for Recorder {
-    fn visit(&mut self, value: &T) {
-        self.0.push(format!("{value:?}"));
-    }
-}
-
-fn poll<S: Report<Recorder>>(formation: &mut Formation<S>) -> Vec<String> {
-    let mut recorder = Recorder::default();
-    formation.poll(&mut recorder);
-    recorder.0
-}
 
 fn temperature(r: &ModbusReg) -> Temperature {
     Temperature(r.0.cast_signed() / 10)

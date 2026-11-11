@@ -12,6 +12,14 @@ pub enum Reading<T> {
 }
 
 impl<T> Reading<T> {
+    pub(crate) const fn new(value: T, stale: bool) -> Self {
+        if stale {
+            Self::Stale(value)
+        } else {
+            Self::Fresh(value)
+        }
+    }
+
     /// Returns the value, whether fresh or stale.
     pub fn into_inner(self) -> T {
         match self {

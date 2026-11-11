@@ -1,15 +1,11 @@
 //! Behaviour of routers fanning one fed value out into typed inputs.
 
-use core::fmt::Debug;
+mod common;
 
+use common::ModbusRegister;
+use common::Recorder;
+use common::decode;
 use outcrop::Formation;
-use outcrop::Visit;
-
-#[derive(Debug, PartialEq, Eq)]
-struct ModbusRegister {
-    address: u16,
-    value: u16,
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Register<const ADDRESS: u16>(u16);
@@ -18,22 +14,6 @@ struct Register<const ADDRESS: u16>(u16);
 struct Version {
     major: u16,
     minor: u16,
-}
-
-#[derive(Default)]
-struct Recorder(Vec<String>);
-
-impl<T: Debug> Visit<T> for Recorder {
-    fn visit(&mut self, value: &T) {
-        self.0.push(format!("{value:?}"));
-    }
-}
-
-fn decode(chunk: &[u8]) -> ModbusRegister {
-    ModbusRegister {
-        address: u16::from_be_bytes([chunk[0], chunk[1]]),
-        value: u16::from_be_bytes([chunk[2], chunk[3]]),
-    }
 }
 
 macro_rules! modbus_formation {

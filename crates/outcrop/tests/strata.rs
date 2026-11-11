@@ -1,13 +1,15 @@
 //! Formations declared with `strata!`.
 
-use core::fmt::Debug;
+mod common;
 
+use common::ModbusRegister;
+use common::PanicOn;
+use common::decode;
+use common::poll;
 use outcrop as layers;
 use outcrop::Formation;
 use outcrop::Reading;
-use outcrop::Report;
 use outcrop::Strata;
-use outcrop::Visit;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 struct Temperature(i16);
@@ -24,12 +26,6 @@ struct AntiFreeze(bool);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 struct Alarm(bool);
 
-#[derive(Debug, PartialEq, Eq)]
-struct ModbusRegister {
-    address: u16,
-    value: u16,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 struct Register<const ADDRESS: u16>(u16);
 
@@ -39,13 +35,6 @@ struct Register<const ADDRESS: u16>(u16);
 )]
 fn heating(t: &Temperature, s: &Setpoint) -> Heating {
     Heating(t.0 < s.0)
-}
-
-fn decode(chunk: [u8; 4]) -> ModbusRegister {
-    ModbusRegister {
-        address: u16::from_be_bytes([chunk[0], chunk[1]]),
-        value: u16::from_be_bytes([chunk[2], chunk[3]]),
-    }
 }
 
 outcrop::strata! {
@@ -70,7 +59,7 @@ outcrop::strata! {
         },
         [u8] => |frame, sink| {
             for chunk in frame.as_chunks::<4>().0 {
-                sink.feed(&decode(*chunk));
+                sink.feed(&decode(chunk));
             }
         },
     }
@@ -292,21 +281,6 @@ outcrop::strata! {
     struct Renamed {
         temperature: Temperature = Temperature(7),
     }
-}
-
-#[derive(Default)]
-struct Recorder(Vec<String>);
-
-impl<T: Debug> Visit<T> for Recorder {
-    fn visit(&mut self, value: &T) {
-        self.0.push(format!("{value:?}"));
-    }
-}
-
-fn poll<S: Report<Recorder>>(formation: &mut Formation<S>) -> Vec<String> {
-    let mut recorder = Recorder::default();
-    formation.poll(&mut recorder);
-    recorder.0
 }
 
 outcrop::strata! {
@@ -767,15 +741,6 @@ outcrop::strata! {
         temperature: Temperature = Temperature(20),
         setpoint: Setpoint = Setpoint(18),
         heating: Heating = (Temperature, Setpoint) => heating,
-    }
-}
-
-/// Panics on the first signal whose `Debug` output starts with its prefix.
-struct PanicOn(&'static str);
-
-impl<T: Debug> Visit<T> for PanicOn {
-    fn visit(&mut self, value: &T) {
-        assert!(!format!("{value:?}").starts_with(self.0), "visitor panics");
     }
 }
 

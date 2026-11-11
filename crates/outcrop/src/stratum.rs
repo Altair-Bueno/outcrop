@@ -156,10 +156,6 @@ impl<E: Value + Settle<Tail>, Tail: LayeredImpl> Layer<Tail> for E {
         flags
     }
 
-    fn below(flags: &Grown<Tail>) -> &Tail::Flags {
-        Tail::Cursor::below(flags)
-    }
-
     fn below_mut(flags: &mut Grown<Tail>) -> &mut Tail::Flags {
         Tail::Cursor::below_mut(flags)
     }
@@ -199,10 +195,6 @@ impl<In: ?Sized, F, Tail: LayeredImpl> Layer<Tail> for Router<In, F> {
         flags
     }
 
-    fn below(flags: &Tail::Flags) -> &Tail::Flags {
-        flags
-    }
-
     fn below_mut(flags: &mut Tail::Flags) -> &mut Tail::Flags {
         flags
     }
@@ -225,10 +217,6 @@ where
 
     fn deposit(flags: Tail::Flags) -> Self::Flags {
         (flags, Chunk::ALL)
-    }
-
-    fn below(flags: &Self::Flags) -> &Tail::Flags {
-        &flags.0
     }
 
     fn below_mut(flags: &mut Self::Flags) -> &mut Tail::Flags {
@@ -424,12 +412,7 @@ impl<T, I, S: LayeredImpl + Select<T, I>> Get<T, I> for S {
         Self: 'a;
 
     fn get(&self, changed: &Self::Flags) -> Reading<Self::Ref<'_>> {
-        let value = self.select();
-        if Self::stale(changed) {
-            Reading::Stale(value)
-        } else {
-            Reading::Fresh(value)
-        }
+        Reading::new(self.select(), Self::stale(changed))
     }
 }
 
@@ -495,12 +478,26 @@ where
 
 /// The bit of the slot `E` in a bank of `N` elements whose bits start at
 /// `base`, rejecting at compile time a slot past its end.
-const fn slot<E: Slot, const N: usize>(base: usize) -> usize {
+///
+/// # Panics
+///
+/// If `E::INDEX` is not below `N`, at compile time when evaluated in a
+/// constant.
+#[must_use]
+#[cfg_attr(
+    not(feature = "macros"),
+    expect(unreachable_pub, reason = "exported through `__private` for `strata!`")
+)]
+pub const fn slot<E: Slot, const N: usize>(base: usize) -> usize {
     assert!(E::INDEX < N, "the slot is past the end of the bank");
     base + E::INDEX
 }
 
 /// Reads the slot `E` from `bank`.
-fn read<E: Slot, const N: usize>(bank: &[E::Item; N]) -> E {
+#[cfg_attr(
+    not(feature = "macros"),
+    expect(unreachable_pub, reason = "exported through `__private` for `strata!`")
+)]
+pub fn read<E: Slot, const N: usize>(bank: &[E::Item; N]) -> E {
     E::read(&bank[const { slot::<E, N>(0) }])
 }

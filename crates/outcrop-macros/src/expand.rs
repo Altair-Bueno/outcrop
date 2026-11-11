@@ -70,7 +70,6 @@ struct Expansion<'d> {
     impls: Vec<TokenStream>,
     reports: Vec<TokenStream>,
     visits: Vec<TokenStream>,
-    errors: Option<Error>,
 }
 
 impl ToTokens for Declaration {
@@ -81,6 +80,9 @@ impl ToTokens for Declaration {
 
 impl Declaration {
     fn expand(&self) -> TokenStream {
+        if let Some(error) = reject_default(&self.attrs) {
+            return error.to_compile_error();
+        }
         let krate = &self.krate;
         let mut expansion = Expansion {
             ident: &self.ident,
@@ -101,12 +103,8 @@ impl Declaration {
             impls: Vec::new(),
             reports: Vec::new(),
             visits: Vec::new(),
-            errors: reject_default(&self.attrs),
         };
         expansion.entries(&self.entries);
-        if let Some(errors) = expansion.errors {
-            return errors.to_compile_error();
-        }
         let Self { attrs, vis, .. } = self;
         let count = mixed("__OUTCROP_BITS");
         let Expansion {
@@ -224,29 +222,31 @@ impl<'d> Expansion<'d> {
         self.bits.push(quote!(const #bit: usize = #next;));
         let width = width.map(|width| quote!(* (#width)));
         if attrs.is_empty() {
-            self.next = width.map_or_else(|| quote!(#bit + 1), |width| quote!(#bit + 1 #width));
+            self.next = quote!(#bit + 1 #width);
             self.visits.push(visit);
         } else {
             let compiled = format_ident!("__outcrop_compiled{index}", span = Span::mixed_site());
             let bound = format_ident!("__OutcropVisit{index}", span = Span::mixed_site());
-            self.bits.push(quote! {
-                #[allow(unused_macros)]
-                macro_rules! #compiled {
+            let switch = cfg_switch(
+                &compiled,
+                attrs,
+                &quote! {
                     (present) => { false };
                     (bound) => {
                         trait #bound {}
                         impl<__OutcropVisitor: ?Sized> #bound for __OutcropVisitor {}
                     };
-                }
-                #(#attrs)*
-                #[allow(unused_macros)]
-                macro_rules! #compiled {
+                },
+                &quote! {
                     (present) => { true };
                     (bound) => {
                         trait #bound: #visit {}
                         impl<__OutcropVisitor: ?Sized + #visit> #bound for __OutcropVisitor {}
                     };
-                }
+                },
+            );
+            self.bits.push(quote! {
+                #switch
                 #compiled!(bound);
             });
             self.next = quote!(#bit + #compiled!(present) as usize #width);
@@ -263,12 +263,9 @@ impl<'d> Expansion<'d> {
         ty: &Type,
         field: Option<&'d Ident>,
     ) -> (Ident, Ident) {
-        let index = self.signals.len();
-        let marker = format_ident!("__OutcropSignal{index}", span = Span::mixed_site());
         let (krate, private) = (self.krate, self.private.clone());
         let visit = quote!(#krate::Visit<#ty>);
-        let bit = self.bits(attrs, index, None, visit.clone());
-        self.marker(attrs, &marker);
+        let (bit, marker) = self.declare(attrs, field, None, visit.clone());
         let (chain, signal) = (&self.chain, quote!(#private::Signal<#ty, #marker>));
         self.reports.push(quote! {
             #(#attrs)*
@@ -284,9 +281,34 @@ impl<'d> Expansion<'d> {
             #(#attrs)*
             #private::distinct::<#ty, _, _>(&#chain);
         });
-        self.signals.push(Signal { attrs, field });
         self.check(attrs, "Signals", ty.to_token_stream());
         (bit, marker)
+    }
+
+    fn declare(
+        &mut self,
+        attrs: &'d [Attribute],
+        field: Option<&'d Ident>,
+        width: Option<&TokenStream>,
+        visit: TokenStream,
+    ) -> (Ident, Ident) {
+        let index = self.signals.len();
+        let marker = format_ident!("__OutcropSignal{index}", span = Span::mixed_site());
+        let bit = self.bits(attrs, index, width, visit);
+        self.marker(attrs, &marker);
+        self.signals.push(Signal { attrs, field });
+        (bit, marker)
+    }
+
+    fn feeds(
+        &mut self,
+        attrs: &'d [Attribute],
+        checked: TokenStream,
+        ty: TokenStream,
+        marker: Ident,
+    ) {
+        self.check(attrs, "Feeds", checked);
+        self.fed.push(Fed { attrs, ty, marker });
     }
 
     /// Implements the lookup of a signal by its type, used by the signals
@@ -443,20 +465,13 @@ impl<'d> Expansion<'d> {
             }
         });
         self.unstore(attrs, &local);
-        self.check(attrs, "Feeds", ty.to_token_stream());
-        self.fed.push(Fed {
-            attrs,
-            ty: ty.to_token_stream(),
-            marker,
-        });
+        self.feeds(attrs, ty.to_token_stream(), ty.to_token_stream(), marker);
     }
 
     fn bank(&mut self, attrs: &'d [Attribute], bank: &'d Input) {
         let Input { field, ty, init } = bank;
         let name = &field.name;
         let local = local(name);
-        let index = self.signals.len();
-        let marker = format_ident!("__OutcropSignal{index}", span = Span::mixed_site());
         let (ident, krate, flags) = (self.ident, self.krate, self.flags.clone());
         let (private, chain) = (self.private.clone(), self.chain.clone());
         let array = quote_spanned!(ty.span()=> <#ty as #private::Array>);
@@ -473,10 +488,9 @@ impl<'d> Expansion<'d> {
             #(#attrs)*
             #private::routed::<Self, #krate::Write<'static, #item>, _>();
         });
-        let base = self.bits(attrs, index, Some(&len), visit.clone());
+        let (base, marker) = self.declare(attrs, Some(name), Some(&len), visit);
         self.field(attrs, field, ty);
         let signal = quote!(#private::Signal<#slot, #marker>);
-        self.marker(attrs, &marker);
         self.impls.push(quote! {
             #(#attrs)*
             impl<#slot: #krate::Slot<Item = #item>> #signal for #ident {
@@ -501,18 +515,8 @@ impl<'d> Expansion<'d> {
             #(#attrs)*
             #private::report(&self.#name, changed, #base, visitor);
         });
-        let chain = &self.chain;
         self.take(attrs, &quote!(#local), &quote!(#private::unbank(#chain)));
-        self.signals.push(Signal {
-            attrs,
-            field: Some(name),
-        });
-        self.check(attrs, "Feeds", quote!(#krate::Write<'static, #item>));
-        self.fed.push(Fed {
-            attrs,
-            ty: write,
-            marker,
-        });
+        self.feeds(attrs, quote!(#krate::Write<'static, #item>), write, marker);
     }
 
     fn memo(&mut self, attrs: &'d [Attribute], memo: &'d Memo) {
@@ -600,7 +604,6 @@ impl<'d> Expansion<'d> {
                 #private::set(changed, #bit);
             }
         });
-        let chain = self.chain.clone();
         self.take(attrs, &quote!(_), &quote!(#chain));
     }
 
@@ -668,8 +671,7 @@ impl<'d> Expansion<'d> {
             #(#attrs)*
             #private::routed::<Self, #ty, _>();
         });
-        self.check(attrs, "Feeds", quote!(&'static #pointee));
-        self.fed.push(Fed { attrs, ty, marker });
+        self.feeds(attrs, quote!(&'static #pointee), ty, marker);
     }
 }
 
@@ -711,19 +713,18 @@ fn nestable(ident: &Ident, private: &TokenStream, checks: &[Check<'_>]) -> Token
             predicates.push(quote!(#checked: #private::Holds));
         } else {
             let pick = format_ident!("__outcrop_nest{position}", span = Span::mixed_site());
-            macros.push(quote! {
-                #[allow(unused_macros)]
-                macro_rules! #pick {
+            macros.push(cfg_switch(
+                &pick,
+                attrs,
+                &quote! {
                     ($strata:ty, $index:ty) => { #private::Skipped<$index> };
-                }
-                #(#attrs)*
-                #[allow(unused_macros)]
-                macro_rules! #pick {
+                },
+                &quote! {
                     ($strata:ty, $index:ty) => {
                         #private::#kind<#private::Over<#ident, $strata>, #ty, $index>
                     };
-                }
-            });
+                },
+            ));
             predicates.push(quote!(#pick!(#strata, #index): #private::Holds));
         }
         indices.push(index);
@@ -736,6 +737,21 @@ fn nestable(ident: &Ident, private: &TokenStream, checks: &[Check<'_>]) -> Token
             #(#predicates,)*
         {
         }
+    }
+}
+
+fn cfg_switch(
+    name: &Ident,
+    attrs: &[Attribute],
+    absent: &TokenStream,
+    present: &TokenStream,
+) -> TokenStream {
+    quote! {
+        #[allow(unused_macros)]
+        macro_rules! #name { #absent }
+        #(#attrs)*
+        #[allow(unused_macros)]
+        macro_rules! #name { #present }
     }
 }
 
@@ -819,6 +835,10 @@ mod tests {
             .to_string())
     }
 
+    fn error(input: TokenStream) -> Option<String> {
+        expand(input).err().map(|error| error.to_string())
+    }
+
     #[test]
     fn targets_field_attributes_at_the_field_only() -> syn::Result<()> {
         let output = expand(quote!(struct S {
@@ -849,9 +869,7 @@ mod tests {
 
     #[test]
     fn rejects_unnamed_inputs() {
-        let error = expand(quote!(struct S { A = A(0) }))
-            .err()
-            .map(|error| error.to_string());
+        let error = error(quote!(struct S { A = A(0) }));
         assert_eq!(
             error.as_deref(),
             Some("inputs are stored, so they need a field name: `name: Type = initial`")
@@ -914,9 +932,7 @@ mod tests {
 
     #[test]
     fn rejects_field_attributes_on_routers() {
-        let error = expand(quote!(struct S { #[strata(field(serde(skip)))] &[u8] => f }))
-            .err()
-            .map(|error| error.to_string());
+        let error = error(quote!(struct S { #[strata(field(serde(skip)))] &[u8] => f }));
         assert_eq!(
             error.as_deref(),
             Some("routers have no field, so `field(..)` does not apply to them")
@@ -937,11 +953,9 @@ mod tests {
 
     #[test]
     fn rejects_fn_attributes_on_inputs() {
-        let error = expand(quote!(
+        let error = error(quote!(
             struct S { #[strata(fn(inline))] a: A = A(0) }
-        ))
-        .err()
-        .map(|error| error.to_string());
+        ));
         assert_eq!(
             error.as_deref(),
             Some("inputs have no function, so `fn(..)` does not apply to them")
@@ -950,11 +964,9 @@ mod tests {
 
     #[test]
     fn rejects_unknown_attribute_targets() {
-        let error = expand(quote!(
+        let error = error(quote!(
             struct S { #[strata(impl(inline))] a: A = A(0) }
-        ))
-        .err()
-        .map(|error| error.to_string());
+        ));
         assert_eq!(
             error.as_deref(),
             Some("expected `bank`, `fn(..)` or `field(..)`")
@@ -968,9 +980,8 @@ mod tests {
             quote!(struct S { #[strata(bank)] A = B => f }),
             quote!(struct S { #[strata(bank)] [u8] => f }),
         ] {
-            let error = expand(input).err().map(|error| error.to_string());
             assert_eq!(
-                error.as_deref(),
+                error(input).as_deref(),
                 Some("only inputs can be banks: `#[strata(bank)] name: [T; N] = initial`")
             );
         }
@@ -998,9 +1009,7 @@ mod tests {
 
     #[test]
     fn rejects_named_routers() {
-        let error = expand(quote!(struct S { frame: &[u8] => f }))
-            .err()
-            .map(|error| error.to_string());
+        let error = error(quote!(struct S { frame: &[u8] => f }));
         assert_eq!(
             error.as_deref(),
             Some("routers have no field, so they cannot be named")
@@ -1054,13 +1063,11 @@ mod tests {
 
     #[test]
     fn rejects_repeated_crate_options() {
-        let error = expand(quote!(
+        let error = error(quote!(
             #[strata(crate = a)]
             #[strata(crate = b)]
             struct S {}
-        ))
-        .err()
-        .map(|error| error.to_string());
+        ));
         assert_eq!(error.as_deref(), Some("`crate` is given more than once"));
     }
 
@@ -1086,12 +1093,10 @@ mod tests {
 
     #[test]
     fn rejects_unknown_options() {
-        let error = expand(quote!(
+        let error = error(quote!(
             #[strata(krate = layers)]
             struct S {}
-        ))
-        .err()
-        .map(|error| error.to_string());
+        ));
         assert_eq!(
             error.as_deref(),
             Some("expected `crate = path::to::outcrop`")

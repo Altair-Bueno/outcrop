@@ -5,13 +5,12 @@
     reason = "derived signals receive their dependencies by reference"
 )]
 
-use core::fmt::Debug;
+mod common;
 
+use common::Register;
+use common::poll;
 use outcrop::Formation;
 use outcrop::Reading;
-use outcrop::Report;
-use outcrop::Slot;
-use outcrop::Visit;
 use outcrop::Write;
 
 #[derive(Debug, PartialEq, Eq)]
@@ -32,18 +31,6 @@ struct Offset(i32);
 #[derive(Debug, PartialEq, Eq)]
 struct Corrected(i32);
 
-#[derive(Debug, PartialEq, Eq)]
-struct Register<const ADDRESS: usize>(u16);
-
-impl<const ADDRESS: usize> Slot for Register<ADDRESS> {
-    type Item = u16;
-    const INDEX: usize = ADDRESS;
-
-    fn read(item: &u16) -> Self {
-        Self(*item)
-    }
-}
-
 fn celsius(k: &Kelvin) -> Celsius {
     Celsius(i32::from(k.0) - 273)
 }
@@ -56,24 +43,6 @@ outcrop::strata! {
         #[strata(bank)]
         registers: [u16; 3] = [0; 3],
     }
-}
-
-#[derive(Default)]
-struct Recorder(Vec<String>);
-
-impl<T: Debug> Visit<T> for Recorder {
-    fn visit(&mut self, value: &T) {
-        self.0.push(format!("{value:?}"));
-    }
-}
-
-fn poll<S>(formation: &mut Formation<S>) -> Vec<String>
-where
-    S: Report<Recorder>,
-{
-    let mut recorder = Recorder::default();
-    formation.poll(&mut recorder);
-    recorder.0
 }
 
 #[test]

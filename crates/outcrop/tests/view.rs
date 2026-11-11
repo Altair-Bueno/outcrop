@@ -1,13 +1,13 @@
 //! Views: signals computed every time they are read, never stored.
 
+mod common;
+
 use core::cell::Cell;
-use core::fmt::Debug;
 use core::mem::size_of_val;
 
+use common::poll;
 use outcrop::Formation;
 use outcrop::Reading;
-use outcrop::Report;
-use outcrop::Visit;
 
 #[derive(Debug, PartialEq, Eq)]
 struct Register<const ADDRESS: u16>(u16);
@@ -23,21 +23,6 @@ struct Doubled(u32);
 
 #[derive(Debug, PartialEq, Eq)]
 struct Even(bool);
-
-#[derive(Default)]
-struct Recorder(Vec<String>);
-
-impl<T: Debug> Visit<T> for Recorder {
-    fn visit(&mut self, value: &T) {
-        self.0.push(format!("{value:?}"));
-    }
-}
-
-fn poll<S: Report<Recorder>>(formation: &mut Formation<S>) -> Vec<String> {
-    let mut recorder = Recorder::default();
-    formation.poll(&mut recorder);
-    recorder.0
-}
 
 fn anti_freeze(r: &Register<0x42>) -> AntiFreezeSupported {
     AntiFreezeSupported(r.0 & 0x01 != 0)
