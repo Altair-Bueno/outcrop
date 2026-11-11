@@ -60,6 +60,7 @@ where
     Tail: LayeredImpl,
 {
     const INDEX: usize = <Tail::Flags as Bits>::BITS + S::BIT;
+    const CACHED: bool = S::CACHED;
     type Ref<'a>
         = S::Ref<'a>
     where
@@ -67,14 +68,6 @@ where
 
     fn select(&self) -> S::Ref<'_> {
         self.0.0.value()
-    }
-
-    fn stale<Fl: Bits>(changed: &Fl) -> bool {
-        intersects::<Tail, Fl>(changed, S::STALE.bytes())
-    }
-
-    fn moved<Fl: Bits>(changed: &Fl) -> bool {
-        intersects::<Tail, Fl>(changed, S::MOVED.bytes())
     }
 }
 
@@ -87,13 +80,4 @@ where
     fn feed(&mut self, changed: &mut Self::Flags, value: T) {
         self.0.0.feed(&mut changed.1, value);
     }
-}
-
-/// Whether `changed` has any bit of `mask` set, `mask` being the flags of a
-/// struct nested on `Tail`.
-fn intersects<Tail: LayeredImpl, Fl: Bits>(changed: &Fl, mask: &[u8]) -> bool {
-    let base = <Tail::Flags as Bits>::BITS / 8;
-    mask.iter()
-        .enumerate()
-        .any(|(byte, &bits)| bits != 0 && changed.byte(base + byte) & bits != 0)
 }

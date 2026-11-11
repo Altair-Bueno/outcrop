@@ -22,14 +22,12 @@ pub use crate::stratum::slot;
 use crate::visit::Visit;
 
 /// A signal `T` of a `strata!` struct, found by type. `BIT` is the signal's
-/// bit in the struct's `Chunk` flags. `STALE` holds the bits any of which makes
-/// reading the signal [`Stale`](Reading::Stale), and `MOVED` the bits any of
-/// which means its value may differ from the last poll: its own and every bit
-/// it is computed from, directly or not.
+/// bit in the struct's `Chunk` flags. `CACHED` tells whether the signal is a
+/// memo or computed from one, so that reading it while any bit is set is
+/// [`Stale`](Reading::Stale).
 pub trait Signal<T, I>: Strata {
     const BIT: usize;
-    const STALE: Self::Flags;
-    const MOVED: Self::Flags;
+    const CACHED: bool;
     type Ref<'a>: Borrow<T>
     where
         Self: 'a;
@@ -41,12 +39,8 @@ pub const fn bit<S: Signal<T, I>, T, I>() -> usize {
     S::BIT
 }
 
-pub const fn stale<S: Signal<T, I>, T, I>() -> S::Flags {
-    S::STALE
-}
-
-pub const fn moved<S: Signal<T, I>, T, I>() -> S::Flags {
-    S::MOVED
+pub const fn cached<S: Signal<T, I>, T, I>() -> bool {
+    S::CACHED
 }
 
 pub fn value<S: Signal<T, I>, T, I>(strata: &S) -> S::Ref<'_> {
@@ -57,7 +51,7 @@ pub fn get<'s, S, T, I, const N: usize>(strata: &'s S, changed: &Chunk<N>) -> Re
 where
     S: Signal<T, I, Flags = Chunk<N>>,
 {
-    Reading::new(strata.value(), changed.intersects(&S::STALE))
+    Reading::new(strata.value(), S::CACHED && *changed != Chunk::default())
 }
 
 pub fn routed<S: Feed<T, I>, T, I>() {}
@@ -70,14 +64,6 @@ pub const fn all<const N: usize>() -> Chunk<N> {
     Chunk::ALL
 }
 
-pub const fn mask<const N: usize>(bit: usize) -> Chunk<N> {
-    Chunk::bit(bit)
-}
-
-pub const fn union<const N: usize, const M: usize>(masks: [Chunk<N>; M]) -> Chunk<N> {
-    Chunk::union(masks)
-}
-
 pub fn is_set<const N: usize>(changed: &Chunk<N>, bit: usize) -> bool {
     changed.get(bit)
 }
@@ -87,7 +73,9 @@ pub fn set<const N: usize>(changed: &mut Chunk<N>, bit: usize) {
 }
 
 pub fn clear<const N: usize>(changed: &mut Chunk<N>, bit: usize) {
-    changed.clear(bit);
+    if cfg!(panic = "unwind") {
+        changed.clear(bit);
+    }
 }
 
 #[diagnostic::on_unimplemented(
@@ -206,8 +194,7 @@ mod tests {
 
     impl Signal<u8, ()> for () {
         const BIT: usize = 3;
-        const STALE: u8 = 0b0000_1000;
-        const MOVED: u8 = 0b0000_1010;
+        const CACHED: bool = true;
         type Ref<'a>
             = &'a u8
         where
@@ -219,36 +206,9 @@ mod tests {
     }
 
     #[test]
-    fn masks_set_one_bit_in_the_byte_that_holds_it() {
-        assert_eq!(mask::<2>(black_box(0)).bytes(), &[0b0000_0001, 0]);
-        assert_eq!(mask::<2>(black_box(7)).bytes(), &[0b1000_0000, 0]);
-        assert_eq!(mask::<2>(black_box(8)).bytes(), &[0, 0b0000_0001]);
-        assert_eq!(mask::<2>(black_box(9)).bytes(), &[0, 0b0000_0010]);
-    }
-
-    #[test]
-    fn unions_hold_every_bit_of_every_mask() {
-        let masks = black_box([mask::<2>(3), mask(9), mask(3)]);
-
-        assert_eq!(union(masks).bytes(), &[0b0000_1000, 0b0000_0010]);
-        assert_eq!(union::<2, 0>(black_box([])).bytes(), &[0, 0]);
-    }
-
-    #[test]
-    fn masks_intersect_when_they_share_a_bit_in_any_byte() {
-        let changed = black_box(union([mask::<2>(2), mask(9)]));
-
-        assert!(changed.intersects(&black_box(mask(9))));
-        assert!(changed.intersects(&black_box(mask(2))));
-        assert!(!changed.intersects(&black_box(mask(3))));
-        assert!(!changed.intersects(&black_box(union([]))));
-    }
-
-    #[test]
     fn signal_constants_are_read_through_the_helpers() {
         assert_eq!(bit::<(), u8, ()>(), 3);
-        assert_eq!(stale::<(), u8, ()>(), 0b0000_1000);
-        assert_eq!(moved::<(), u8, ()>(), 0b0000_1010);
+        assert!(cached::<(), u8, ()>());
         assert_eq!(*value::<(), u8, ()>(&black_box(())), 7);
     }
 }

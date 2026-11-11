@@ -2,12 +2,12 @@
 /// tagged with whether it is up to date.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Reading<T> {
-    /// No dependency of the signal changed since the last
-    /// [`poll`](crate::Formation::poll), so the value is current.
+    /// The value is current: the signal depends on no memo, or nothing in the
+    /// formation changed since the last [`poll`](crate::Formation::poll).
     Fresh(T),
-    /// A dependency of the signal changed since the last
-    /// [`poll`](crate::Formation::poll), or the formation was never polled,
-    /// so the next poll may recompute the value.
+    /// The signal is a memo or computed from one, and something in the
+    /// formation changed since the last [`poll`](crate::Formation::poll), or
+    /// the formation was never polled, so the next poll may recompute it.
     Stale(T),
 }
 

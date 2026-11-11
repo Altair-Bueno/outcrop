@@ -19,10 +19,6 @@ impl Bits for u8 {
     fn clear_top(&mut self, index: usize) {
         *self &= !(1 << index);
     }
-
-    fn byte(&self, _: usize) -> u8 {
-        *self
-    }
 }
 
 impl<Tail: Bits, Top: Bits> Bits for (Tail, Top) {
@@ -43,14 +39,6 @@ impl<Tail: Bits, Top: Bits> Bits for (Tail, Top) {
 
     fn clear_top(&mut self, index: usize) {
         self.1.clear_top(index - Tail::BITS);
-    }
-
-    fn byte(&self, index: usize) -> u8 {
-        if index < Tail::BITS / 8 {
-            self.0.byte(index)
-        } else {
-            self.1.byte(index - Tail::BITS / 8)
-        }
     }
 }
 
@@ -79,40 +67,6 @@ impl<const BYTES: usize> Chunk<BYTES> {
     }
 }
 
-#[cfg(feature = "macros")]
-impl<const BYTES: usize> Chunk<BYTES> {
-    /// Only the bit `index` set.
-    pub(crate) const fn bit(index: usize) -> Self {
-        let mut bit = [0; BYTES];
-        bit[index / 8] = 1 << (index % 8);
-        Self(bit)
-    }
-
-    /// Every bit set in any of `chunks`.
-    pub(crate) const fn union<const M: usize>(chunks: [Self; M]) -> Self {
-        let mut union = [0; BYTES];
-        let mut chunk = 0;
-        while chunk < M {
-            let mut byte = 0;
-            while byte < BYTES {
-                union[byte] |= chunks[chunk].0[byte];
-                byte += 1;
-            }
-            chunk += 1;
-        }
-        Self(union)
-    }
-
-    pub(crate) const fn bytes(&self) -> &[u8; BYTES] {
-        &self.0
-    }
-
-    /// Whether `self` and `other` share any set bit.
-    pub(crate) fn intersects(&self, other: &Self) -> bool {
-        self.0.iter().zip(&other.0).any(|(a, b)| a & b != 0)
-    }
-}
-
 impl<const BYTES: usize> Default for Chunk<BYTES> {
     fn default() -> Self {
         Self([0; BYTES])
@@ -133,10 +87,6 @@ impl<const BYTES: usize> Bits for Chunk<BYTES> {
 
     fn clear_top(&mut self, index: usize) {
         self.clear(index);
-    }
-
-    fn byte(&self, index: usize) -> u8 {
-        self.0[index]
     }
 }
 

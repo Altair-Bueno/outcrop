@@ -318,16 +318,15 @@ impl<'d> Expansion<'d> {
         attrs: &[Attribute],
         ty: &Type,
         (bit, marker): (&Ident, &Ident),
-        (stale, moved): (TokenStream, TokenStream),
+        cached: &TokenStream,
         (output, value): (TokenStream, TokenStream),
     ) {
-        let (ident, flags, private) = (self.ident, &self.flags, &self.private);
+        let (ident, private) = (self.ident, &self.private);
         self.impls.push(quote! {
             #(#attrs)*
             impl #private::Signal<#ty, #marker> for #ident {
                 const BIT: usize = #bit;
-                const STALE: #flags = #stale;
-                const MOVED: #flags = #moved;
+                const CACHED: bool = #cached;
                 type Ref<'a> = #output where Self: 'a;
 
                 fn value(&self) -> Self::Ref<'_> {
@@ -448,7 +447,7 @@ impl<'d> Expansion<'d> {
             attrs,
             ty,
             (&bit, &marker),
-            (quote!(#private::union([])), quote!(#private::mask(#bit))),
+            &quote!(false),
             (quote!(&'a #ty), quote!(&self.#name)),
         );
         let (ident, krate, flags) = (self.ident, self.krate, &self.flags);
@@ -495,8 +494,7 @@ impl<'d> Expansion<'d> {
             #(#attrs)*
             impl<#slot: #krate::Slot<Item = #item>> #signal for #ident {
                 const BIT: usize = #private::slot::<#slot, { #len }>(#base);
-                const STALE: #flags = #private::union([]);
-                const MOVED: #flags = #private::mask(<Self as #signal>::BIT);
+                const CACHED: bool = false;
                 type Ref<'a> = #slot where Self: 'a;
 
                 fn value(&self) -> #slot {
@@ -540,16 +538,11 @@ impl<'d> Expansion<'d> {
         let (bit, marker) = self.signal(attrs, ty, Some(name));
         self.field(attrs, field, ty);
         self.derivation(attrs, function, &helper, &deps, ty);
-        let moved = deps
-            .iter()
-            .map(|dep| quote!(#private::moved::<Self, #dep, _>()));
-        let stale = quote!(#private::union([#(#moved),*]));
-        let moved = quote!(#private::union([#private::mask(#bit), #stale]));
         self.lookup(
             attrs,
             ty,
             (&bit, &marker),
-            (stale, moved),
+            &quote!(true),
             (quote!(&'a #ty), quote!(&self.#name)),
         );
         let dirty = self.dirty(&deps);
@@ -580,21 +573,15 @@ impl<'d> Expansion<'d> {
         });
         let (bit, marker) = self.signal(attrs, ty, None);
         self.derivation(attrs, function, &helper, &deps, ty);
-        let stale = deps
+        let cached = deps
             .iter()
-            .map(|dep| quote!(#private::stale::<Self, #dep, _>()));
-        let moved = deps
-            .iter()
-            .map(|dep| quote!(#private::moved::<Self, #dep, _>()));
+            .map(|dep| quote!(#private::cached::<Self, #dep, _>()));
         let arguments = self.arguments(&deps);
         self.lookup(
             attrs,
             ty,
             (&bit, &marker),
-            (
-                quote!(#private::union([#(#stale),*])),
-                quote!(#private::union([#private::mask(#bit), #(#moved),*])),
-            ),
+            &quote!(false #(|| #cached)*),
             (quote!(#ty), quote!(#helper(#(#arguments),*))),
         );
         let dirty = self.dirty(&deps);

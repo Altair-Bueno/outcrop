@@ -145,6 +145,14 @@ impl<S: Layered> Formation<S> {
     ///     .route(|_: &u8, _| {})
     ///     .input::<&'static u8, _, _>(&0);
     /// ```
+    ///
+    /// The indices that tell two such layers apart cannot be named, so the
+    /// check cannot be bypassed by spelling one out:
+    ///
+    /// ```compile_fail
+    /// # use outcrop::Formation;
+    /// let formation = Formation::new().input(0_u8).input::<u8, (), ()>(1);
+    /// ```
     #[must_use]
     pub fn input<T: Eq, I, J>(self, initial: T) -> Deposited<Input<T>, S>
     where
@@ -471,12 +479,12 @@ impl<S: Strata> Formation<S> {
     /// Inputs and memos are read by reference, while views are computed on
     /// the spot and returned by value.
     ///
-    /// Inputs are always [`Fresh`](Reading::Fresh). A memo is
-    /// [`Stale`](Reading::Stale) whenever a signal it depends on, directly or
-    /// through other signals, changed since the last [`poll`](Self::poll).
-    /// Signals declared since then count as changed, so memos over them are
-    /// stale until the next poll. A view is stale whenever a memo it is
-    /// computed from is.
+    /// Inputs, bank slots and views computed from them alone are always
+    /// [`Fresh`](Reading::Fresh). Memos, and views computed from a memo, are
+    /// [`Stale`](Reading::Stale) whenever anything in the formation changed
+    /// since the last [`poll`](Self::poll), related to them or not: telling
+    /// the two apart would cost a walk of their dependencies on every read.
+    /// Signals declared since then count as changed.
     pub fn get<T, I>(&self) -> Reading<<S as Get<T, I>>::Ref<'_>>
     where
         S: Get<T, I>,
@@ -493,8 +501,8 @@ impl<S: Strata> Formation<S> {
     /// to its dependents. A view is reported and propagated whenever one of
     /// its dependencies changed, whether or not its own value did.
     ///
-    /// Each signal is unmarked just before it is visited. If `visitor`
-    /// panics and the panic is caught, the signals it had not reached yet are
+    /// Under `panic = "unwind"`, each signal is unmarked just before it is
+    /// visited: if `visitor` panics and the panic is caught, the signals it had not reached yet are
     /// reported by the next poll; the one it panicked on is not, so a visitor
     /// that always panics on a value cannot block the others.
     pub fn poll<V>(&mut self, visitor: &mut V)

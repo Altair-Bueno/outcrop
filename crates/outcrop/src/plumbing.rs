@@ -15,9 +15,6 @@ pub trait Bits: Copy + Eq + Hash + Debug + Default {
     fn set_top(&mut self, index: usize);
 
     fn clear_top(&mut self, index: usize);
-
-    /// The byte `index`, `BITS` being a multiple of eight.
-    fn byte(&self, index: usize) -> u8;
 }
 
 pub trait Cursor {
@@ -65,7 +62,7 @@ pub trait Layer<Tail: LayeredImpl>: Sized {
 /// A layer whose changed signals can be reported to the visitor `V`.
 pub trait LayerReport<V, Tail: LayeredImpl>: Layer<Tail> {
     /// Reports the changed signals, clearing the bit of each before visiting
-    /// it.
+    /// it under `panic = "unwind"`.
     fn report(&self, tail: &Tail, changed: &mut Self::Flags, visitor: &mut V);
 }
 
@@ -78,16 +75,13 @@ pub trait Value {
 
 /// A layer holding a single signal, at the bit `Tail::LEN`.
 pub trait Settle<Tail>: Value {
+    const CACHED: bool;
     type Ref<'a>: Borrow<Self::Signal>
     where
         Self: 'a,
         Tail: 'a;
 
     fn value<'a>(&'a self, tail: &'a Tail) -> Self::Ref<'a>;
-
-    fn stale<Fl: Bits>(changed: &Fl) -> bool;
-
-    fn moved<Fl: Bits>(changed: &Fl) -> bool;
 
     /// Updates the signal once `tail` is evaluated, returning whether it
     /// changed.
@@ -100,15 +94,12 @@ pub trait Settle<Tail>: Value {
 )]
 pub trait Select<T, I> {
     const INDEX: usize;
+    const CACHED: bool;
     type Ref<'a>: Borrow<T>
     where
         Self: 'a;
 
     fn select(&self) -> Self::Ref<'_>;
-
-    fn stale<Fl: Bits>(changed: &Fl) -> bool;
-
-    fn moved<Fl: Bits>(changed: &Fl) -> bool;
 }
 
 #[diagnostic::on_unimplemented(
@@ -118,12 +109,9 @@ pub trait Select<T, I> {
 )]
 pub trait ComputeImpl<S, M> {
     type Output;
+    const CACHED: bool;
 
     fn dirty<Fl: Bits>(changed: &Fl) -> bool;
-
-    fn pending<Fl: Bits>(changed: &Fl) -> bool;
-
-    fn moved<Fl: Bits>(changed: &Fl) -> bool;
 
     fn compute(&self, strata: &S) -> Self::Output;
 }

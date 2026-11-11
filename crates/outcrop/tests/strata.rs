@@ -532,7 +532,7 @@ fn derived_reads_are_stale_until_the_first_poll() {
 }
 
 #[test]
-fn feeding_marks_transitive_dependents_stale_until_the_next_poll() {
+fn feeding_marks_every_memo_stale_until_the_next_poll() {
     let mut formation = Formation::from(Thermostat::default());
     poll(&mut formation);
 
@@ -548,7 +548,7 @@ fn feeding_marks_transitive_dependents_stale_until_the_next_poll() {
     );
     assert_eq!(
         formation.get::<AntiFreeze, _>(),
-        Reading::Fresh(&AntiFreeze(false))
+        Reading::Stale(&AntiFreeze(false))
     );
     assert_eq!(formation.get::<Alarm, _>(), Reading::Stale(&Alarm(false)));
 

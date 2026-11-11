@@ -261,16 +261,20 @@ fn the_empty_formation_is_nameable() {
 struct Alarm(bool);
 
 #[test]
-fn memos_declared_after_a_poll_over_settled_signals_are_fresh() {
+fn memos_declared_after_a_poll_are_stale_until_polled() {
     let mut formation = Formation::new().input(Temperature(20));
     poll(&mut formation);
     let mut formation = formation.memo(|t: &Temperature| AntiFreeze(t.0 < 10));
 
     assert_eq!(
         formation.get::<AntiFreeze, _>(),
-        Reading::Fresh(&AntiFreeze(false))
+        Reading::Stale(&AntiFreeze(false))
     );
     assert_eq!(poll(&mut formation), ["AntiFreeze(false)"]);
+    assert_eq!(
+        formation.get::<AntiFreeze, _>(),
+        Reading::Fresh(&AntiFreeze(false))
+    );
 }
 
 #[test]
@@ -297,7 +301,7 @@ fn derived_reads_are_stale_until_the_first_poll() {
 }
 
 #[test]
-fn feeding_marks_only_dependents_stale_until_the_next_poll() {
+fn feeding_marks_every_memo_stale_until_the_next_poll() {
     let mut formation = Formation::new()
         .input(Temperature(20))
         .input(Setpoint(18))
@@ -317,7 +321,7 @@ fn feeding_marks_only_dependents_stale_until_the_next_poll() {
     );
     assert_eq!(
         formation.get::<AntiFreeze, _>(),
-        Reading::Fresh(&AntiFreeze(false))
+        Reading::Stale(&AntiFreeze(false))
     );
 
     poll(&mut formation);
@@ -325,6 +329,10 @@ fn feeding_marks_only_dependents_stale_until_the_next_poll() {
     assert_eq!(
         formation.get::<Heating, _>(),
         Reading::Fresh(&Heating(true))
+    );
+    assert_eq!(
+        formation.get::<AntiFreeze, _>(),
+        Reading::Fresh(&AntiFreeze(false))
     );
 }
 

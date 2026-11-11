@@ -176,7 +176,7 @@ outcrop::strata! {
 }
 
 macro_rules! scenarios {
-    ($make:expr, $setup:ident, $bottom:ident, $unrelated:ident, $top:ident, $flat:ident, $route:ident) => {
+    ($make:expr, $setup:ident, $bottom:ident, $unrelated:ident, $top:ident, $flat:ident, $route:ident, $get:ident) => {
         /// Builds the formation and polls it `rounds` times without feeding.
         #[unsafe(no_mangle)]
         #[inline(never)]
@@ -269,6 +269,24 @@ macro_rules! scenarios {
             black_box(&formation);
             sum.0
         }
+
+        /// Feeds the lowest register and reads two memos before polling.
+        #[unsafe(no_mangle)]
+        #[inline(never)]
+        pub extern "C" fn $get(rounds: u32) -> u32 {
+            let mut formation = black_box($make);
+            let mut sum = Sum::default();
+            formation.poll(&mut sum);
+            let mut stale = 0;
+            for i in 0..black_box(rounds) {
+                formation.feed(Register::<0>(black_box(i as u16)));
+                stale += u32::from(formation.get::<Summary, _>().is_stale());
+                stale += u32::from(formation.get::<Alarm, _>().is_stale());
+                formation.poll(&mut sum);
+            }
+            black_box(&formation);
+            sum.0 + stale
+        }
     };
 }
 
@@ -279,7 +297,8 @@ scenarios!(
     builder_feed_unrelated,
     builder_feed_top,
     builder_feed_flat,
-    builder_route
+    builder_route,
+    builder_get
 );
 
 scenarios!(
@@ -289,7 +308,8 @@ scenarios!(
     macro_feed_unrelated,
     macro_feed_top,
     macro_feed_flat,
-    macro_route
+    macro_route,
+    macro_get
 );
 
 /// A word of a bank of 100 registers.
@@ -386,19 +406,21 @@ bank_scenarios!(Formation::from(Banked::default()), macro_bank_one, macro_bank_a
 bank_scenarios!(nested!(), nest_bank_one, nest_bank_all);
 
 /// Every scenario, by name.
-pub const SCENARIOS: [(&str, extern "C" fn(u32) -> u32); 18] = [
+pub const SCENARIOS: [(&str, extern "C" fn(u32) -> u32); 20] = [
     ("builder_idle", builder_idle),
     ("builder_feed_bottom", builder_feed_bottom),
     ("builder_feed_unrelated", builder_feed_unrelated),
     ("builder_feed_top", builder_feed_top),
     ("builder_feed_flat", builder_feed_flat),
     ("builder_route", builder_route),
+    ("builder_get", builder_get),
     ("macro_idle", macro_idle),
     ("macro_feed_bottom", macro_feed_bottom),
     ("macro_feed_unrelated", macro_feed_unrelated),
     ("macro_feed_top", macro_feed_top),
     ("macro_feed_flat", macro_feed_flat),
     ("macro_route", macro_route),
+    ("macro_get", macro_get),
     ("builder_bank_one", builder_bank_one),
     ("builder_bank_all", builder_bank_all),
     ("macro_bank_one", macro_bank_one),

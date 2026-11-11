@@ -55,9 +55,45 @@ purpose.
 
 ## Redesigns
 
-Left out of the 2026-11-11 `/simplify` pass as too large for a cleanup.
+Left out of the 2026-11-11 `/simplify` pass as too large for a cleanup, then
+reviewed against the goals: compile-time guarantees, build speed, codegen,
+runtime cost and stack, no allocation; API breaks allowed. Done in this order,
+each measured against a snapshot of the tree before it with
+`tools/measure/measure.sh`, plus `cargo check` time for 3–6.
 
-- [ ] **One uniqueness check per layer.** "Every type a formation holds is a
+- [x] **1. Clear change bits before visiting only under `panic = "unwind"`.**
+      The per-signal clears exist so a caught visitor panic loses no reports
+      (see _Broken promises_); under `panic = "abort"` nothing can catch it,
+      and `poll` zeroes the flags after `report` anyway. The single-signal
+      `LayerReport::report`, `Element::report` and `__private::clear` test
+      `cfg!(panic = "unwind")`. Code size builder 12498 -> 12156 B, macro
+      7650 -> 7478 B; fuel -1-3% on feeds and routes, full bank 11140 -> 10212
+      (-8%), one changed word 854 -> 832; reports unchanged. Peak stack +16 B
+      on the builder's feed and route scenarios (343 -> 359), the rest
+      unchanged. Dropping `#[inline(always)]` on the single-signal `report`
+      made it worse (builder 12440 B, 375 B of stack). `cargo test` runs with
+      unwind, so the harness's report counts are the check on the abort path.
+- [x] **2. Unnameable builder indices.** The builder's lookups took `()` and
+      `(I,)` as indices, so `.input(0_u8).input::<u8, (), ()>(1)` compiled,
+      passing `Distinct` and `Routed` through the top layer alone. They are now
+      `Here` and `There<I>`, declared in the private `stratum` module; `Slotted`
+      and `Within` already were. A `compile_fail` doctest on `input` keeps it.
+      Type-level only: no codegen change.
+- [x] **3. Coarse `Reading::Stale`** (replaces the redesign of builder memo
+      staleness below). A signal is stale when it is or depends on a memo,
+      one associated `const CACHED: bool` on `Settle`, `Select`, `ComputeImpl`
+      and `__private::Signal`, and the flags are not all clear. Removed: the
+      recursive `stale`/`moved` walk, `ComputeImpl::pending` and `moved`,
+      `Signal::STALE` and `MOVED`, `nested::intersects`, `Bits::byte`,
+      `__private::mask` and `union`, and `Chunk::bit`, `union`, `bytes` and
+      `intersects`. Semantic change, approved: a memo no pending feed reaches
+      now reads `Stale`. The workload gained `builder_get` and `macro_get`
+      (feed the bottom register, read `Summary` and `Alarm`, poll); the two
+      reads cost, as `*_get` minus `*_feed_bottom`, builder 50 -> 22 fuel,
+      macro 44 -> 8. Code size, peak stack and formation size unchanged.
+      `cargo check --workspace --all-targets --all-features` after cleaning
+      both crates, best of three: 1962 -> 1650 ms, items 1 and 2 included.
+- [ ] **4. One uniqueness check per layer.** "Every type a formation holds is a
       single signal and fed in a single place" is never stated once: each
       builder method picks its own `Distinct`/`Routed` bounds, and `strata!`
       writes it three times (a `distinct` per signal, a `routed` per input,
@@ -70,9 +106,24 @@ Left out of the 2026-11-11 `/simplify` pass as too large for a cleanup.
       `Self: Nestable<(), _>`. Cost: builder methods collapse `I`, `J` into one
       index, breaking turbofish callers like `input::<T, _, _>`, and errors
       point at the struct or `deposit` rather than the entry unless per-entry
-      spans are kept for diagnostics. `crates/outcrop/src/formation.rs`,
-      `crates/outcrop-macros/src/expand.rs`
-- [ ] **Builder memo staleness without walking the dependency tree.**
+      spans are kept for diagnostics. `strata!` also compares entry types
+      token by token and rejects a second occurrence with "declared twice",
+      for entries without attributes, since the macro cannot evaluate `cfg`;
+      the trait check stays behind it for aliases.
+      `crates/outcrop/src/formation.rs`, `crates/outcrop-macros/src/expand.rs`
+- [ ] **5. Bank byte count from a table of impls.** A `macro_rules!` table maps
+      `[T; N]` to `Chunk<{N.div_ceil(8)}>` up to a cap, so `bank([0_u16; 101])`
+      needs no `bank::<13, _, _, _>` and the `BYTES == N.div_ceil(8)` assert,
+      which only fires at `cargo build`, goes. Longer banks keep an explicit
+      form.
+- [ ] **6. `strata!` `Default` on linked borrows.** Instead of the borrowed
+      tuple chain below, each entry adds a `Link<'a, L, C>(L, &'a C)`: two
+      pointers, O(n) rather than n²/2 bytes moved, and `unstore`, `unbank` and
+      `let () = chain` go away. Measure peak stack in a debug build too; the
+      harness builds release only.
+- [ ] ~~**Builder memo staleness without walking the dependency tree.**~~
+      Replaced by 3: const concatenation sized by the dependency count is not
+      expressible on stable Rust.
       `Formation::get` on a memo or view calls `Memo::stale` → `F::moved` →
       `Select::moved` of every dependency, recursively, with no deduplication
       of shared dependencies: a diamond-shaped graph grows exponentially, and
@@ -82,7 +133,8 @@ Left out of the 2026-11-11 `/simplify` pass as too large for a cleanup.
       constant mask with `intersects` and lost 30% fuel on a 100-word bank (see
       _Kept as is_); a list of indices tested with `get` avoids walking bank
       bytes. `crates/outcrop/src/stratum.rs`, `crates/outcrop/src/compute.rs`
-- [ ] **`strata!` `Default` without moving values through the chain.** Each
+- [ ] ~~**`strata!` `Default` without moving values through the chain.**~~
+      Changed into 6. Each
       entry does `let chain = input(local, chain)`, moving the value and the
       whole chain into a new tuple, and `unstore`/`unbank` move them back out:
       about n²/2 bytes copied and a stack slot per shadowed `chain` without
@@ -91,7 +143,9 @@ Left out of the 2026-11-11 `/simplify` pass as too large for a cleanup.
       borrowed bank would let `compute` and `distinct` see the same types while
       the values stay in their locals. Measure peak stack in a debug build.
       `crates/outcrop-macros/src/expand.rs`, `crates/outcrop/src/__private.rs`
-- [ ] **One forwarding impl per fed entry instead of per router × entry.**
+- [ ] ~~**One forwarding impl per fed entry instead of per router × entry.**~~
+      Dropped: 300 impls cost 20 ms of `cargo check` and 0.4% of a release
+      build, with no runtime cost (see _Kept as is_), leaving nothing to win.
       Revisits the _Kept as is_ entry on router forwarding: a `Below<'s, P>`
       wrapper generic over a const position, bounded by a "declared before `P`"
       trait each fed entry implements once. Only worth it if it keeps the
@@ -225,8 +279,8 @@ Documented here so that changes keep them consistent.
    value) → set by evaluation (memo changed, or a view's dependency moved) →
    reported and cleared by `poll`.
 2. **Formation lifecycle**, seen through `Reading`: built (every bit set, memos
-   stale) → fed (dependent memos stale) → polled (fresh). Freshness is derived
-   from the flags, never stored. The flags take part in `Formation`'s
+   stale) → fed (every memo stale) → polled (fresh). Freshness is derived from
+   whether any flag is set and whether the signal is `CACHED`, never stored. The flags take part in `Formation`'s
    `PartialEq` and `Hash`, so formations are compared after polling them, as
    documented on `Formation` and `strata!`.
 3. **Memo cache:** valid, stale, recomputed equal (no bit) or recomputed changed
@@ -237,8 +291,8 @@ Documented here so that changes keep them consistent.
 5. **Builder vs closed:** `Layered` strata can be extended, `strata!` structs
    cannot; enforced by the trait bound.
 6. **`poll` protocol:** skip if clean → evaluate → report, clearing each bit
-   just before its signal is visited → reset the spare bits. Fixed only inside
-   `Formation::poll`.
+   just before its signal is visited under `panic = "unwind"` → reset every
+   flag. Fixed only inside `Formation::poll`.
 7. **Router state:** builder routers keep state in their `FnMut`; `strata!`
    routers cannot capture, so their state lives untracked in statics.
 8. **`strata!` `Default` chain:** pushed in declaration order, popped in
@@ -248,12 +302,6 @@ Documented here so that changes keep them consistent.
 
 ## Kept as is
 
-- `nested::intersects` walks the mask byte by byte through `Bits::byte`,
-  skipping zero bytes, since the 2026-11-11 `/simplify` pass: code size, fuel
-  and peak stack unchanged against the bit-by-bit walk (builder 12498 B, macro
-  7650 B). An earlier `trailing_zeros` walk likewise left
-  fuel, code size and stack unchanged on the `nest_bank_*` scenarios and a
-  1000-word nested bank, as LLVM folds the constant mask.
 - Builder banks and nested structs take whole bytes of change bits: the bits
   left in the byte beneath them and in their last byte go unused, and the next
   signal starts a new byte. `input(A).bank([_; 4]).input(B)` takes three bytes
@@ -262,8 +310,8 @@ Documented here so that changes keep them consistent.
   `Used<_>` cursor by N bits needs const generic arithmetic, unstable in Rust;
   at most two bytes are lost per bank or nested struct. `strata!` packs its
   banks with its other signals. Documented on `Formation::bank` and `nest`.
-- The `Layer` impls of `Bank` and `Nested` repeat `Cursor = Used<8>`, `below`
-  and `below_mut`: sharing them through a helper trait needs a second blanket
+- The `Layer` impls of `Bank` and `Nested` repeat `Cursor = Used<8>` and
+  `below_mut`: sharing them through a helper trait needs a second blanket
   `Layer` impl, which overlaps the one over `Value + Settle<Tail>`.
 - `Distinct` and `Routed` look like plain aliases of `Get` and `Feed`, but work
   around rustc#152409, where such a where-bound shadows `Strata::Flags`.
@@ -281,7 +329,7 @@ Documented here so that changes keep them consistent.
   one constant mask with `intersects`: measured, the mask saved 0.2% of fuel on
   the workload's 4-byte flags but cost 30% (831 -> 1079) with a 100-word bank,
   as `intersects` walks every byte of the flags and LLVM does not fold the
-  mask's zero bytes away.
+  mask's zero bytes away. The masks are gone with item 3 of _Redesigns_.
 - Each `strata!` router keeps a `Feed` forwarding impl per entry fed before it:
   measured on 100 inputs, three more routers (300 more impls) add about 20 ms to
   `cargo check` (104 -> 124 ms) and 0.4% to a release build, with no runtime

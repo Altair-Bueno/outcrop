@@ -180,7 +180,9 @@ where
     #[inline(always)]
     fn report(&self, tail: &Tail, changed: &mut Grown<Tail>, visitor: &mut V) {
         if changed.get(Tail::LEN) {
-            changed.clear_top(Tail::LEN);
+            if cfg!(panic = "unwind") {
+                changed.clear_top(Tail::LEN);
+            }
             visitor.visit(self.value(tail).borrow());
         }
     }
@@ -249,6 +251,7 @@ impl<F, M, O> Value for View<F, M, O> {
 }
 
 impl<T, Tail> Settle<Tail> for Input<T> {
+    const CACHED: bool = false;
     type Ref<'a>
         = &'a T
     where
@@ -257,14 +260,6 @@ impl<T, Tail> Settle<Tail> for Input<T> {
 
     fn value<'a>(&'a self, _: &'a Tail) -> &'a T {
         &self.0
-    }
-
-    fn stale<Fl: Bits>(_: &Fl) -> bool {
-        false
-    }
-
-    fn moved<Fl: Bits>(_: &Fl) -> bool {
-        false
     }
 
     fn settle<Fl: Bits>(&mut self, _: &Tail, _: &Fl) -> bool {
@@ -277,6 +272,7 @@ where
     F: ComputeImpl<Tail, M, Output = O>,
     O: Eq,
 {
+    const CACHED: bool = true;
     type Ref<'a>
         = &'a O
     where
@@ -285,14 +281,6 @@ where
 
     fn value<'a>(&'a self, _: &'a Tail) -> &'a O {
         &self.value
-    }
-
-    fn stale<Fl: Bits>(changed: &Fl) -> bool {
-        F::moved(changed)
-    }
-
-    fn moved<Fl: Bits>(changed: &Fl) -> bool {
-        F::moved(changed)
     }
 
     fn settle<Fl: Bits>(&mut self, tail: &Tail, changed: &Fl) -> bool {
@@ -312,6 +300,7 @@ impl<F, M, O, Tail> Settle<Tail> for View<F, M, O>
 where
     F: ComputeImpl<Tail, M, Output = O>,
 {
+    const CACHED: bool = F::CACHED;
     type Ref<'a>
         = O
     where
@@ -322,21 +311,20 @@ where
         self.f.compute(tail)
     }
 
-    fn stale<Fl: Bits>(changed: &Fl) -> bool {
-        F::pending(changed)
-    }
-
-    fn moved<Fl: Bits>(changed: &Fl) -> bool {
-        F::moved(changed)
-    }
-
     fn settle<Fl: Bits>(&mut self, _: &Tail, changed: &Fl) -> bool {
         F::dirty(changed)
     }
 }
 
-impl<E: Settle<Tail>, Tail: LayeredImpl> Select<E::Signal, ()> for (E, Tail) {
+#[derive(Debug)]
+pub enum Here {}
+
+#[derive(Debug)]
+pub struct There<I>(PhantomData<I>);
+
+impl<E: Settle<Tail>, Tail: LayeredImpl> Select<E::Signal, Here> for (E, Tail) {
     const INDEX: usize = Tail::LEN;
+    const CACHED: bool = E::CACHED;
     type Ref<'a>
         = E::Ref<'a>
     where
@@ -344,14 +332,6 @@ impl<E: Settle<Tail>, Tail: LayeredImpl> Select<E::Signal, ()> for (E, Tail) {
 
     fn select(&self) -> E::Ref<'_> {
         self.0.value(&self.1)
-    }
-
-    fn stale<Fl: Bits>(changed: &Fl) -> bool {
-        E::stale(changed)
-    }
-
-    fn moved<Fl: Bits>(changed: &Fl) -> bool {
-        changed.get(Tail::LEN) || E::moved(changed)
     }
 }
 
@@ -367,6 +347,7 @@ where
     Tail: LayeredImpl,
 {
     const INDEX: usize = slot::<E, N>(<Tail::Flags as Bits>::BITS);
+    const CACHED: bool = false;
     type Ref<'a>
         = E
     where
@@ -375,18 +356,11 @@ where
     fn select(&self) -> E {
         read(&self.0.0)
     }
-
-    fn stale<Fl: Bits>(_: &Fl) -> bool {
-        false
-    }
-
-    fn moved<Fl: Bits>(changed: &Fl) -> bool {
-        changed.get(<Self as Select<E, Slotted>>::INDEX)
-    }
 }
 
-impl<T, I, E, Tail: Select<T, I>> Select<T, (I,)> for (E, Tail) {
+impl<T, I, E, Tail: Select<T, I>> Select<T, There<I>> for (E, Tail) {
     const INDEX: usize = Tail::INDEX;
+    const CACHED: bool = Tail::CACHED;
     type Ref<'a>
         = Tail::Ref<'a>
     where
@@ -394,14 +368,6 @@ impl<T, I, E, Tail: Select<T, I>> Select<T, (I,)> for (E, Tail) {
 
     fn select(&self) -> Tail::Ref<'_> {
         self.1.select()
-    }
-
-    fn stale<Fl: Bits>(changed: &Fl) -> bool {
-        Tail::stale(changed)
-    }
-
-    fn moved<Fl: Bits>(changed: &Fl) -> bool {
-        Tail::moved(changed)
     }
 }
 
@@ -412,11 +378,14 @@ impl<T, I, S: LayeredImpl + Select<T, I>> Get<T, I> for S {
         Self: 'a;
 
     fn get(&self, changed: &Self::Flags) -> Reading<Self::Ref<'_>> {
-        Reading::new(self.select(), Self::stale(changed))
+        Reading::new(
+            self.select(),
+            <Self as Select<T, I>>::CACHED && *changed != Self::Flags::default(),
+        )
     }
 }
 
-impl<T: Eq, Tail: LayeredImpl> Feed<T, ()> for (Input<T>, Tail) {
+impl<T: Eq, Tail: LayeredImpl> Feed<T, Here> for (Input<T>, Tail) {
     fn feed(&mut self, changed: &mut Self::Flags, value: T) {
         if self.0.0 != value {
             self.0.0 = value;
@@ -425,7 +394,7 @@ impl<T: Eq, Tail: LayeredImpl> Feed<T, ()> for (Input<T>, Tail) {
     }
 }
 
-impl<'a, In: ?Sized, F, Tail> Feed<&'a In, ()> for (Router<In, F>, Tail)
+impl<'a, In: ?Sized, F, Tail> Feed<&'a In, Here> for (Router<In, F>, Tail)
 where
     F: FnMut(&In, &mut Sink<'_, Tail>),
     Tail: LayeredImpl,
@@ -451,7 +420,7 @@ impl<T: Absent> Feed<T, Infallible> for () {
     fn feed(&mut self, _: &mut u8, _: T) {}
 }
 
-impl<T, I, L, Tail> Feed<T, (I,)> for (L, Tail)
+impl<T, I, L, Tail> Feed<T, There<I>> for (L, Tail)
 where
     L: Layer<Tail>,
     Tail: LayeredImpl + Feed<T, I>,
