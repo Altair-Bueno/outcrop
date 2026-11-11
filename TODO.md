@@ -93,34 +93,48 @@ each measured against a snapshot of the tree before it with
       macro 44 -> 8. Code size, peak stack and formation size unchanged.
       `cargo check --workspace --all-targets --all-features` after cleaning
       both crates, best of three: 1962 -> 1650 ms, items 1 and 2 included.
-- [ ] **4. One uniqueness check per layer.** "Every type a formation holds is a
-      single signal and fed in a single place" is never stated once: each
-      builder method picks its own `Distinct`/`Routed` bounds, and `strata!`
-      writes it three times (a `distinct` per signal, a `routed` per input,
-      bank and router, and the `checks` list behind `Nestable`, which repeats
-      `fed` entry for entry). 490c2b6 fixed an `input` that checked `Distinct`
-      but not `Routed`. Each layer would declare what it holds (`Input<T>`:
+- [x] **4. One uniqueness check per layer.** "Every type a formation holds is a
+      single signal and fed in a single place" was never stated once: each
+      builder method picked its own `Distinct`/`Routed` bounds, and `strata!`
+      wrote it three times (a `distinct` per signal, a `routed` per input, bank
+      and router, and the `checks` list behind `Nestable`). 490c2b6 fixed an
+      `input` that checked `Distinct` but not `Routed`. Now each layer states
+      what it holds in one `Sound<I>` impl beside its other impls (`Input<T>`:
       `Distinct<T>` + `Routed<T>`, `Memo`/`View`: `Distinct<Output>`, `Bank`:
-      `Routed<Write<T>>`, `Router`: `Routed<&In>`, `Nested<N>`: what `strata!`
-      generates), checked once in `deposit`; `strata!` then needs only
-      `Self: Nestable<(), _>`. Cost: builder methods collapse `I`, `J` into one
-      index, breaking turbofish callers like `input::<T, _, _>`, and errors
-      point at the struct or `deposit` rather than the entry unless per-entry
-      spans are kept for diagnostics. `strata!` also compares entry types
-      token by token and rejects a second occurrence with "declared twice",
-      for entries without attributes, since the macro cannot evaluate `cfg`;
-      the trait check stays behind it for aliases.
+      `Routed<Write<T>>`, `Router`: `Routed<&In>`, `Nested<N>`:
+      `N: Nestable`), and `deposit` requires it; `input::<T, _, _>` became
+      `input::<T, _>`. `strata!` keeps only the `checks` list, rendered as the
+      `Nestable` predicates and as one `__private::holds` call per entry in
+      `Default`, against `Over<Self, ()>`, carrying the entry's attributes.
+      It also rejects a signal type spelled twice, for entries without
+      attributes since the macro cannot evaluate `cfg`, with "a signal of this
+      type is already declared above" on the second; the trait check stays
+      behind it for aliases, and its errors still point at the macro call, as
+      the `distinct` and `routed` calls did. Code size, fuel, stack and
+      formation size unchanged; `cargo check` 1494 -> 1462 ms, within noise.
       `crates/outcrop/src/formation.rs`, `crates/outcrop-macros/src/expand.rs`
-- [ ] **5. Bank byte count from a table of impls.** A `macro_rules!` table maps
-      `[T; N]` to `Chunk<{N.div_ceil(8)}>` up to a cap, so `bank([0_u16; 101])`
-      needs no `bank::<13, _, _, _>` and the `BYTES == N.div_ceil(8)` assert,
-      which only fires at `cargo build`, goes. Longer banks keep an explicit
-      form.
-- [ ] **6. `strata!` `Default` on linked borrows.** Instead of the borrowed
-      tuple chain below, each entry adds a `Link<'a, L, C>(L, &'a C)`: two
-      pointers, O(n) rather than n²/2 bytes moved, and `unstore`, `unbank` and
-      `let () = chain` go away. Measure peak stack in a debug build too; the
-      harness builds release only.
+- [ ] ~~**5. Bank byte count from a table of impls.**~~ Dropped. The idea was a
+      `macro_rules!` table of `impl Pack for [T; N]` giving `Chunk<{N.div_ceil(8)}>`
+      up to a cap, so `bank([0_u16; 101])` needed no `bank::<13, _, _, _>` and the
+      post-monomorphisation `BYTES` assert went. Measured, `cargo check -p outcrop`
+      rebuilding only `outcrop`: 64 impls 0.36 s / 126 MB, 256 impls 0.82 s /
+      173 MB, 1024 impls 9.9 s / 849 MB. The coherence check across the impls is
+      quadratic, and a 4096-impl table (caps of 4095 elements) ran out of memory
+      on a 31 GB machine. A cap of 255 elements costs every user's build half a
+      second and still refuses larger banks, so the explicit byte count and its
+      assert stay. Run such experiments under
+      `systemd-run --user --scope -p MemoryMax=4G -p MemorySwapMax=0`.
+- [x] **6. `strata!` `Default` on borrowed layers.** The chain `Default` builds
+      for memo initial values and view lookups moved every value and the whole
+      chain into a new tuple per entry, and `unstore`/`unbank` moved them back
+      out. Its layers are now `Borrowed<'a, T>` and `BorrowedBank<'a, T, N,
+      BYTES>` in `borrowed.rs` (behind `macros`), pointers to the locals that
+      keep their values, so `unstore`, `unbank`, the `takes` list and
+      `let () = chain` are gone and `Self { .. }` uses the locals directly.
+      The frame of the generated `Default` in a debug build, for a struct with
+      a `[u16; 1000]` bank, a view and a memo (read from `--emit asm` of a
+      probe crate): 28064 B -> 2064 B. Release: code size, fuel, reports, peak
+      stack and formation size unchanged; `cargo check` 1636 -> 1629 ms, noise.
 - [ ] ~~**Builder memo staleness without walking the dependency tree.**~~
       Replaced by 3: const concatenation sized by the dependency count is not
       expressible on stable Rust.
@@ -295,8 +309,9 @@ Documented here so that changes keep them consistent.
    flag. Fixed only inside `Formation::poll`.
 7. **Router state:** builder routers keep state in their `FnMut`; `strata!`
    routers cannot capture, so their state lives untracked in statics.
-8. **`strata!` `Default` chain:** pushed in declaration order, popped in
-   reverse, ending in `let () = chain`; enforced at compile time.
+8. **`strata!` `Default` chain:** one borrowed layer pushed per entry in
+   declaration order, only to compute memo initial values; the values stay in
+   their locals and move into the struct once the chain is dead.
 9. **`strata!` cfg detection:** two shadowing `macro_rules!` give each entry a
    compiled-in or compiled-out state, feeding bit numbering and visitor bounds.
 

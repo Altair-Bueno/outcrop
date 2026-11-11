@@ -1,3 +1,4 @@
+use crate::__private::Nestable;
 use crate::__private::Signal;
 use crate::flags::Chunk;
 use crate::flags::Used;
@@ -6,6 +7,7 @@ use crate::plumbing::Layer;
 use crate::plumbing::LayerReport;
 use crate::plumbing::LayeredImpl;
 use crate::plumbing::Select;
+use crate::plumbing::Sound;
 use crate::strata::Feed;
 use crate::strata::Report;
 use crate::strata::Strata;
@@ -20,6 +22,8 @@ pub struct Nested<S>(pub(super) S);
 pub struct Within<I>(I);
 
 type Stacked<Tail, S> = (<Tail as Strata>::Flags, <S as Strata>::Flags);
+
+impl<S: Nestable<Tail, I>, Tail, I> Sound<I> for (Nested<S>, Tail) {}
 
 impl<S, Tail> Layer<Tail> for Nested<S>
 where

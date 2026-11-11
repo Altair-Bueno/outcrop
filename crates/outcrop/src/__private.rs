@@ -5,17 +5,15 @@ use core::marker::PhantomData;
 
 use crate::bank::Element;
 use crate::bank::Write;
+use crate::borrowed::Borrowed;
+use crate::borrowed::BorrowedBank;
 pub use crate::flags::Chunk;
 use crate::nested::Nested;
 use crate::plumbing::ComputeImpl;
 use crate::plumbing::Distinct;
 use crate::plumbing::Routed;
-use crate::plumbing::Select;
 use crate::reading::Reading;
-use crate::strata::Feed;
 use crate::strata::Strata;
-use crate::stratum::Bank;
-use crate::stratum::Input;
 use crate::stratum::View;
 pub use crate::stratum::read;
 pub use crate::stratum::slot;
@@ -53,8 +51,6 @@ where
 {
     Reading::new(strata.value(), S::CACHED && *changed != Chunk::default())
 }
-
-pub fn routed<S: Feed<T, I>, T, I>() {}
 
 pub fn ne<T: Eq>(a: &T, b: &T) -> bool {
     a != b
@@ -112,8 +108,8 @@ pub fn report<V, T, const N: usize>(
     Element::report(bank, changed.bytes_mut(), base, visitor);
 }
 
-pub const fn input<T, C>(value: T, chain: C) -> (Input<T>, C) {
-    (Input(value), chain)
+pub const fn borrow<T, C>(value: &T, chain: C) -> (Borrowed<'_, T>, C) {
+    (Borrowed(value), chain)
 }
 
 pub const fn view<F, M, C>(f: F, chain: C) -> (View<F, M, F::Output>, C)
@@ -129,28 +125,16 @@ where
     )
 }
 
-pub const fn bank<const BYTES: usize, T, const N: usize, C>(
-    items: [T; N],
+pub const fn borrow_bank<const BYTES: usize, T, const N: usize, C>(
+    items: &[T; N],
     chain: C,
-) -> (Bank<T, N, BYTES>, C) {
-    (Bank(items), chain)
-}
-
-pub fn unstore<T, C>((Input(value), chain): (Input<T>, C)) -> (T, C) {
-    (value, chain)
-}
-
-pub fn unbank<T, const N: usize, const BYTES: usize, C>(
-    (Bank(items), chain): (Bank<T, N, BYTES>, C),
-) -> ([T; N], C) {
-    (items, chain)
+) -> (BorrowedBank<'_, T, N, BYTES>, C) {
+    (BorrowedBank(items), chain)
 }
 
 pub fn compute<F: ComputeImpl<C, M>, C, M>(f: &F, chain: &C) -> F::Output {
     f.compute(chain)
 }
-
-pub fn distinct<T, I, C: Select<T, I>>(_: &C) {}
 
 /// A `strata!` struct that can be nested on the strata `S`: none of its
 /// signals or fed types is also a signal or fed type of `S`. Implemented by
@@ -167,6 +151,8 @@ pub type Over<N, S> = (Nested<N>, S);
 
 /// A check on the strata a struct is nested on.
 pub trait Holds {}
+
+pub const fn holds<H: Holds>() {}
 
 /// Holds if `O` has a single signal `T`.
 #[derive(Debug)]

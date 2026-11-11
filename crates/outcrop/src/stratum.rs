@@ -12,11 +12,14 @@ use crate::plumbing::Absent;
 use crate::plumbing::Bits;
 use crate::plumbing::ComputeImpl;
 use crate::plumbing::Cursor;
+use crate::plumbing::Distinct;
 use crate::plumbing::Layer;
 use crate::plumbing::LayerReport;
 use crate::plumbing::LayeredImpl;
+use crate::plumbing::Routed;
 use crate::plumbing::Select;
 use crate::plumbing::Settle;
+use crate::plumbing::Sound;
 use crate::plumbing::Value;
 use crate::reading::Reading;
 use crate::sink::Sink;
@@ -384,6 +387,20 @@ impl<T, I, S: LayeredImpl + Select<T, I>> Get<T, I> for S {
         )
     }
 }
+
+impl<T, Tail, I, J> Sound<(I, J)> for (Input<T>, Tail) where Self: Distinct<T, I> + Routed<T, J> {}
+
+impl<F, M, O, Tail, I> Sound<I> for (Memo<F, M, O>, Tail) where Self: Distinct<O, I> {}
+
+impl<F, M, O, Tail, I> Sound<I> for (View<F, M, O>, Tail) where Self: Distinct<O, I> {}
+
+impl<T, const N: usize, const BYTES: usize, Tail, I> Sound<I> for (Bank<T, N, BYTES>, Tail) where
+    for<'w> Self: Routed<Write<'w, T>, I>
+{
+}
+
+impl<In: ?Sized, F, Tail, I> Sound<I> for (Router<In, F>, Tail) where for<'a> Self: Routed<&'a In, I>
+{}
 
 impl<T: Eq, Tail: LayeredImpl> Feed<T, Here> for (Input<T>, Tail) {
     fn feed(&mut self, changed: &mut Self::Flags, value: T) {

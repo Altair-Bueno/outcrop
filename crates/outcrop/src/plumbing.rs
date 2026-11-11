@@ -123,6 +123,13 @@ pub trait ComputeImpl<S, M> {
 )]
 pub trait Absent {}
 
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` would hold a type twice",
+    label = "a signal or fed type of this layer is already in the formation",
+    note = "every signal, and every type the formation is fed, must be distinct"
+)]
+pub trait Sound<I> {}
+
 pub trait Distinct<T, I> {}
 
 impl<S: Get<T, I>, T, I> Distinct<T, I> for S {}

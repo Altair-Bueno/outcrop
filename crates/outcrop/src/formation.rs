@@ -1,13 +1,9 @@
 use core::marker::PhantomData;
 
 #[cfg(feature = "macros")]
-use crate::__private::Nestable;
-use crate::bank::Write;
-#[cfg(feature = "macros")]
 use crate::nested::Nested;
-use crate::plumbing::Distinct;
 use crate::plumbing::Layer;
-use crate::plumbing::Routed;
+use crate::plumbing::Sound;
 use crate::reading::Reading;
 use crate::sink::Sink;
 use crate::strata::Feed;
@@ -143,7 +139,7 @@ impl<S: Layered> Formation<S> {
     /// # use outcrop::Formation;
     /// let formation = Formation::new()
     ///     .route(|_: &u8, _| {})
-    ///     .input::<&'static u8, _, _>(&0);
+    ///     .input::<&'static u8, _>(&0);
     /// ```
     ///
     /// The indices that tell two such layers apart cannot be named, so the
@@ -151,12 +147,12 @@ impl<S: Layered> Formation<S> {
     ///
     /// ```compile_fail
     /// # use outcrop::Formation;
-    /// let formation = Formation::new().input(0_u8).input::<u8, (), ()>(1);
+    /// let formation = Formation::new().input(0_u8).input::<u8, ((), ())>(1);
     /// ```
     #[must_use]
-    pub fn input<T: Eq, I, J>(self, initial: T) -> Deposited<Input<T>, S>
+    pub fn input<T: Eq, I>(self, initial: T) -> Deposited<Input<T>, S>
     where
-        (Input<T>, S): Distinct<T, I> + Routed<T, J>,
+        (Input<T>, S): Sound<I>,
     {
         self.deposit(Input(initial))
     }
@@ -164,7 +160,7 @@ impl<S: Layered> Formation<S> {
     /// Deposits a bank: an array of inputs with a change bit per element,
     /// each read as the [`Slot`](crate::Slot) whose index points at it.
     ///
-    /// A bank is fed a [`Write`], which marks only the elements whose value
+    /// A bank is fed a [`Write`](crate::Write), which marks only the elements whose value
     /// changed, so a signal depending on a slot is recomputed and reported
     /// only when its element changed. [`poll`](Self::poll) reports every
     /// changed element as an [`Element`](crate::Element), and the next one
@@ -259,7 +255,7 @@ impl<S: Layered> Formation<S> {
         initial: [T; N],
     ) -> Deposited<Bank<T, N, BYTES>, S>
     where
-        for<'w> (Bank<T, N, BYTES>, S): Routed<Write<'w, T>, I>,
+        (Bank<T, N, BYTES>, S): Sound<I>,
     {
         const {
             assert!(
@@ -289,7 +285,7 @@ impl<S: Layered> Formation<S> {
     where
         F: Compute<S, M>,
         F::Output: Eq,
-        (Memo<F, M, F::Output>, S): Distinct<F::Output, I>,
+        (Memo<F, M, F::Output>, S): Sound<I>,
     {
         let value = f.compute(&self.strata);
         self.deposit(Memo {
@@ -317,7 +313,7 @@ impl<S: Layered> Formation<S> {
     pub fn view<F, M, I>(self, f: F) -> Deposited<View<F, M, F::Output>, S>
     where
         F: Compute<S, M>,
-        (View<F, M, F::Output>, S): Distinct<F::Output, I>,
+        (View<F, M, F::Output>, S): Sound<I>,
     {
         self.deposit(View {
             f,
@@ -347,7 +343,7 @@ impl<S: Layered> Formation<S> {
     pub fn route<In: ?Sized, F, I>(self, f: F) -> Deposited<Router<In, F>, S>
     where
         F: FnMut(&In, &mut Sink<'_, S>),
-        for<'a> (Router<In, F>, S): Routed<&'a In, I>,
+        (Router<In, F>, S): Sound<I>,
     {
         self.deposit(Router {
             f,
@@ -420,15 +416,19 @@ impl<S: Layered> Formation<S> {
     #[must_use]
     pub fn nest<N, I>(self, strata: N) -> Deposited<Nested<N>, S>
     where
-        N: Strata + Nestable<S, I>,
+        N: Strata,
         Nested<N>: Layer<S>,
+        (Nested<N>, S): Sound<I>,
     {
         self.deposit(Nested(strata))
     }
 
     /// Deposits `layer` on top of the strata, with its bits marked as
-    /// changed.
-    fn deposit<L: Layer<S>>(self, layer: L) -> Deposited<L, S> {
+    /// changed, once it holds no type the strata already hold.
+    fn deposit<L: Layer<S>, I>(self, layer: L) -> Deposited<L, S>
+    where
+        (L, S): Sound<I>,
+    {
         Formation {
             changed: L::deposit(self.changed),
             strata: (layer, self.strata),

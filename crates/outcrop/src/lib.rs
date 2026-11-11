@@ -56,6 +56,12 @@
 )]
 pub mod __private;
 mod bank;
+#[cfg(feature = "macros")]
+#[expect(
+    unnameable_types,
+    reason = "borrowed layers only appear in the chain `strata!` builds"
+)]
+mod borrowed;
 mod compute;
 #[expect(
     unnameable_types,

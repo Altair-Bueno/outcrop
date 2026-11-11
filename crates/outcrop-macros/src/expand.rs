@@ -1,3 +1,4 @@
+use alloc::collections::BTreeSet;
 use alloc::vec::Vec;
 
 use proc_macro2::Span;
@@ -64,7 +65,6 @@ struct Expansion<'d> {
     checks: Vec<Check<'d>>,
     fields: Vec<TokenStream>,
     builds: Vec<TokenStream>,
-    takes: Vec<TokenStream>,
     helpers: Vec<TokenStream>,
     evaluations: Vec<TokenStream>,
     impls: Vec<TokenStream>,
@@ -97,7 +97,6 @@ impl Declaration {
             checks: Vec::new(),
             fields: Vec::new(),
             builds: Vec::new(),
-            takes: Vec::new(),
             helpers: Vec::new(),
             evaluations: Vec::new(),
             impls: Vec::new(),
@@ -116,7 +115,6 @@ impl Declaration {
             bits,
             fields,
             builds,
-            takes,
             helpers,
             evaluations,
             impls,
@@ -132,9 +130,8 @@ impl Declaration {
             let (attrs, local) = (&signal.attrs, local(field));
             Some(quote!(#(#attrs)* #field: #local))
         });
-        let takes = takes.iter().rev();
         let get = lookup_by_type(ident, krate, &private, &flags);
-        let nestable = nestable(ident, &private, &checks);
+        let (nestable, holds) = (nestable(ident, &private, &checks), holds(&private, &checks));
         let changed_flags = if evaluations.is_empty() {
             quote!(_)
         } else {
@@ -156,10 +153,10 @@ impl Declaration {
 
             impl ::core::default::Default for #ident {
                 fn default() -> Self {
+                    #(#holds)*
                     let #chain = ();
                     #(#builds)*
-                    #(#takes)*
-                    let () = #chain;
+                    let _ = #chain;
                     Self { #(#names,)* }
                 }
             }
@@ -266,7 +263,7 @@ impl<'d> Expansion<'d> {
         let (krate, private) = (self.krate, self.private.clone());
         let visit = quote!(#krate::Visit<#ty>);
         let (bit, marker) = self.declare(attrs, field, None, visit.clone());
-        let (chain, signal) = (&self.chain, quote!(#private::Signal<#ty, #marker>));
+        let signal = quote!(#private::Signal<#ty, #marker>);
         self.reports.push(quote! {
             #(#attrs)*
             if #private::is_set(changed, #bit) {
@@ -276,10 +273,6 @@ impl<'d> Expansion<'d> {
                     ::core::borrow::Borrow::<#ty>::borrow(&<Self as #signal>::value(self)),
                 );
             }
-        });
-        self.builds.push(quote! {
-            #(#attrs)*
-            #private::distinct::<#ty, _, _>(&#chain);
         });
         self.check(attrs, "Signals", ty.to_token_stream());
         (bit, marker)
@@ -414,20 +407,6 @@ impl<'d> Expansion<'d> {
         });
     }
 
-    /// Moves the top entry out of the chain built by `Default`, binding
-    /// what `split` returns to `(pattern, chain)`.
-    fn take(&mut self, attrs: &[Attribute], pattern: &TokenStream, split: &TokenStream) {
-        let chain = &self.chain;
-        self.takes
-            .push(quote!(#(#attrs)* let (#pattern, #chain) = #split;));
-    }
-
-    /// Moves a stored value out of the chain built by `Default`.
-    fn unstore(&mut self, attrs: &[Attribute], local: &Ident) {
-        let (private, chain) = (self.private.clone(), self.chain.clone());
-        self.take(attrs, &quote!(#local), &quote!(#private::unstore(#chain)));
-    }
-
     fn input(&mut self, attrs: &'d [Attribute], input: &'d Input) {
         let Input { field, ty, init } = input;
         let name = &field.name;
@@ -437,9 +416,7 @@ impl<'d> Expansion<'d> {
             #(#attrs)*
             let #local: #ty = #init;
             #(#attrs)*
-            let #chain = #private::input(#local, #chain);
-            #(#attrs)*
-            #private::routed::<Self, #ty, _>();
+            let #chain = #private::borrow(&#local, #chain);
         });
         let (bit, marker) = self.signal(attrs, ty, Some(name));
         self.field(attrs, field, ty);
@@ -463,7 +440,6 @@ impl<'d> Expansion<'d> {
                 }
             }
         });
-        self.unstore(attrs, &local);
         self.feeds(attrs, ty.to_token_stream(), ty.to_token_stream(), marker);
     }
 
@@ -483,9 +459,7 @@ impl<'d> Expansion<'d> {
             #(#attrs)*
             let #local: #ty = #init;
             #(#attrs)*
-            let #chain = #private::bank::<{ #len.div_ceil(8) }, _, _, _>(#local, #chain);
-            #(#attrs)*
-            #private::routed::<Self, #krate::Write<'static, #item>, _>();
+            let #chain = #private::borrow_bank::<{ #len.div_ceil(8) }, _, _, _>(&#local, #chain);
         });
         let (base, marker) = self.declare(attrs, Some(name), Some(&len), visit);
         self.field(attrs, field, ty);
@@ -513,7 +487,6 @@ impl<'d> Expansion<'d> {
             #(#attrs)*
             #private::report(&self.#name, changed, #base, visitor);
         });
-        self.take(attrs, &quote!(#local), &quote!(#private::unbank(#chain)));
         self.feeds(attrs, quote!(#krate::Write<'static, #item>), write, marker);
     }
 
@@ -533,7 +506,7 @@ impl<'d> Expansion<'d> {
             #(#attrs)*
             let #local: #ty = #private::compute(&#helper, &#chain);
             #(#attrs)*
-            let #chain = #private::input(#local, #chain);
+            let #chain = #private::borrow(&#local, #chain);
         });
         let (bit, marker) = self.signal(attrs, ty, Some(name));
         self.field(attrs, field, ty);
@@ -558,7 +531,6 @@ impl<'d> Expansion<'d> {
                 }
             }
         });
-        self.unstore(attrs, &local);
     }
 
     fn view(&mut self, attrs: &'d [Attribute], view: &'d View) {
@@ -591,7 +563,6 @@ impl<'d> Expansion<'d> {
                 #private::set(changed, #bit);
             }
         });
-        self.take(attrs, &quote!(_), &quote!(#chain));
     }
 
     fn router(&mut self, attrs: &'d [Attribute], position: usize, router: &'d Router) {
@@ -603,7 +574,7 @@ impl<'d> Expansion<'d> {
         let view = format_ident!("__OutcropBelow{position}", span = Span::mixed_site());
         let marker = format_ident!("__OutcropRouter{position}", span = Span::mixed_site());
         let helper = format_ident!("__outcrop_route_{position}");
-        let (krate, private) = (self.krate, self.private.clone());
+        let krate = self.krate;
         let sink = quote!(&mut #krate::Sink<'_, #view<'_>>);
         self.helper(
             attrs,
@@ -654,10 +625,6 @@ impl<'d> Expansion<'d> {
             }
         });
         self.marker(attrs, &marker);
-        self.builds.push(quote! {
-            #(#attrs)*
-            #private::routed::<Self, #ty, _>();
-        });
         self.feeds(attrs, quote!(&'static #pointee), ty, marker);
     }
 }
@@ -716,7 +683,10 @@ fn nestable(ident: &Ident, private: &TokenStream, checks: &[Check<'_>]) -> Token
         }
         indices.push(index);
     }
+    let duplicates = duplicates(checks);
     quote! {
+        #duplicates
+
         #(#macros)*
 
         impl<#strata, #(#indices),*> #private::Nestable<#strata, (#(#indices,)*)> for #ident
@@ -725,6 +695,36 @@ fn nestable(ident: &Ident, private: &TokenStream, checks: &[Check<'_>]) -> Token
         {
         }
     }
+}
+
+fn holds<'c>(
+    private: &'c TokenStream,
+    checks: &'c [Check<'_>],
+) -> impl Iterator<Item = TokenStream> + 'c {
+    checks.iter().map(move |Check { attrs, kind, ty }| {
+        let span = ty
+            .clone()
+            .into_iter()
+            .next()
+            .map_or_else(Span::call_site, |token| token.span());
+        quote_spanned! {span=>
+            #(#attrs)*
+            #private::holds::<#private::#kind<#private::Over<Self, ()>, #ty, _>>();
+        }
+    })
+}
+
+fn duplicates(checks: &[Check<'_>]) -> TokenStream {
+    let mut seen = BTreeSet::new();
+    checks
+        .iter()
+        .filter(|Check { attrs, kind, .. }| attrs.is_empty() && kind == "Signals")
+        .filter(|Check { ty, .. }| !seen.insert(ty.to_string()))
+        .map(|Check { ty, .. }| {
+            Error::new_spanned(ty, "a signal of this type is already declared above")
+                .to_compile_error()
+        })
+        .collect()
 }
 
 fn cfg_switch(
@@ -901,16 +901,15 @@ mod tests {
             "# [deny (x)] a : __outcrop_field_a",
             "# [deny (x)] if :: outcrop :: __private :: is_set (changed",
             "# [deny (x)] impl :: outcrop :: __private :: Signal < A",
-            "# [deny (x)] let (__outcrop_field_a , __outcrop_chain) = :: outcrop :: __private :: unstore",
+            "# [deny (x)] let __outcrop_chain = :: outcrop :: __private :: borrow (& __outcrop_field_a",
             "# [deny (x)] impl :: outcrop :: Feed < A",
             "# [deny (y)] fn __outcrop_view_1",
             "# [deny (y)] if :: outcrop :: __private :: is_set (changed",
             "# [deny (y)] let __outcrop_chain = :: outcrop :: __private :: view (__outcrop_view_1",
-            "# [deny (y)] let (_ , __outcrop_chain) = __outcrop_chain",
             "# [deny (y)] impl :: outcrop :: __private :: Signal < B",
             "# [deny (z)] fn __outcrop_route_2",
             "# [deny (z)] impl :: outcrop :: Feed < & [u8]",
-            "# [deny (z)] :: outcrop :: __private :: routed :: < Self , & [u8] , _ >",
+            "# [deny (z)] :: outcrop :: __private :: holds :: < :: outcrop :: __private :: Feeds < :: outcrop :: __private :: Over < Self , () > , & 'static [u8] , _ >>",
         ] {
             assert!(output.contains(item), "{item} in {output}");
         }
@@ -1019,6 +1018,25 @@ mod tests {
             "{output}"
         );
         assert!(output.contains("__outcrop_compiled0 ! (bound)"), "{output}");
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_a_signal_type_declared_twice_without_attributes() -> syn::Result<()> {
+        let message = "a signal of this type is already declared above";
+        let twice = expand(quote!(struct S {
+            a: A = A(0),
+            B = A => f,
+            b: B = A => g,
+        }))?;
+        assert_eq!(twice.matches(message).count(), 1, "{twice}");
+        let gated = expand(quote!(
+            struct S {
+            #[cfg(x)] a: A = A(0),
+            #[cfg(not(x))] b: A = A(1),
+        }
+        ))?;
+        assert!(!gated.contains(message), "{gated}");
         Ok(())
     }
 
