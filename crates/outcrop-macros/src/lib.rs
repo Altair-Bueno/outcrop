@@ -112,13 +112,18 @@ struct Router {
 /// input. A router that keeps state between feeds can only be built with
 /// `Formation`.
 ///
-/// The generated `Default` finds each dependency by its type, one level of
-/// trait resolution per signal above it, so a declaration of around 120
-/// signals or more exceeds the compiler's default recursion limit of 128,
-/// exactly as a `Formation` of that size does. The compiler reports E0275,
-/// "overflow evaluating the requirement", and newer compilers already warn
-/// that exceeding the limit will become a hard error. Raise it in the crate
-/// that declares the struct, with `#![recursion_limit = "256"]`.
+/// Large declarations exceed the compiler's default recursion limit of 128:
+///
+/// - The generated `Default` checks each memo and view against the entries
+///   declared above it, about two levels of trait resolution per entry, so a
+///   memo or view with 64 entries or more above it fails with E0275,
+///   "overflow evaluating the requirement", wherever its dependencies are.
+/// - Each entry's first change bit is a constant computed from the previous
+///   entry's, so a declaration of more than 128 signals fails with "queries
+///   overflow the depth limit!".
+///
+/// Raise the limit in the crate that declares the struct, with
+/// `#![recursion_limit = "256"]`.
 ///
 /// A signal can only depend on signals declared above it:
 ///

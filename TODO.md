@@ -104,13 +104,13 @@ each measured against a snapshot of the tree before it with
       `Routed<Write<T>>`, `Router`: `Routed<&In>`, `Nested<N>`:
       `N: Nestable`), and `deposit` requires it; `input::<T, _, _>` became
       `input::<T, _>`. `strata!` keeps only the `checks` list, rendered as the
-      `Nestable` predicates and as one `__private::holds` call per entry in
-      `Default`, against `Over<Self, ()>`, carrying the entry's attributes.
+      `Nestable` predicates and checked in `Default` by one
+      `__private::nestable::<Self, (), _>()` call (see _Review of 4465815_).
       It also rejects a signal type spelled twice, for entries without
       attributes since the macro cannot evaluate `cfg`, with "a signal of this
       type is already declared above" on the second; the trait check stays
-      behind it for aliases, and its errors still point at the macro call, as
-      the `distinct` and `routed` calls did. Code size, fuel, stack and
+      behind it for aliases, and its errors point at the macro call. Code
+      size, fuel, stack and
       formation size unchanged; `cargo check` 1494 -> 1462 ms, within noise.
       `crates/outcrop/src/formation.rs`, `crates/outcrop-macros/src/expand.rs`
 - [ ] ~~**5. Bank byte count from a table of impls.**~~ Dropped. The idea was a
@@ -127,9 +127,9 @@ each measured against a snapshot of the tree before it with
 - [x] **6. `strata!` `Default` on borrowed layers.** The chain `Default` builds
       for memo initial values and view lookups moved every value and the whole
       chain into a new tuple per entry, and `unstore`/`unbank` moved them back
-      out. Its layers are now `Borrowed<'a, T>` and `BorrowedBank<'a, T, N,
-      BYTES>` in `borrowed.rs` (behind `macros`), pointers to the locals that
-      keep their values, so `unstore`, `unbank`, the `takes` list and
+      out. Its layers now borrow the locals that keep their values, as
+      `Input<T, &'a T>` and `Bank<T, N, BYTES, &'a [T; N]>` (see _Review of
+      4465815_), so `unstore`, `unbank`, the `takes` list and
       `let () = chain` are gone and `Self { .. }` uses the locals directly.
       The frame of the generated `Default` in a debug build, for a struct with
       a `[u16; 1000]` bank, a view and a memo (read from `--emit asm` of a
@@ -165,6 +165,77 @@ each measured against a snapshot of the tree before it with
       trait each fed entry implements once. Only worth it if it keeps the
       "cannot be fed" error at type-check time; the earlier attempt traded it
       for a post-monomorphisation one. `crates/outcrop-macros/src/expand.rs`
+
+## Review of 4465815
+
+Found by `/code-review` of the commit that closed items 4 and 6 of
+_Redesigns_. No crash or wrong output; diagnostics, duplication and tests.
+
+Fixed together and measured against a snapshot of 4465815: code size, fuel,
+reports, peak stack and formation size unchanged; `cargo check --workspace
+--all-targets --all-features` after cleaning both crates, best of five
+interleaved runs, 1407 -> 1369 ms, noise; the debug frame of `Default` for a
+struct with a `[u16; 1000]` bank, a view and a memo unchanged at 2120 B on
+x86_64. Design choices made after a probe by a second reviewer.
+
+- [x] **The `Sound` diagnostic never showed.** A layer holding a type twice is
+      an ambiguity error, not a missing impl:
+      `Formation::new().input(0_u8).input(1_u8)` gives two E0283 "type
+      annotations needed" about `Feed<u8, _>`/`Select<u8, _>`, and stable
+      Rust cannot customise those (a const `TypeId` comparison needs
+      unstable const `PartialEq`). When an impl was really missing, as in
+      `.nest(M)` with a hand-written `Strata` struct, the `Nestable` message
+      came with a `help:` listing the private `Sound` impls. The dead
+      `on_unimplemented` is gone and `nest` requires `N: Nestable<S, I>`
+      directly, so that case now reads "`M` cannot be nested on these
+      strata" with its note and nothing else; `deposit` still requires
+      `Sound`, which the `Nested` impl satisfies. `crates/outcrop/src/plumbing.rs`
+- [x] **The spanned duplicate error was buried.** `strata!` checked the entries
+      it flagged as "a signal of this type is already declared above" anyway,
+      so `struct S { a: A = A(0), b: A = A(1) }` gave that error plus two
+      E0283, five with a memo on `A`. The flagged entries are now left out of
+      the expansion, so both cases give that one error, plus an E0609 for
+      each use of a dropped field. Duplicates the scan cannot see, aliases or
+      entries with attributes, are still rejected by the `nestable` call.
+      `crates/outcrop-macros/src/expand.rs`
+- [x] **`Borrowed` and `BorrowedBank` copied `Input` and `Bank`.** About 50
+      lines, the `Layer`, `Select<E, Slotted>` and `Settle` impls and the
+      `Banked` alias, that had to agree on flag layout and slot indexing.
+      `Input<T, A = T>` and `Bank<T, N, BYTES, A = [T; N]>` now take their
+      storage as a parameter, read through `Borrow`, and `strata!`'s chain
+      uses `Input<T, &T>` and `Bank<T, N, BYTES, &[T; N]>`; `Feed`, `Sound`
+      and the bank's `LayerReport` stay on owned storage. `borrowed.rs` is
+      gone. Builder errors still print `Input<u8>`; only errors from the
+      chain show `Input<A, &A>`. `crates/outcrop/src/stratum.rs`
+- [x] **`holds` repeated the `Nestable` predicates.** `Default` rendered the
+      `checks` list a second time, one obligation per entry. It now makes one
+      `__private::nestable::<Self, (), _>()` call. The span the per-entry
+      calls seemed to buy was not there: for `type B = A;` declared as `a: A,
+      b: B`, or two `#[cfg(all())]` entries of one type, 4465815 and the
+      single call both give two E0283 at the macro call, since the
+      `__private` path keeps the call-site span.
+      `crates/outcrop-macros/src/expand.rs`
+- [x] **The `compile_fail` doctests on `input` passed for other reasons.**
+      `input::<u8, ((), ())>(1)` fails whether or not the types repeat, and
+      stable rustdoc ignores `compile_fail` error codes, so pinning them
+      protects nothing. Each rejected case now sits beside a compiling twin
+      that differs only in the repeated type: `.input(0_u8).input(1_u8)`
+      against `1_u16`, and the router case against `&'static u16`. The
+      `((), ())` doctest stays, for unnameable indices (item 2 of
+      _Redesigns_). `crates/outcrop/src/formation.rs`
+- [x] **`Default` built the borrowed chain for structs without a memo.** It is
+      now built only when the struct declares a memo or a view: views use it
+      too, to reject a dependency declared below them with "not a signal
+      declared above". `crates/outcrop-macros/src/expand.rs`
+- [x] **`strata!` hits the recursion limit earlier than documented.** The docs
+      said around 120 signals; measured, the same before and after this
+      section, a memo or view with 64 entries or more above it fails with
+      E0275 (63 compile), and a struct of more than 128 signals fails with
+      "queries overflow the depth limit!" from the chain of
+      `__OUTCROP_BITn` constants. `#![recursion_limit = "256"]` lifts both
+      (250 inputs, or a memo above 100, compile). Accepted and documented on
+      `strata!`: each limit grows from a chain the declaration order defines.
+      `crates/outcrop-macros/src/lib.rs`
 
 ## API guidelines
 
@@ -309,9 +380,10 @@ Documented here so that changes keep them consistent.
    flag. Fixed only inside `Formation::poll`.
 7. **Router state:** builder routers keep state in their `FnMut`; `strata!`
    routers cannot capture, so their state lives untracked in statics.
-8. **`strata!` `Default` chain:** one borrowed layer pushed per entry in
-   declaration order, only to compute memo initial values; the values stay in
-   their locals and move into the struct once the chain is dead.
+8. **`strata!` `Default` chain:** built only when the struct declares a memo
+   or a view: one borrowed layer pushed per entry in declaration order, to
+   compute memo initial values and type-check view dependencies; the values
+   stay in their locals and move into the struct once the chain is dead.
 9. **`strata!` cfg detection:** two shadowing `macro_rules!` give each entry a
    compiled-in or compiled-out state, feeding bit numbering and visitor bounds.
 

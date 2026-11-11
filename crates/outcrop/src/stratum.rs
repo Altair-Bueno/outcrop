@@ -1,4 +1,4 @@
-use core::borrow::Borrow as _;
+use core::borrow::Borrow;
 use core::convert::Infallible;
 use core::fmt;
 use core::marker::PhantomData;
@@ -29,14 +29,26 @@ use crate::strata::Report;
 use crate::strata::Strata;
 use crate::visit::Visit;
 
-/// An input signal fed by the caller.
+/// An input signal fed by the caller, stored in `A`.
 #[derive(Debug, Clone, Copy)]
-pub struct Input<T>(pub(super) T);
+pub struct Input<T, A = T>(A, PhantomData<fn() -> T>);
 
-/// An array of inputs fed by the caller, with a change bit per element,
-/// packed in `BYTES` bytes.
+impl<T, A> Input<T, A> {
+    pub(super) const fn new(storage: A) -> Self {
+        Self(storage, PhantomData)
+    }
+}
+
+/// An array of inputs fed by the caller, stored in `A`, with a change bit per
+/// element, packed in `BYTES` bytes.
 #[derive(Debug, Clone, Copy)]
-pub struct Bank<T, const N: usize, const BYTES: usize>(pub(super) [T; N]);
+pub struct Bank<T, const N: usize, const BYTES: usize, A = [T; N]>(A, PhantomData<fn() -> T>);
+
+impl<T, const N: usize, const BYTES: usize, A> Bank<T, N, BYTES, A> {
+    pub(super) const fn new(storage: A) -> Self {
+        Self(storage, PhantomData)
+    }
+}
 
 /// A signal computed by `F` from the strata beneath it, and cached.
 #[derive(Clone, Copy)]
@@ -213,7 +225,7 @@ impl<V, In: ?Sized, F, Tail: LayeredImpl> LayerReport<V, Tail> for Router<In, F>
 
 type Banked<Tail, const BYTES: usize> = (<Tail as Strata>::Flags, Chunk<BYTES>);
 
-impl<T, const N: usize, const BYTES: usize, Tail> Layer<Tail> for Bank<T, N, BYTES>
+impl<T, const N: usize, const BYTES: usize, A, Tail> Layer<Tail> for Bank<T, N, BYTES, A>
 where
     Tail: LayeredImpl,
 {
@@ -241,7 +253,7 @@ where
     }
 }
 
-impl<T> Value for Input<T> {
+impl<T, A> Value for Input<T, A> {
     type Signal = T;
 }
 
@@ -253,7 +265,7 @@ impl<F, M, O> Value for View<F, M, O> {
     type Signal = O;
 }
 
-impl<T, Tail> Settle<Tail> for Input<T> {
+impl<T, A: Borrow<T>, Tail> Settle<Tail> for Input<T, A> {
     const CACHED: bool = false;
     type Ref<'a>
         = &'a T
@@ -262,7 +274,7 @@ impl<T, Tail> Settle<Tail> for Input<T> {
         Tail: 'a;
 
     fn value<'a>(&'a self, _: &'a Tail) -> &'a T {
-        &self.0
+        self.0.borrow()
     }
 
     fn settle<Fl: Bits>(&mut self, _: &Tail, _: &Fl) -> bool {
@@ -343,10 +355,11 @@ impl<E: Settle<Tail>, Tail: LayeredImpl> Select<E::Signal, Here> for (E, Tail) {
 #[derive(Debug)]
 pub enum Slotted {}
 
-impl<E, const N: usize, const BYTES: usize, Tail> Select<E, Slotted>
-    for (Bank<E::Item, N, BYTES>, Tail)
+impl<E, const N: usize, const BYTES: usize, A, Tail> Select<E, Slotted>
+    for (Bank<E::Item, N, BYTES, A>, Tail)
 where
     E: Slot,
+    A: Borrow<[E::Item; N]>,
     Tail: LayeredImpl,
 {
     const INDEX: usize = slot::<E, N>(<Tail::Flags as Bits>::BITS);
@@ -357,7 +370,7 @@ where
         Self: 'a;
 
     fn select(&self) -> E {
-        read(&self.0.0)
+        read(self.0.0.borrow())
     }
 }
 

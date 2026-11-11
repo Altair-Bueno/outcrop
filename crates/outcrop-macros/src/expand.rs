@@ -58,6 +58,7 @@ struct Expansion<'d> {
     private: TokenStream,
     flags: Ident,
     chain: Ident,
+    derived: bool,
     next: TokenStream,
     bits: Vec<TokenStream>,
     signals: Vec<Signal<'d>>,
@@ -84,12 +85,17 @@ impl Declaration {
             return error.to_compile_error();
         }
         let krate = &self.krate;
+        let (duplicates, repeated) = duplicates(&self.entries);
         let mut expansion = Expansion {
             ident: &self.ident,
             krate,
             private: quote!(#krate::__private),
             flags: mixed("__OutcropFlags"),
             chain: mixed("__outcrop_chain"),
+            derived: self
+                .entries
+                .iter()
+                .any(|entry| matches!(entry.kind, Kind::Memo(_) | Kind::View(_))),
             next: quote!(0usize),
             bits: Vec::new(),
             signals: Vec::new(),
@@ -103,14 +109,13 @@ impl Declaration {
             reports: Vec::new(),
             visits: Vec::new(),
         };
-        expansion.entries(&self.entries);
+        expansion.chained(&self.entries, &repeated);
         let Self { attrs, vis, .. } = self;
         let count = mixed("__OUTCROP_BITS");
         let Expansion {
             ident,
             krate,
             flags,
-            chain,
             next,
             bits,
             fields,
@@ -131,7 +136,7 @@ impl Declaration {
             Some(quote!(#(#attrs)* #field: #local))
         });
         let get = lookup_by_type(ident, krate, &private, &flags);
-        let (nestable, holds) = (nestable(ident, &private, &checks), holds(&private, &checks));
+        let nestable = nestable(ident, &private, &checks);
         let changed_flags = if evaluations.is_empty() {
             quote!(_)
         } else {
@@ -143,6 +148,8 @@ impl Declaration {
                 #(#fields,)*
             }
 
+            #duplicates
+
             const _: () = {
             #(#bits)*
             const #count: usize = #next;
@@ -153,10 +160,8 @@ impl Declaration {
 
             impl ::core::default::Default for #ident {
                 fn default() -> Self {
-                    #(#holds)*
-                    let #chain = ();
+                    #private::nestable::<Self, (), _>();
                     #(#builds)*
-                    let _ = #chain;
                     Self { #(#names,)* }
                 }
             }
@@ -191,8 +196,22 @@ impl Declaration {
 }
 
 impl<'d> Expansion<'d> {
-    fn entries(&mut self, entries: &'d [Entry]) {
+    fn chained(&mut self, entries: &'d [Entry], repeated: &BTreeSet<usize>) {
+        let chain = self.chain.clone();
+        if self.derived {
+            self.builds.push(quote!(let #chain = ();));
+        }
+        self.entries(entries, repeated);
+        if self.derived {
+            self.builds.push(quote!(let _ = #chain;));
+        }
+    }
+
+    fn entries(&mut self, entries: &'d [Entry], repeated: &BTreeSet<usize>) {
         for (position, entry) in entries.iter().enumerate() {
+            if repeated.contains(&position) {
+                continue;
+            }
             let attrs = &entry.attrs;
             match &entry.kind {
                 Kind::Input(input) => self.input(attrs, input),
@@ -397,6 +416,17 @@ impl<'d> Expansion<'d> {
         });
     }
 
+    fn push(&self, attrs: &[Attribute], layer: &TokenStream) -> TokenStream {
+        if !self.derived {
+            return TokenStream::new();
+        }
+        let chain = &self.chain;
+        quote! {
+            #(#attrs)*
+            let #chain = #layer;
+        }
+    }
+
     /// Declares the type telling apart the lookups of one entry.
     fn marker(&mut self, attrs: &[Attribute], marker: &Ident) {
         self.impls.push(quote! {
@@ -412,11 +442,11 @@ impl<'d> Expansion<'d> {
         let name = &field.name;
         let local = local(name);
         let (private, chain) = (self.private.clone(), self.chain.clone());
+        let push = self.push(attrs, &quote!(#private::borrow(&#local, #chain)));
         self.builds.push(quote! {
             #(#attrs)*
             let #local: #ty = #init;
-            #(#attrs)*
-            let #chain = #private::borrow(&#local, #chain);
+            #push
         });
         let (bit, marker) = self.signal(attrs, ty, Some(name));
         self.field(attrs, field, ty);
@@ -455,11 +485,14 @@ impl<'d> Expansion<'d> {
         let slot = mixed("__OutcropSlot");
         let write = quote!(#krate::Write<'_, #item>);
         let visit = quote!(for<'__outcrop> #krate::Visit<#krate::Element<'__outcrop, #item>>);
+        let push = self.push(
+            attrs,
+            &quote!(#private::borrow_bank::<{ #len.div_ceil(8) }, _, _, _>(&#local, #chain)),
+        );
         self.builds.push(quote! {
             #(#attrs)*
             let #local: #ty = #init;
-            #(#attrs)*
-            let #chain = #private::borrow_bank::<{ #len.div_ceil(8) }, _, _, _>(&#local, #chain);
+            #push
         });
         let (base, marker) = self.declare(attrs, Some(name), Some(&len), visit);
         self.field(attrs, field, ty);
@@ -683,10 +716,7 @@ fn nestable(ident: &Ident, private: &TokenStream, checks: &[Check<'_>]) -> Token
         }
         indices.push(index);
     }
-    let duplicates = duplicates(checks);
     quote! {
-        #duplicates
-
         #(#macros)*
 
         impl<#strata, #(#indices),*> #private::Nestable<#strata, (#(#indices,)*)> for #ident
@@ -697,34 +727,25 @@ fn nestable(ident: &Ident, private: &TokenStream, checks: &[Check<'_>]) -> Token
     }
 }
 
-fn holds<'c>(
-    private: &'c TokenStream,
-    checks: &'c [Check<'_>],
-) -> impl Iterator<Item = TokenStream> + 'c {
-    checks.iter().map(move |Check { attrs, kind, ty }| {
-        let span = ty
-            .clone()
-            .into_iter()
-            .next()
-            .map_or_else(Span::call_site, |token| token.span());
-        quote_spanned! {span=>
-            #(#attrs)*
-            #private::holds::<#private::#kind<#private::Over<Self, ()>, #ty, _>>();
-        }
-    })
-}
-
-fn duplicates(checks: &[Check<'_>]) -> TokenStream {
+fn duplicates(entries: &[Entry]) -> (TokenStream, BTreeSet<usize>) {
     let mut seen = BTreeSet::new();
-    checks
+    let (errors, repeated) = entries
         .iter()
-        .filter(|Check { attrs, kind, .. }| attrs.is_empty() && kind == "Signals")
-        .filter(|Check { ty, .. }| !seen.insert(ty.to_string()))
-        .map(|Check { ty, .. }| {
-            Error::new_spanned(ty, "a signal of this type is already declared above")
-                .to_compile_error()
+        .enumerate()
+        .filter(|(_, entry)| entry.attrs.is_empty())
+        .filter_map(|(position, entry)| match &entry.kind {
+            Kind::Input(Input { ty, .. })
+            | Kind::Memo(Memo { ty, .. })
+            | Kind::View(View { ty, .. }) => Some((position, ty)),
+            Kind::Bank(_) | Kind::Router(_) => None,
         })
-        .collect()
+        .filter(|(_, ty)| !seen.insert(ty.to_token_stream().to_string()))
+        .map(|(position, ty)| {
+            let error = Error::new_spanned(ty, "a signal of this type is already declared above");
+            (error.to_compile_error(), position)
+        })
+        .unzip();
+    (errors, repeated)
 }
 
 fn cfg_switch(
@@ -909,7 +930,8 @@ mod tests {
             "# [deny (y)] impl :: outcrop :: __private :: Signal < B",
             "# [deny (z)] fn __outcrop_route_2",
             "# [deny (z)] impl :: outcrop :: Feed < & [u8]",
-            "# [deny (z)] :: outcrop :: __private :: holds :: < :: outcrop :: __private :: Feeds < :: outcrop :: __private :: Over < Self , () > , & 'static [u8] , _ >>",
+            "# [deny (z)] # [allow (unused_macros)] macro_rules ! __outcrop_nest3",
+            ":: outcrop :: __private :: nestable :: < Self , () , _ > () ;",
         ] {
             assert!(output.contains(item), "{item} in {output}");
         }
@@ -1030,6 +1052,8 @@ mod tests {
             b: B = A => g,
         }))?;
         assert_eq!(twice.matches(message).count(), 1, "{twice}");
+        assert!(!twice.contains("__outcrop_field_b"), "{twice}");
+        assert!(!twice.contains("__outcrop_memo_2"), "{twice}");
         let gated = expand(quote!(
             struct S {
             #[cfg(x)] a: A = A(0),
@@ -1037,6 +1061,24 @@ mod tests {
         }
         ))?;
         assert!(!gated.contains(message), "{gated}");
+        Ok(())
+    }
+
+    #[test]
+    fn builds_the_chain_only_for_memos_and_views() -> syn::Result<()> {
+        let stored = expand(quote!(struct S {
+            a: A = A(0),
+            #[strata(bank)] b: [u8; 2] = [0; 2],
+            &[u8] => f,
+        }))?;
+        assert!(!stored.contains("__outcrop_chain"), "{stored}");
+        for derived in [
+            quote!(struct S { a: A = A(0), b: B = A => f }),
+            quote!(struct S { a: A = A(0), B = A => f }),
+        ] {
+            let output = expand(derived)?;
+            assert!(output.contains("let __outcrop_chain = ()"), "{output}");
+        }
         Ok(())
     }
 

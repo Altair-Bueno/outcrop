@@ -5,8 +5,6 @@ use core::marker::PhantomData;
 
 use crate::bank::Element;
 use crate::bank::Write;
-use crate::borrowed::Borrowed;
-use crate::borrowed::BorrowedBank;
 pub use crate::flags::Chunk;
 use crate::nested::Nested;
 use crate::plumbing::ComputeImpl;
@@ -14,6 +12,8 @@ use crate::plumbing::Distinct;
 use crate::plumbing::Routed;
 use crate::reading::Reading;
 use crate::strata::Strata;
+use crate::stratum::Bank;
+use crate::stratum::Input;
 use crate::stratum::View;
 pub use crate::stratum::read;
 pub use crate::stratum::slot;
@@ -108,8 +108,8 @@ pub fn report<V, T, const N: usize>(
     Element::report(bank, changed.bytes_mut(), base, visitor);
 }
 
-pub const fn borrow<T, C>(value: &T, chain: C) -> (Borrowed<'_, T>, C) {
-    (Borrowed(value), chain)
+pub const fn borrow<T, C>(value: &T, chain: C) -> (Input<T, &T>, C) {
+    (Input::new(value), chain)
 }
 
 pub const fn view<F, M, C>(f: F, chain: C) -> (View<F, M, F::Output>, C)
@@ -128,8 +128,8 @@ where
 pub const fn borrow_bank<const BYTES: usize, T, const N: usize, C>(
     items: &[T; N],
     chain: C,
-) -> (BorrowedBank<'_, T, N, BYTES>, C) {
-    (BorrowedBank(items), chain)
+) -> (Bank<T, N, BYTES, &[T; N]>, C) {
+    (Bank::new(items), chain)
 }
 
 pub fn compute<F: ComputeImpl<C, M>, C, M>(f: &F, chain: &C) -> F::Output {
@@ -152,7 +152,7 @@ pub type Over<N, S> = (Nested<N>, S);
 /// A check on the strata a struct is nested on.
 pub trait Holds {}
 
-pub const fn holds<H: Holds>() {}
+pub const fn nestable<N: Nestable<S, I>, S, I>() {}
 
 /// Holds if `O` has a single signal `T`.
 #[derive(Debug)]

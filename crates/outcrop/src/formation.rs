@@ -1,6 +1,8 @@
 use core::marker::PhantomData;
 
 #[cfg(feature = "macros")]
+use crate::__private::Nestable;
+#[cfg(feature = "macros")]
 use crate::nested::Nested;
 use crate::plumbing::Layer;
 use crate::plumbing::Sound;
@@ -132,8 +134,27 @@ impl<S: Layered> Formation<S> {
     /// let formation = Formation::new().input(0.5_f32);
     /// ```
     ///
-    /// An input cannot share its type with a router beneath it, since feeding
-    /// that type could not tell them apart:
+    /// Every signal of a formation has a distinct type:
+    ///
+    /// ```
+    /// # use outcrop::Formation;
+    /// let formation = Formation::new().input(0_u8).input(1_u16);
+    /// ```
+    ///
+    /// ```compile_fail
+    /// # use outcrop::Formation;
+    /// let formation = Formation::new().input(0_u8).input(1_u8);
+    /// ```
+    ///
+    /// An input cannot share its type with a router beneath it either, since
+    /// feeding that type could not tell them apart:
+    ///
+    /// ```
+    /// # use outcrop::Formation;
+    /// let formation = Formation::new()
+    ///     .route(|_: &u8, _| {})
+    ///     .input::<&'static u16, _>(&0);
+    /// ```
     ///
     /// ```compile_fail
     /// # use outcrop::Formation;
@@ -154,7 +175,7 @@ impl<S: Layered> Formation<S> {
     where
         (Input<T>, S): Sound<I>,
     {
-        self.deposit(Input(initial))
+        self.deposit(Input::new(initial))
     }
 
     /// Deposits a bank: an array of inputs with a change bit per element,
@@ -263,7 +284,7 @@ impl<S: Layered> Formation<S> {
                 "a bank of `N` elements packs its change bits in `N.div_ceil(8)` bytes"
             );
         };
-        self.deposit(Bank(initial))
+        self.deposit(Bank::new(initial))
     }
 
     /// Deposits a memo: a signal computed by `f` from the signals beneath it
@@ -416,9 +437,8 @@ impl<S: Layered> Formation<S> {
     #[must_use]
     pub fn nest<N, I>(self, strata: N) -> Deposited<Nested<N>, S>
     where
-        N: Strata,
+        N: Strata + Nestable<S, I>,
         Nested<N>: Layer<S>,
-        (Nested<N>, S): Sound<I>,
     {
         self.deposit(Nested(strata))
     }
