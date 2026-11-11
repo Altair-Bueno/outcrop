@@ -34,7 +34,7 @@ use crate::visit::Visit;
 pub struct Input<T, A = T>(A, PhantomData<fn() -> T>);
 
 impl<T, A> Input<T, A> {
-    pub(super) const fn new(storage: A) -> Self {
+    pub const fn new(storage: A) -> Self {
         Self(storage, PhantomData)
     }
 }
@@ -45,18 +45,29 @@ impl<T, A> Input<T, A> {
 pub struct Bank<T, const N: usize, const BYTES: usize, A = [T; N]>(A, PhantomData<fn() -> T>);
 
 impl<T, const N: usize, const BYTES: usize, A> Bank<T, N, BYTES, A> {
-    pub(super) const fn new(storage: A) -> Self {
+    pub const fn new(storage: A) -> Self {
         Self(storage, PhantomData)
     }
 }
 
 /// A signal computed by `F` from the strata beneath it, and cached.
-#[derive(Clone, Copy)]
 pub struct Memo<F, M, O> {
-    pub(super) f: F,
-    pub(super) value: O,
-    pub(super) marker: PhantomData<fn() -> M>,
+    pub f: F,
+    pub value: O,
+    pub marker: PhantomData<fn() -> M>,
 }
+
+impl<F: Clone, M, O: Clone> Clone for Memo<F, M, O> {
+    fn clone(&self) -> Self {
+        Self {
+            f: self.f.clone(),
+            value: self.value.clone(),
+            marker: PhantomData,
+        }
+    }
+}
+
+impl<F: Copy, M, O: Copy> Copy for Memo<F, M, O> {}
 
 impl<F, M, O: fmt::Debug> fmt::Debug for Memo<F, M, O> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -68,8 +79,8 @@ impl<F, M, O: fmt::Debug> fmt::Debug for Memo<F, M, O> {
 
 /// A signal computed by `F` from the strata beneath it whenever it is read.
 pub struct View<F, M, O> {
-    pub(super) f: F,
-    pub(super) marker: PhantomData<fn() -> (M, O)>,
+    pub f: F,
+    pub marker: PhantomData<fn() -> (M, O)>,
 }
 
 impl<F, M, O> fmt::Debug for View<F, M, O> {
@@ -91,8 +102,8 @@ impl<F: Copy, M, O> Copy for View<F, M, O> {}
 
 /// A router that turns a fed `&In` into feeds of the strata beneath it.
 pub struct Router<In: ?Sized, F> {
-    pub(super) f: F,
-    pub(super) marker: PhantomData<fn(&In)>,
+    pub f: F,
+    pub marker: PhantomData<fn(&In)>,
 }
 
 impl<In: ?Sized, F> fmt::Debug for Router<In, F> {
@@ -441,7 +452,7 @@ where
     Tail: LayeredImpl,
 {
     fn feed(&mut self, changed: &mut Self::Flags, write: Write<'w, T>) {
-        write.apply(&mut self.0.0, |index| changed.1.set(index));
+        write.apply(&mut self.0.0, |index| changed.1.set_top(index));
     }
 }
 
@@ -483,20 +494,12 @@ where
 /// If `E::INDEX` is not below `N`, at compile time when evaluated in a
 /// constant.
 #[must_use]
-#[cfg_attr(
-    not(feature = "macros"),
-    expect(unreachable_pub, reason = "exported through `__private` for `strata!`")
-)]
 pub const fn slot<E: Slot, const N: usize>(base: usize) -> usize {
     assert!(E::INDEX < N, "the slot is past the end of the bank");
     base + E::INDEX
 }
 
 /// Reads the slot `E` from `bank`.
-#[cfg_attr(
-    not(feature = "macros"),
-    expect(unreachable_pub, reason = "exported through `__private` for `strata!`")
-)]
 pub fn read<E: Slot, const N: usize>(bank: &[E::Item; N]) -> E {
     E::read(&bank[const { slot::<E, N>(0) }])
 }

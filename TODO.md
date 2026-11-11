@@ -63,16 +63,16 @@ each measured against a snapshot of the tree before it with
 
 - [x] **1. Clear change bits before visiting only under `panic = "unwind"`.**
       The per-signal clears exist so a caught visitor panic loses no reports
-      (see _Broken promises_); under `panic = "abort"` nothing can catch it,
-      and `poll` zeroes the flags after `report` anyway. The single-signal
+      (see _Broken promises_); under `panic = "abort"` nothing can catch it, and
+      `poll` zeroes the flags after `report` anyway. The single-signal
       `LayerReport::report`, `Element::report` and `__private::clear` test
-      `cfg!(panic = "unwind")`. Code size builder 12498 -> 12156 B, macro
-      7650 -> 7478 B; fuel -1-3% on feeds and routes, full bank 11140 -> 10212
-      (-8%), one changed word 854 -> 832; reports unchanged. Peak stack +16 B
-      on the builder's feed and route scenarios (343 -> 359), the rest
-      unchanged. Dropping `#[inline(always)]` on the single-signal `report`
-      made it worse (builder 12440 B, 375 B of stack). `cargo test` runs with
-      unwind, so the harness's report counts are the check on the abort path.
+      `cfg!(panic = "unwind")`. Code size builder 12498 -> 12156 B, macro 7650
+      -> 7478 B; fuel -1-3% on feeds and routes, full bank 11140 -> 10212 (-8%),
+      one changed word 854 -> 832; reports unchanged. Peak stack +16 B on the
+      builder's feed and route scenarios (343 -> 359), the rest unchanged.
+      Dropping `#[inline(always)]` on the single-signal `report` made it worse
+      (builder 12440 B, 375 B of stack). `cargo test` runs with unwind, so the
+      harness's report counts are the check on the abort path.
 - [x] **2. Unnameable builder indices.** The builder's lookups took `()` and
       `(I,)` as indices, so `.input(0_u8).input::<u8, (), ()>(1)` compiled,
       passing `Distinct` and `Routed` through the top layer alone. They are now
@@ -80,19 +80,19 @@ each measured against a snapshot of the tree before it with
       and `Within` already were. A `compile_fail` doctest on `input` keeps it.
       Type-level only: no codegen change.
 - [x] **3. Coarse `Reading::Stale`** (replaces the redesign of builder memo
-      staleness below). A signal is stale when it is or depends on a memo,
-      one associated `const CACHED: bool` on `Settle`, `Select`, `ComputeImpl`
-      and `__private::Signal`, and the flags are not all clear. Removed: the
+      staleness below). A signal is stale when it is or depends on a memo, one
+      associated `const CACHED: bool` on `Settle`, `Select`, `ComputeImpl` and
+      `__private::Signal`, and the flags are not all clear. Removed: the
       recursive `stale`/`moved` walk, `ComputeImpl::pending` and `moved`,
       `Signal::STALE` and `MOVED`, `nested::intersects`, `Bits::byte`,
       `__private::mask` and `union`, and `Chunk::bit`, `union`, `bytes` and
       `intersects`. Semantic change, approved: a memo no pending feed reaches
-      now reads `Stale`. The workload gained `builder_get` and `macro_get`
-      (feed the bottom register, read `Summary` and `Alarm`, poll); the two
-      reads cost, as `*_get` minus `*_feed_bottom`, builder 50 -> 22 fuel,
-      macro 44 -> 8. Code size, peak stack and formation size unchanged.
-      `cargo check --workspace --all-targets --all-features` after cleaning
-      both crates, best of three: 1962 -> 1650 ms, items 1 and 2 included.
+      now reads `Stale`. The workload gained `builder_get` and `macro_get` (feed
+      the bottom register, read `Summary` and `Alarm`, poll); the two reads
+      cost, as `*_get` minus `*_feed_bottom`, builder 50 -> 22 fuel, macro 44
+      -> 8. Code size, peak stack and formation size unchanged.
+      `cargo check --workspace --all-targets --all-features` after cleaning both
+      crates, best of three: 1962 -> 1650 ms, items 1 and 2 included.
 - [x] **4. One uniqueness check per layer.** "Every type a formation holds is a
       single signal and fed in a single place" was never stated once: each
       builder method picked its own `Distinct`/`Routed` bounds, and `strata!`
@@ -101,62 +101,62 @@ each measured against a snapshot of the tree before it with
       `input` that checked `Distinct` but not `Routed`. Now each layer states
       what it holds in one `Sound<I>` impl beside its other impls (`Input<T>`:
       `Distinct<T>` + `Routed<T>`, `Memo`/`View`: `Distinct<Output>`, `Bank`:
-      `Routed<Write<T>>`, `Router`: `Routed<&In>`, `Nested<N>`:
-      `N: Nestable`), and `deposit` requires it; `input::<T, _, _>` became
-      `input::<T, _>`. `strata!` keeps only the `checks` list, rendered as the
-      `Nestable` predicates and checked in `Default` by one
-      `__private::nestable::<Self, (), _>()` call (see _Review of 4465815_).
-      It also rejects a signal type spelled twice, for entries without
-      attributes since the macro cannot evaluate `cfg`, with "a signal of this
-      type is already declared above" on the second; the trait check stays
-      behind it for aliases, and its errors point at the macro call. Code
-      size, fuel, stack and
-      formation size unchanged; `cargo check` 1494 -> 1462 ms, within noise.
+      `Routed<Write<T>>`, `Router`: `Routed<&In>`, `Nested<N>`: `N: Nestable`),
+      and `deposit` requires it; `input::<T, _, _>` became `input::<T, _>`.
+      `strata!` keeps only the `checks` list, rendered as the `Nestable`
+      predicates and checked in `Default` by one
+      `__private::nestable::<Self, (), _>()` call (see _Review of 4465815_). It
+      also rejects a signal type spelled twice, for entries without attributes
+      since the macro cannot evaluate `cfg`, with "a signal of this type is
+      already declared above" on the second; the trait check stays behind it for
+      aliases, and its errors point at the macro call. Code size, fuel, stack
+      and formation size unchanged; `cargo check` 1494 -> 1462 ms, within noise.
       `crates/outcrop/src/formation.rs`, `crates/outcrop-macros/src/expand.rs`
 - [ ] ~~**5. Bank byte count from a table of impls.**~~ Dropped. The idea was a
-      `macro_rules!` table of `impl Pack for [T; N]` giving `Chunk<{N.div_ceil(8)}>`
-      up to a cap, so `bank([0_u16; 101])` needed no `bank::<13, _, _, _>` and the
-      post-monomorphisation `BYTES` assert went. Measured, `cargo check -p outcrop`
-      rebuilding only `outcrop`: 64 impls 0.36 s / 126 MB, 256 impls 0.82 s /
-      173 MB, 1024 impls 9.9 s / 849 MB. The coherence check across the impls is
-      quadratic, and a 4096-impl table (caps of 4095 elements) ran out of memory
-      on a 31 GB machine. A cap of 255 elements costs every user's build half a
-      second and still refuses larger banks, so the explicit byte count and its
-      assert stay. Run such experiments under
+      `macro_rules!` table of `impl Pack for [T; N]` giving
+      `Chunk<{N.div_ceil(8)}>` up to a cap, so `bank([0_u16; 101])` needed no
+      `bank::<13, _, _, _>` and the post-monomorphisation `BYTES` assert went.
+      Measured, `cargo check -p outcrop` rebuilding only `outcrop`: 64 impls
+      0.36 s / 126 MB, 256 impls 0.82 s / 173 MB, 1024 impls 9.9 s / 849 MB. The
+      coherence check across the impls is quadratic, and a 4096-impl table (caps
+      of 4095 elements) ran out of memory on a 31 GB machine. A cap of 255
+      elements costs every user's build half a second and still refuses larger
+      banks, so the explicit byte count and its assert stay. Run such
+      experiments under
       `systemd-run --user --scope -p MemoryMax=4G -p MemorySwapMax=0`.
 - [x] **6. `strata!` `Default` on borrowed layers.** The chain `Default` builds
       for memo initial values and view lookups moved every value and the whole
       chain into a new tuple per entry, and `unstore`/`unbank` moved them back
       out. Its layers now borrow the locals that keep their values, as
       `Input<T, &'a T>` and `Bank<T, N, BYTES, &'a [T; N]>` (see _Review of
-      4465815_), so `unstore`, `unbank`, the `takes` list and
-      `let () = chain` are gone and `Self { .. }` uses the locals directly.
-      The frame of the generated `Default` in a debug build, for a struct with
-      a `[u16; 1000]` bank, a view and a memo (read from `--emit asm` of a
-      probe crate): 28064 B -> 2064 B. Release: code size, fuel, reports, peak
-      stack and formation size unchanged; `cargo check` 1636 -> 1629 ms, noise.
+      4465815_), so `unstore`, `unbank`, the `takes` list and `let () = chain`
+      are gone and `Self { .. }` uses the locals directly. The frame of the
+      generated `Default` in a debug build, for a struct with a `[u16; 1000]`
+      bank, a view and a memo (read from `--emit asm` of a probe crate): 28064 B
+      -> 2064 B. Release: code size, fuel, reports, peak stack and formation
+      size unchanged; `cargo check` 1636 -> 1629 ms, noise.
 - [ ] ~~**Builder memo staleness without walking the dependency tree.**~~
       Replaced by 3: const concatenation sized by the dependency count is not
-      expressible on stable Rust.
-      `Formation::get` on a memo or view calls `Memo::stale` → `F::moved` →
-      `Select::moved` of every dependency, recursively, with no deduplication
-      of shared dependencies: a diamond-shaped graph grows exponentially, and
-      LLVM folds it only when it inlines the whole tree. A constant list of the
-      bit indices that move the memo, built by const concatenation, would make
-      it a loop over a constant array. Measure first: `strata!` tried one
-      constant mask with `intersects` and lost 30% fuel on a 100-word bank (see
-      _Kept as is_); a list of indices tested with `get` avoids walking bank
-      bytes. `crates/outcrop/src/stratum.rs`, `crates/outcrop/src/compute.rs`
+      expressible on stable Rust. `Formation::get` on a memo or view calls
+      `Memo::stale` → `F::moved` → `Select::moved` of every dependency,
+      recursively, with no deduplication of shared dependencies: a
+      diamond-shaped graph grows exponentially, and LLVM folds it only when it
+      inlines the whole tree. A constant list of the bit indices that move the
+      memo, built by const concatenation, would make it a loop over a constant
+      array. Measure first: `strata!` tried one constant mask with `intersects`
+      and lost 30% fuel on a 100-word bank (see _Kept as is_); a list of indices
+      tested with `get` avoids walking bank bytes.
+      `crates/outcrop/src/stratum.rs`, `crates/outcrop/src/compute.rs`
 - [ ] ~~**`strata!` `Default` without moving values through the chain.**~~
-      Changed into 6. Each
-      entry does `let chain = input(local, chain)`, moving the value and the
-      whole chain into a new tuple, and `unstore`/`unbank` move them back out:
-      about n²/2 bytes copied and a stack slot per shadowed `chain` without
-      optimisation, which matters for large banks in debug or `opt-level = "s"`
-      builds. A borrowed layer (`Settle::Ref = &'a T`, `Signal = T`) and a
-      borrowed bank would let `compute` and `distinct` see the same types while
-      the values stay in their locals. Measure peak stack in a debug build.
-      `crates/outcrop-macros/src/expand.rs`, `crates/outcrop/src/__private.rs`
+      Changed into 6. Each entry does `let chain = input(local, chain)`, moving
+      the value and the whole chain into a new tuple, and `unstore`/`unbank`
+      move them back out: about n²/2 bytes copied and a stack slot per shadowed
+      `chain` without optimisation, which matters for large banks in debug or
+      `opt-level = "s"` builds. A borrowed layer (`Settle::Ref = &'a T`,
+      `Signal = T`) and a borrowed bank would let `compute` and `distinct` see
+      the same types while the values stay in their locals. Measure peak stack
+      in a debug build. `crates/outcrop-macros/src/expand.rs`,
+      `crates/outcrop/src/__private.rs`
 - [ ] ~~**One forwarding impl per fed entry instead of per router × entry.**~~
       Dropped: 300 impls cost 20 ms of `cargo check` and 0.4% of a release
       build, with no runtime cost (see _Kept as is_), leaving nothing to win.
@@ -168,74 +168,188 @@ each measured against a snapshot of the tree before it with
 
 ## Review of 4465815
 
-Found by `/code-review` of the commit that closed items 4 and 6 of
-_Redesigns_. No crash or wrong output; diagnostics, duplication and tests.
+Found by `/code-review` of the commit that closed items 4 and 6 of _Redesigns_.
+No crash or wrong output; diagnostics, duplication and tests.
 
 Fixed together and measured against a snapshot of 4465815: code size, fuel,
-reports, peak stack and formation size unchanged; `cargo check --workspace
---all-targets --all-features` after cleaning both crates, best of five
-interleaved runs, 1407 -> 1369 ms, noise; the debug frame of `Default` for a
-struct with a `[u16; 1000]` bank, a view and a memo unchanged at 2120 B on
-x86_64. Design choices made after a probe by a second reviewer.
+reports, peak stack and formation size unchanged;
+`cargo check --workspace --all-targets --all-features` after cleaning both
+crates, best of five interleaved runs, 1407 -> 1369 ms, noise; the debug frame
+of `Default` for a struct with a `[u16; 1000]` bank, a view and a memo unchanged
+at 2120 B on x86_64. Design choices made after a probe by a second reviewer.
 
 - [x] **The `Sound` diagnostic never showed.** A layer holding a type twice is
       an ambiguity error, not a missing impl:
       `Formation::new().input(0_u8).input(1_u8)` gives two E0283 "type
-      annotations needed" about `Feed<u8, _>`/`Select<u8, _>`, and stable
-      Rust cannot customise those (a const `TypeId` comparison needs
-      unstable const `PartialEq`). When an impl was really missing, as in
-      `.nest(M)` with a hand-written `Strata` struct, the `Nestable` message
-      came with a `help:` listing the private `Sound` impls. The dead
-      `on_unimplemented` is gone and `nest` requires `N: Nestable<S, I>`
-      directly, so that case now reads "`M` cannot be nested on these
-      strata" with its note and nothing else; `deposit` still requires
-      `Sound`, which the `Nested` impl satisfies. `crates/outcrop/src/plumbing.rs`
+      annotations needed" about `Feed<u8, _>`/`Select<u8, _>`, and stable Rust
+      cannot customise those (a const `TypeId` comparison needs unstable const
+      `PartialEq`). When an impl was really missing, as in `.nest(M)` with a
+      hand-written `Strata` struct, the `Nestable` message came with a `help:`
+      listing the private `Sound` impls. The dead `on_unimplemented` is gone and
+      `nest` requires `N: Nestable<S, I>` directly, so that case now reads "`M`
+      cannot be nested on these strata" with its note and nothing else;
+      `deposit` still requires `Sound`, which the `Nested` impl satisfies.
+      `crates/outcrop/src/plumbing.rs`
 - [x] **The spanned duplicate error was buried.** `strata!` checked the entries
-      it flagged as "a signal of this type is already declared above" anyway,
-      so `struct S { a: A = A(0), b: A = A(1) }` gave that error plus two
-      E0283, five with a memo on `A`. The flagged entries are now left out of
-      the expansion, so both cases give that one error, plus an E0609 for
-      each use of a dropped field. Duplicates the scan cannot see, aliases or
-      entries with attributes, are still rejected by the `nestable` call.
+      it flagged as "a signal of this type is already declared above" anyway, so
+      `struct S { a: A = A(0), b: A = A(1) }` gave that error plus two E0283,
+      five with a memo on `A`. The flagged entries are now left out of the
+      expansion, so both cases give that one error, plus an E0609 for each use
+      of a dropped field. Duplicates the scan cannot see, aliases or entries
+      with attributes, are still rejected by the `nestable` call.
       `crates/outcrop-macros/src/expand.rs`
 - [x] **`Borrowed` and `BorrowedBank` copied `Input` and `Bank`.** About 50
       lines, the `Layer`, `Select<E, Slotted>` and `Settle` impls and the
       `Banked` alias, that had to agree on flag layout and slot indexing.
       `Input<T, A = T>` and `Bank<T, N, BYTES, A = [T; N]>` now take their
-      storage as a parameter, read through `Borrow`, and `strata!`'s chain
-      uses `Input<T, &T>` and `Bank<T, N, BYTES, &[T; N]>`; `Feed`, `Sound`
-      and the bank's `LayerReport` stay on owned storage. `borrowed.rs` is
-      gone. Builder errors still print `Input<u8>`; only errors from the
-      chain show `Input<A, &A>`. `crates/outcrop/src/stratum.rs`
+      storage as a parameter, read through `Borrow`, and `strata!`'s chain uses
+      `Input<T, &T>` and `Bank<T, N, BYTES, &[T; N]>`; `Feed`, `Sound` and the
+      bank's `LayerReport` stay on owned storage. `borrowed.rs` is gone. Builder
+      errors still print `Input<u8>`; only errors from the chain show
+      `Input<A, &A>`. `crates/outcrop/src/stratum.rs`
 - [x] **`holds` repeated the `Nestable` predicates.** `Default` rendered the
       `checks` list a second time, one obligation per entry. It now makes one
-      `__private::nestable::<Self, (), _>()` call. The span the per-entry
-      calls seemed to buy was not there: for `type B = A;` declared as `a: A,
-      b: B`, or two `#[cfg(all())]` entries of one type, 4465815 and the
-      single call both give two E0283 at the macro call, since the
-      `__private` path keeps the call-site span.
-      `crates/outcrop-macros/src/expand.rs`
+      `__private::nestable::<Self, (), _>()` call. The span the per-entry calls
+      seemed to buy was not there: for `type B = A;` declared as `a: A, b: B`,
+      or two `#[cfg(all())]` entries of one type, 4465815 and the single call
+      both give two E0283 at the macro call, since the `__private` path keeps
+      the call-site span. `crates/outcrop-macros/src/expand.rs`
 - [x] **The `compile_fail` doctests on `input` passed for other reasons.**
       `input::<u8, ((), ())>(1)` fails whether or not the types repeat, and
       stable rustdoc ignores `compile_fail` error codes, so pinning them
-      protects nothing. Each rejected case now sits beside a compiling twin
-      that differs only in the repeated type: `.input(0_u8).input(1_u8)`
-      against `1_u16`, and the router case against `&'static u16`. The
-      `((), ())` doctest stays, for unnameable indices (item 2 of
-      _Redesigns_). `crates/outcrop/src/formation.rs`
+      protects nothing. Each rejected case now sits beside a compiling twin that
+      differs only in the repeated type: `.input(0_u8).input(1_u8)` against
+      `1_u16`, and the router case against `&'static u16`. The `((), ())`
+      doctest stays, for unnameable indices (item 2 of _Redesigns_).
+      `crates/outcrop/src/formation.rs`
 - [x] **`Default` built the borrowed chain for structs without a memo.** It is
       now built only when the struct declares a memo or a view: views use it
       too, to reject a dependency declared below them with "not a signal
       declared above". `crates/outcrop-macros/src/expand.rs`
 - [x] **`strata!` hits the recursion limit earlier than documented.** The docs
-      said around 120 signals; measured, the same before and after this
-      section, a memo or view with 64 entries or more above it fails with
-      E0275 (63 compile), and a struct of more than 128 signals fails with
-      "queries overflow the depth limit!" from the chain of
-      `__OUTCROP_BITn` constants. `#![recursion_limit = "256"]` lifts both
-      (250 inputs, or a memo above 100, compile). Accepted and documented on
-      `strata!`: each limit grows from a chain the declaration order defines.
-      `crates/outcrop-macros/src/lib.rs`
+      said around 120 signals; measured, the same before and after this section,
+      a memo or view with 64 entries or more above it fails with E0275 (63
+      compile), and a struct of more than 128 signals fails with "queries
+      overflow the depth limit!" from the chain of `__OUTCROP_BITn` constants.
+      `#![recursion_limit = "256"]` lifts both (250 inputs, or a memo above 100,
+      compile). Accepted and documented on `strata!`: each limit grows from a
+      chain the declaration order defines. `crates/outcrop-macros/src/lib.rs`
+
+## Review of 30d52f1
+
+Found by an `effective-rust` review of the whole workspace. Items 1–3 were
+reproduced in a scratch crate; item 4 with `cargo +nightly fmt --all --check`.
+
+### Bugs
+
+- [x] **1. A builder formation with a memo was neither `Clone` nor `Copy`.**
+      `Memo` derived both, so the derive also required the marker `M`
+      (`(fn(&A) -> B, (Here,))`) to be `Clone`, and `Here` and `There<I>` are
+      not: `Formation::new().input(A(0)).memo(|a: &A| B(a.0)).clone()` failed
+      with E0599. `Memo` now implements them by hand, bounded on `F` and `O`
+      alone, as `View` and `Router` do. Tested by `clones_keep_their_own_memos`
+      and `copies_keep_their_own_memos`. `crates/outcrop/src/stratum.rs`
+- [x] **2. A `strata!` router over `dyn A + B` failed to compile.** The
+      expansion spliced the pointee after `&` in `&#pointee` and
+      `&'static #pointee`, so `dyn Tr + Send => |f, sink| ..` gave "ambiguous
+      `+` in a type". `referent()` now puts a trait object with several bounds
+      in parentheses, and only that: parenthesising every type would trigger
+      `unused_parens` in the generated code. `impl Trait` cannot name a router
+      type, so it needs no case. It looks through `Type::Group` too, since rustc
+      drops the invisible group of a `$t:ty` fragment from the expansion. Tested
+      by `routers_take_trait_objects_with_several_bounds` and, through the
+      `routed!` wrapper, `routers_take_trait_objects_passed_as_a_type_fragment`.
+      `crates/outcrop-macros/src/expand.rs`
+- [x] **3. A tuple of dependencies passed through a `$d:ty` fragment counted as
+      one dependency.** `dependencies()` matched `Type::Tuple` and `Type::Paren`
+      but not the `Type::Group` that `macro_rules!` wraps a `ty` fragment in, so
+      `m!((A, B))` gave "`(A, B)` is not a signal declared above". It now looks
+      through `Type::Group` first. Tested by the `typed!` wrapper and
+      `dependencies_passed_as_a_type_fragment_are_split` in `tests/strata.rs`.
+      `crates/outcrop-macros/src/expand.rs`
+
+### CI
+
+- [x] **4. The `rust-fmt` and `prettier-fmt` CI jobs failed.**
+      `cargo +nightly fmt --all --check` wanted five doc comments rewrapped, in
+      `bank.rs`, `formation.rs` (two), `strata.rs` and
+      `outcrop-macros/src/lib.rs`; stable `cargo fmt` ignores `wrap_comments`,
+      so only nightly sees them. Prettier wanted `TODO.md`,
+      `.github/workflows/ci.yml` and
+      `docs/decisions/0001-view-change-detection.md` rewrapped. All reformatted
+      with those tools, no content change; taplo and typos were already clean.
+
+### Smells
+
+- [x] **5. `///` on a `strata!` entry gave three `unused_doc_comments`
+      warnings.** Entry attributes are copied onto the `let` and `if` statements
+      of the expansion, so the natural way to document a field broke
+      `-D warnings` builds. `parse.rs` now takes `doc` attributes out of the
+      entry's attributes and puts them first among the field attributes of an
+      input, bank or memo, or the function attributes of a view or router. A
+      `doc` inside `cfg_attr` is still copied everywhere. Tested by the
+      `documented` module of `tests/strata.rs`, which denies
+      `unused_doc_comments`, and
+      `puts_doc_comments_on_the_field_or_else_the_function`; the `strata!` docs
+      now show `///` instead of `field(doc = ..)`.
+      `crates/outcrop-macros/src/parse.rs`
+- [x] **6. Unused `syn` feature `visit-mut`.** Nothing used it; removed.
+      `crates/outcrop-macros/Cargo.toml`
+- [ ] ~~**7. `Check.kind` names `__private` types as strings.**~~ Dropped. An
+      enum would still print `Signals` and `Feeds` as identifiers, like every
+      other `#private::…` path in the expansion (`ne`, `set`, `Array`, …), and a
+      rename in `__private` already breaks `tests/strata.rs`, `tests/nest.rs`
+      and the `ui` suite. `crates/outcrop-macros/src/expand.rs`
+- [x] **8. `Chunk` defined its operations twice.** The inherent `ALL`, `get`,
+      `set` and `clear` repeated `Bits::ALL`, `get`, `set_top` and `clear_top`.
+      Only the `Bits` impl is left, and `__private` and the bank feed call it.
+      Measured against a snapshot of the tree before: code size, fuel, reports,
+      peak stack and formation size unchanged. `crates/outcrop/src/flags.rs`
+- [ ] ~~**9. The example's register decoders are conversions.**~~ Dropped.
+      `BaudRate::new` and `Parity::new` are the memo functions of the
+      `Option<BaudRate>` and `Option<Parity>` signals, passed to `strata!` by
+      path. `TryFrom` would add an error type, a `|r| ..try_from(r).ok()`
+      closure per signal and lose `const`. `examples/aidoo/src/modbus.rs`
+- [x] **10. Macro tests and leftovers.** `crates/outcrop-macros/src/`
+  - [x] The eight `rejects_*` tests of parse errors moved from `expand.rs` to a
+        new test module in `parse.rs`, which only parses.
+  - [x] Test router inputs written `&[u8] => f`, which expanded to `&&[u8]`, are
+        now `[u8] => f`.
+  - [x] `Memo` and `View` hold `deps: Type`; only `Shape::Derived` boxes it,
+        which is all `clippy::large_enum_variant` asks for.
+  - [x] `ToTokens for Declaration` existed only for `into_token_stream()` in
+        `lib.rs`, which now calls the plain `pub fn expand()`.
+  - Kept: `.clone()` of `private` and `chain` in `Expansion` methods, which
+    works around borrowing `&mut self`, clones two small token handles.
+
+### Lints
+
+- [x] **11. Align the lints with the plain-`pub` preference.** For all Rust
+      projects: plain `pub`, never narrowed to `pub(crate)` or `pub(super)`, and
+      `unreachable_pub`, `unnameable_types` and `redundant_pub_crate` never
+      enabled. A `pub` item that is not exported from the crate root is already
+      crate-private, so restricted visibility only adds clutter. The lint and
+      fmt baseline is the az-update workspace config of 2026-11-04, which leaves
+      those three lints out. outcrop enables all three in the root `Cargo.toml`.
+      That causes the `pub(crate)` and `pub(super)` items in
+      `crates/outcrop/src`, the `expect(unnameable_types)` on four modules in
+      `lib.rs`, `expect(unreachable_pub)` on `slot` and `read`,
+      `expect(clippy::redundant_pub_crate)` in `examples/aidoo/src/main.rs`, and
+      the inner `allow`s in `tests/common/mod.rs`. Drop the three lints, switch
+      to plain `pub` and remove those attributes. Item 2 of _Redesigns_
+      (unnameable builder indices) is unaffected: it relies on the private
+      module, not on the lint.
+
+      Done: the three lints, the `expect`s on `lib.rs`, `slot` and `read`, the
+      example's `expect` and the `unreachable_pub` allow in `tests/common` are
+      gone; `stratum.rs`, `nested.rs` and the Aidoo example use plain `pub`.
+      Exception, by choice: inherent methods on types users can reach keep
+      `pub(crate)` so they stay out of the public API: `Reading::new`,
+      `Write::apply`, `Element::report` and `Chunk::bytes_mut` (`Chunk` is
+      reachable through `__private`). `pub(crate) struct Spelled` in
+      `tests/strata.rs` stays too, as input checking that `strata!` passes
+      the visibility through. The generated code keeps its
+      `#[allow(unnameable_types, ..)]`, for user crates that enable the lint.
 
 ## API guidelines
 
@@ -365,9 +479,9 @@ Documented here so that changes keep them consistent.
    reported and cleared by `poll`.
 2. **Formation lifecycle**, seen through `Reading`: built (every bit set, memos
    stale) → fed (every memo stale) → polled (fresh). Freshness is derived from
-   whether any flag is set and whether the signal is `CACHED`, never stored. The flags take part in `Formation`'s
-   `PartialEq` and `Hash`, so formations are compared after polling them, as
-   documented on `Formation` and `strata!`.
+   whether any flag is set and whether the signal is `CACHED`, never stored. The
+   flags take part in `Formation`'s `PartialEq` and `Hash`, so formations are
+   compared after polling them, as documented on `Formation` and `strata!`.
 3. **Memo cache:** valid, stale, recomputed equal (no bit) or recomputed changed
    (bit). Equal to `f(deps)` only after a poll; `From` and `nest` set every bit,
    repairing fields written directly in the declaring module.
@@ -380,10 +494,10 @@ Documented here so that changes keep them consistent.
    flag. Fixed only inside `Formation::poll`.
 7. **Router state:** builder routers keep state in their `FnMut`; `strata!`
    routers cannot capture, so their state lives untracked in statics.
-8. **`strata!` `Default` chain:** built only when the struct declares a memo
-   or a view: one borrowed layer pushed per entry in declaration order, to
-   compute memo initial values and type-check view dependencies; the values
-   stay in their locals and move into the struct once the chain is dead.
+8. **`strata!` `Default` chain:** built only when the struct declares a memo or
+   a view: one borrowed layer pushed per entry in declaration order, to compute
+   memo initial values and type-check view dependencies; the values stay in
+   their locals and move into the struct once the chain is dead.
 9. **`strata!` cfg detection:** two shadowing `macro_rules!` give each entry a
    compiled-in or compiled-out state, feeding bit numbering and visitor bounds.
 
@@ -403,7 +517,7 @@ Documented here so that changes keep them consistent.
 - `Distinct` and `Routed` look like plain aliases of `Get` and `Feed`, but work
   around rustc#152409, where such a where-bound shadows `Strata::Flags`.
 - `slot` and `read` live once, `pub` in `stratum.rs` and re-exported by
-  `__private`, with `expect(unreachable_pub)` when the `macros` feature is off.
+  `__private`.
 - The loops in `tools/measure/workload` stay hand-written: rewriting them with
   `core::array::from_fn` could shift the baselines the workload measures.
 - The Aidoo example keeps its `From<u16>` unit impls and `bit()` matches written

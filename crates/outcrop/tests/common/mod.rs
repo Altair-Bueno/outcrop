@@ -2,10 +2,6 @@
     dead_code,
     reason = "each test crate uses only some of the shared helpers"
 )]
-#![allow(
-    unreachable_pub,
-    reason = "helpers are shared with the test crate through a private module"
-)]
 
 use core::fmt::Debug;
 

@@ -7,6 +7,7 @@ use crate::bank::Element;
 use crate::bank::Write;
 pub use crate::flags::Chunk;
 use crate::nested::Nested;
+use crate::plumbing::Bits as _;
 use crate::plumbing::ComputeImpl;
 use crate::plumbing::Distinct;
 use crate::plumbing::Routed;
@@ -65,12 +66,12 @@ pub fn is_set<const N: usize>(changed: &Chunk<N>, bit: usize) -> bool {
 }
 
 pub fn set<const N: usize>(changed: &mut Chunk<N>, bit: usize) {
-    changed.set(bit);
+    changed.set_top(bit);
 }
 
 pub fn clear<const N: usize>(changed: &mut Chunk<N>, bit: usize) {
     if cfg!(panic = "unwind") {
-        changed.clear(bit);
+        changed.clear_top(bit);
     }
 }
 
@@ -94,7 +95,7 @@ pub fn write<T: Eq + Clone, const N: usize>(
     base: usize,
     write: Write<'_, T>,
 ) {
-    write.apply(bank, |index| changed.set(base + index));
+    write.apply(bank, |index| changed.set_top(base + index));
 }
 
 pub fn report<V, T, const N: usize>(

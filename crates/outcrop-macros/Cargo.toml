@@ -19,7 +19,6 @@ syn = { workspace = true, features = [
   "parsing",
   "printing",
   "proc-macro",
-  "visit-mut",
 ] }
 
 [dev-dependencies]

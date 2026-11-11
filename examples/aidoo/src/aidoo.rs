@@ -62,7 +62,7 @@ use crate::units::Pulses;
 use crate::units::Watts;
 
 outcrop::strata! {
-    pub(crate) struct Aidoo {
+    pub struct Aidoo {
         #[strata(bank)]
         registers: [u16; 101] = [0; 101],
 

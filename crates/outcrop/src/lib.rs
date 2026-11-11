@@ -57,30 +57,14 @@
 pub mod __private;
 mod bank;
 mod compute;
-#[expect(
-    unnameable_types,
-    reason = "change flags sized by the strata, unnameable so they stay an implementation detail"
-)]
 mod flags;
 mod formation;
 #[cfg(feature = "macros")]
-#[expect(
-    unnameable_types,
-    reason = "nested structs only appear in inferred formation types"
-)]
 mod nested;
-#[expect(
-    unnameable_types,
-    reason = "builder machinery behind the sealed `Compute` and `Layered` bounds"
-)]
 mod plumbing;
 mod reading;
 mod sink;
 mod strata;
-#[expect(
-    unnameable_types,
-    reason = "strata only appear in inferred formation types, so they can change without breaking users"
-)]
 mod stratum;
 mod visit;
 

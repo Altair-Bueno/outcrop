@@ -3,7 +3,7 @@ use alloc::vec::Vec;
 
 use proc_macro2::Span;
 use proc_macro2::TokenStream;
-use quote::ToTokens;
+use quote::ToTokens as _;
 use quote::format_ident;
 use quote::quote;
 use quote::quote_spanned;
@@ -73,14 +73,8 @@ struct Expansion<'d> {
     visits: Vec<TokenStream>,
 }
 
-impl ToTokens for Declaration {
-    fn to_tokens(&self, tokens: &mut TokenStream) {
-        tokens.extend(self.expand());
-    }
-}
-
 impl Declaration {
-    fn expand(&self) -> TokenStream {
+    pub fn expand(&self) -> TokenStream {
         if let Some(error) = reject_default(&self.attrs) {
             return error.to_compile_error();
         }
@@ -603,6 +597,7 @@ impl<'d> Expansion<'d> {
             function,
             ty: pointee,
         } = router;
+        let pointee = referent(pointee);
         let ty = quote!(&#pointee);
         let view = format_ident!("__OutcropBelow{position}", span = Span::mixed_site());
         let marker = format_ident!("__OutcropRouter{position}", span = Span::mixed_site());
@@ -763,8 +758,24 @@ fn cfg_switch(
     }
 }
 
+/// `ty` as it can follow `&`: a trait object with several bounds, such as
+/// `dyn A + Send`, in parentheses.
+fn referent(ty: &Type) -> TokenStream {
+    if let Type::Group(group) = ty {
+        referent(&group.elem)
+    } else if let Type::TraitObject(object) = ty
+        && object.bounds.len() > 1
+    {
+        quote!((#ty))
+    } else {
+        ty.to_token_stream()
+    }
+}
+
 fn dependencies(deps: &Type) -> Vec<&Type> {
-    if let Type::Tuple(tuple) = deps
+    if let Type::Group(group) = deps {
+        dependencies(&group.elem)
+    } else if let Type::Tuple(tuple) = deps
         && !tuple.elems.is_empty()
     {
         tuple.elems.iter().collect()
@@ -832,19 +843,12 @@ mod tests {
     use alloc::string::ToString as _;
 
     use proc_macro2::TokenStream;
-    use quote::ToTokens as _;
     use quote::quote;
 
     use crate::Declaration;
 
     fn expand(input: TokenStream) -> syn::Result<String> {
-        Ok(syn::parse2::<Declaration>(input)?
-            .into_token_stream()
-            .to_string())
-    }
-
-    fn error(input: TokenStream) -> Option<String> {
-        expand(input).err().map(|error| error.to_string())
+        Ok(syn::parse2::<Declaration>(input)?.expand().to_string())
     }
 
     #[test]
@@ -863,6 +867,27 @@ mod tests {
     }
 
     #[test]
+    fn puts_doc_comments_on_the_field_or_else_the_function() -> syn::Result<()> {
+        let output = expand(quote!(struct S {
+            #[doc = "a"] a: A = A(0),
+            #[doc = "b"] b: B = A => f,
+            #[doc = "c"] C = A => f,
+            #[doc = "r"] [u8] => g,
+        }))?;
+        for (doc, item) in [
+            ("a", "a : A"),
+            ("b", "b : B"),
+            ("c", "fn __outcrop_view_2"),
+            ("r", "fn __outcrop_route_3"),
+        ] {
+            let doc = format!("# [doc = \"{doc}\"]");
+            assert_eq!(output.matches(&doc).count(), 1, "{doc} in {output}");
+            assert!(output.contains(&format!("{doc} {item}")), "{output}");
+        }
+        Ok(())
+    }
+
+    #[test]
     fn stores_named_signals_and_views_the_rest() -> syn::Result<()> {
         let output = expand(quote!(struct S {
             a: A = A(0),
@@ -876,21 +901,12 @@ mod tests {
     }
 
     #[test]
-    fn rejects_unnamed_inputs() {
-        let error = error(quote!(struct S { A = A(0) }));
-        assert_eq!(
-            error.as_deref(),
-            Some("inputs are stored, so they need a field name: `name: Type = initial`")
-        );
-    }
-
-    #[test]
     fn puts_fn_attributes_on_the_function_and_field_attributes_on_the_field() -> syn::Result<()> {
         let output = expand(quote!(struct S {
             a: A = A(0),
             #[strata(fn(inline), field(serde(skip)))] b: B = A => f,
             #[strata(fn(inline, cold))] C = A => f,
-            #[strata(fn(inline))] &[u8] => f,
+            #[strata(fn(inline))] [u8] => f,
         }))?;
         assert!(output.contains("# [serde (skip)] b : B"), "{output}");
         assert!(
@@ -939,15 +955,6 @@ mod tests {
     }
 
     #[test]
-    fn rejects_field_attributes_on_routers() {
-        let error = error(quote!(struct S { #[strata(field(serde(skip)))] &[u8] => f }));
-        assert_eq!(
-            error.as_deref(),
-            Some("routers have no field, so `field(..)` does not apply to them")
-        );
-    }
-
-    #[test]
     fn puts_fn_attributes_on_the_wrapper_of_a_function_path() -> syn::Result<()> {
         let output = expand(quote!(struct S { a: A = A(0), #[strata(fn(inline))] B = A => f }))?;
         assert!(
@@ -957,42 +964,6 @@ mod tests {
             "{output}"
         );
         Ok(())
-    }
-
-    #[test]
-    fn rejects_fn_attributes_on_inputs() {
-        let error = error(quote!(
-            struct S { #[strata(fn(inline))] a: A = A(0) }
-        ));
-        assert_eq!(
-            error.as_deref(),
-            Some("inputs have no function, so `fn(..)` does not apply to them")
-        );
-    }
-
-    #[test]
-    fn rejects_unknown_attribute_targets() {
-        let error = error(quote!(
-            struct S { #[strata(impl(inline))] a: A = A(0) }
-        ));
-        assert_eq!(
-            error.as_deref(),
-            Some("expected `bank`, `fn(..)` or `field(..)`")
-        );
-    }
-
-    #[test]
-    fn rejects_banks_that_are_not_inputs() {
-        for input in [
-            quote!(struct S { #[strata(bank)] a: A = B => f }),
-            quote!(struct S { #[strata(bank)] A = B => f }),
-            quote!(struct S { #[strata(bank)] [u8] => f }),
-        ] {
-            assert_eq!(
-                error(input).as_deref(),
-                Some("only inputs can be banks: `#[strata(bank)] name: [T; N] = initial`")
-            );
-        }
     }
 
     #[test]
@@ -1013,15 +984,6 @@ mod tests {
             "{output}"
         );
         Ok(())
-    }
-
-    #[test]
-    fn rejects_named_routers() {
-        let error = error(quote!(struct S { frame: &[u8] => f }));
-        assert_eq!(
-            error.as_deref(),
-            Some("routers have no field, so they cannot be named")
-        );
     }
 
     #[test]
@@ -1069,7 +1031,7 @@ mod tests {
         let stored = expand(quote!(struct S {
             a: A = A(0),
             #[strata(bank)] b: [u8; 2] = [0; 2],
-            &[u8] => f,
+            [u8] => f,
         }))?;
         assert!(!stored.contains("__outcrop_chain"), "{stored}");
         for derived in [
@@ -1099,23 +1061,13 @@ mod tests {
     fn uses_the_given_crate_path() -> syn::Result<()> {
         let output = expand(quote!(
             #[strata(crate = layers)]
-            struct S { a: A = A(0), b: B = A => f, &[u8] => g }
+            struct S { a: A = A(0), b: B = A => f, [u8] => g }
         ))?;
         assert!(output.contains("impl layers :: Strata for S"), "{output}");
         assert!(output.contains("layers :: Sink"), "{output}");
         assert!(!output.contains("outcrop ::"), "{output}");
         assert!(!output.contains("# [strata"), "{output}");
         Ok(())
-    }
-
-    #[test]
-    fn rejects_repeated_crate_options() {
-        let error = error(quote!(
-            #[strata(crate = a)]
-            #[strata(crate = b)]
-            struct S {}
-        ));
-        assert_eq!(error.as_deref(), Some("`crate` is given more than once"));
     }
 
     #[test]
@@ -1136,17 +1088,5 @@ mod tests {
         );
         assert_eq!(output.matches("# [derive (Debug)]").count(), 1, "{output}");
         Ok(())
-    }
-
-    #[test]
-    fn rejects_unknown_options() {
-        let error = error(quote!(
-            #[strata(krate = layers)]
-            struct S {}
-        ));
-        assert_eq!(
-            error.as_deref(),
-            Some("expected `crate = path::to::outcrop`")
-        );
     }
 }

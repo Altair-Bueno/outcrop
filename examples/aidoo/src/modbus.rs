@@ -3,10 +3,10 @@
 use crate::register;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct BaudRate(u32);
+pub struct BaudRate(u32);
 
 impl BaudRate {
-    pub(crate) const fn new(register: &register::BaudRate) -> Option<Self> {
+    pub const fn new(register: &register::BaudRate) -> Option<Self> {
         let rate = match register.0 {
             0 => 100,
             1 => 300,
@@ -26,14 +26,14 @@ impl BaudRate {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Parity {
+pub enum Parity {
     None,
     Odd,
     Even,
 }
 
 impl Parity {
-    pub(crate) const fn new(register: &register::Parity) -> Option<Self> {
+    pub const fn new(register: &register::Parity) -> Option<Self> {
         match register.0 {
             0 => Some(Self::None),
             1 => Some(Self::Odd),

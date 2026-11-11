@@ -48,20 +48,6 @@ impl<Tail: Bits, Top: Bits> Bits for (Tail, Top) {
 pub struct Chunk<const BYTES: usize>([u8; BYTES]);
 
 impl<const BYTES: usize> Chunk<BYTES> {
-    pub(crate) const ALL: Self = Self([u8::MAX; BYTES]);
-
-    pub(crate) fn get(&self, index: usize) -> bool {
-        self.0[index / 8].get(index % 8)
-    }
-
-    pub(crate) fn set(&mut self, index: usize) {
-        self.0[index / 8].set_top(index % 8);
-    }
-
-    pub(crate) fn clear(&mut self, index: usize) {
-        self.0[index / 8].clear_top(index % 8);
-    }
-
     pub(crate) const fn bytes_mut(&mut self) -> &mut [u8; BYTES] {
         &mut self.0
     }
@@ -78,15 +64,15 @@ impl<const BYTES: usize> Bits for Chunk<BYTES> {
     const ALL: Self = Self([u8::MAX; BYTES]);
 
     fn get(&self, index: usize) -> bool {
-        Self::get(self, index)
+        self.0[index / 8].get(index % 8)
     }
 
     fn set_top(&mut self, index: usize) {
-        self.set(index);
+        self.0[index / 8].set_top(index % 8);
     }
 
     fn clear_top(&mut self, index: usize) {
-        self.clear(index);
+        self.0[index / 8].clear_top(index % 8);
     }
 }
 

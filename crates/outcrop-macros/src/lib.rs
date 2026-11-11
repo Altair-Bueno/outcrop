@@ -6,10 +6,8 @@ extern crate alloc;
 mod expand;
 mod parse;
 
-use alloc::boxed::Box;
 use alloc::vec::Vec;
 
-use quote::ToTokens as _;
 use syn::Attribute;
 use syn::Expr;
 use syn::Ident;
@@ -59,13 +57,13 @@ struct Memo {
     field: Field,
     function: Function,
     ty: Type,
-    deps: Box<Type>,
+    deps: Type,
 }
 
 struct View {
     function: Function,
     ty: Type,
-    deps: Box<Type>,
+    deps: Type,
 }
 
 struct Router {
@@ -116,8 +114,8 @@ struct Router {
 ///
 /// - The generated `Default` checks each memo and view against the entries
 ///   declared above it, about two levels of trait resolution per entry, so a
-///   memo or view with 64 entries or more above it fails with E0275,
-///   "overflow evaluating the requirement", wherever its dependencies are.
+///   memo or view with 64 entries or more above it fails with E0275, "overflow
+///   evaluating the requirement", wherever its dependencies are.
 /// - Each entry's first change bit is a constant computed from the previous
 ///   entry's, so a declaration of more than 128 signals fails with "queries
 ///   overflow the depth limit!".
@@ -168,8 +166,9 @@ struct Router {
 /// `cfg_attr` need to compile an entry in or out. To put attributes on a
 /// single item, list them in `#[strata(field(..))]` for the field of an input
 /// or memo, or in `#[strata(fn(..))]` for the function generated from the `f`
-/// of a memo, view or router. Doc comments, derive helpers such as `serde`,
-/// and lints such as `expect` belong there:
+/// of a memo, view or router. Derive helpers such as `serde` and lints such
+/// as `expect` belong there. Doc comments go to the field of an input or
+/// memo, or else to the function of a view or router, without being listed:
 ///
 /// ```
 /// #[derive(PartialEq, Eq)]
@@ -180,8 +179,9 @@ struct Router {
 /// outcrop::strata! {
 ///     struct Probe {
 ///         kelvin: Kelvin = Kelvin(293),
+///         /// The last reading in degrees Celsius.
 ///         #[cfg(not(feature = "raw"))]
-///         #[strata(fn(inline), field(doc = "The last reading in degrees Celsius."))]
+///         #[strata(fn(inline))]
 ///         celsius: Celsius = Kelvin => |k| Celsius(i32::from(k.0) - 273),
 ///     }
 /// }
@@ -284,6 +284,6 @@ struct Router {
 #[proc_macro]
 pub fn strata(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     syn::parse_macro_input!(input as Declaration)
-        .into_token_stream()
+        .expand()
         .into()
 }

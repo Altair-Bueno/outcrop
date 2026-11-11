@@ -8,7 +8,7 @@ use core::fmt::Debug;
 
 /// Fan speeds a unit may support, as listed in [`AvailableSpeeds`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum SpeedStep {
+pub enum SpeedStep {
     Auto,
     SuperLow,
     Low,
@@ -20,7 +20,7 @@ pub(crate) enum SpeedStep {
 }
 
 impl SpeedStep {
-    pub(crate) const ALL: [Self; 8] = [
+    pub const ALL: [Self; 8] = [
         Self::Auto,
         Self::SuperLow,
         Self::Low,
@@ -31,7 +31,7 @@ impl SpeedStep {
         Self::SuperHigh,
     ];
 
-    pub(crate) const fn bit(self) -> u16 {
+    pub const fn bit(self) -> u16 {
         match self {
             Self::Auto => 0,
             Self::SuperLow => 1,
@@ -46,7 +46,7 @@ impl SpeedStep {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) struct AvailableSpeeds(u16);
+pub struct AvailableSpeeds(u16);
 
 impl Debug for AvailableSpeeds {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -65,7 +65,7 @@ impl Debug for AvailableSpeeds {
 }
 
 impl AvailableSpeeds {
-    pub(crate) const fn supports(self, step: SpeedStep) -> bool {
+    pub const fn supports(self, step: SpeedStep) -> bool {
         self.0 & 1 << step.bit() != 0
     }
 }
@@ -81,13 +81,13 @@ impl From<&register::AvailableSpeeds> for AvailableSpeeds {
     clippy::struct_excessive_bools,
     reason = "each flag is an independent bit of the register"
 )]
-pub(crate) struct AvailableLouvers {
-    pub(crate) auto_vertical: bool,
-    pub(crate) swing_vertical: bool,
-    pub(crate) swing_horizontal: bool,
-    pub(crate) swirl: bool,
-    pub(crate) vertical_positions: u8,
-    pub(crate) horizontal_positions: u8,
+pub struct AvailableLouvers {
+    pub auto_vertical: bool,
+    pub swing_vertical: bool,
+    pub swing_horizontal: bool,
+    pub swirl: bool,
+    pub vertical_positions: u8,
+    pub horizontal_positions: u8,
 }
 
 impl From<&register::AvailableLouvers> for AvailableLouvers {
@@ -106,7 +106,7 @@ impl From<&register::AvailableLouvers> for AvailableLouvers {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) struct AvailableModes(u16);
+pub struct AvailableModes(u16);
 
 impl Debug for AvailableModes {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -121,7 +121,7 @@ impl Debug for AvailableModes {
 }
 
 impl AvailableModes {
-    pub(crate) const fn supports(self, mode: Mode) -> bool {
+    pub const fn supports(self, mode: Mode) -> bool {
         self.0 & 1 << mode.bit() != 0
     }
 }
@@ -134,13 +134,13 @@ impl From<&register::AvailableModes> for AvailableModes {
 
 /// Setpoint limits of one mode, read from its maximum and minimum registers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct Limits {
+pub struct Limits {
     min: DeciCelsius,
     max: DeciCelsius,
 }
 
 impl Limits {
-    pub(crate) fn new(max: u16, min: u16) -> Self {
+    pub fn new(max: u16, min: u16) -> Self {
         Self {
             min: DeciCelsius::from(min),
             max: DeciCelsius::from(max),
@@ -149,29 +149,29 @@ impl Limits {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct CoolLimits(pub(crate) Limits);
+pub struct CoolLimits(pub Limits);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct HeatLimits(pub(crate) Limits);
+pub struct HeatLimits(pub Limits);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct AutoLimits(pub(crate) Limits);
+pub struct AutoLimits(pub Limits);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct FanLimits(pub(crate) Limits);
+pub struct FanLimits(pub Limits);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct DryLimits(pub(crate) Limits);
+pub struct DryLimits(pub Limits);
 
 /// Limits of the setpoint in the current mode, if there is one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct SetpointRange(Option<Limits>);
+pub struct SetpointRange(Option<Limits>);
 
 #[expect(
     clippy::ref_option,
     reason = "derived signals receive their dependencies by reference"
 )]
-pub(crate) fn setpoint_range(
+pub fn setpoint_range(
     mode: &Option<Mode>,
     cool: &CoolLimits,
     heat: &HeatLimits,

@@ -116,7 +116,8 @@ jobs:
           key:
             ${{ runner.os }}-${{ github.job }}-${{ needs.msrv.outputs.version }}
       - name: Check the workspace on a 32-bit target without std
-        run: cargo check --workspace --exclude aidoo --target thumbv7em-none-eabi
+        run:
+          cargo check --workspace --exclude aidoo --target thumbv7em-none-eabi
 
   rust-coverage:
     name: coverage

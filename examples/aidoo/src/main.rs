@@ -5,10 +5,6 @@
     clippy::trivially_copy_pass_by_ref,
     reason = "derived signals receive their dependencies by reference"
 )]
-#![expect(
-    clippy::redundant_pub_crate,
-    reason = "`unreachable_pub` asks for the opposite inside private modules"
-)]
 
 mod aidoo;
 mod capabilities;

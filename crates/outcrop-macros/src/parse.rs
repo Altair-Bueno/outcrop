@@ -61,10 +61,12 @@ impl Parse for Declaration {
     }
 }
 
-/// The attributes of an entry, with the `#[strata(..)]` options taken out.
+/// The attributes of an entry, with the `#[strata(..)]` options and the doc
+/// comments taken out.
 #[derive(Default)]
 struct Options {
     attrs: Vec<Attribute>,
+    docs: Vec<Meta>,
     field_attrs: Vec<Meta>,
     fn_attrs: Vec<Meta>,
     first_field: Option<Span>,
@@ -76,6 +78,10 @@ impl Parse for Options {
     fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
         let mut options = Self::default();
         for attr in input.call(Attribute::parse_outer)? {
+            if attr.path().is_ident("doc") {
+                options.docs.push(attr.meta);
+                continue;
+            }
             if !attr.path().is_ident("strata") {
                 options.attrs.push(attr);
                 continue;
@@ -108,8 +114,9 @@ impl Parse for Entry {
     fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
         let Options {
             attrs,
-            field_attrs,
-            fn_attrs,
+            docs,
+            mut field_attrs,
+            mut fn_attrs,
             first_field,
             first_fn,
             bank,
@@ -121,6 +128,11 @@ impl Parse for Entry {
         } else {
             None
         };
+        if name.is_some() {
+            field_attrs.splice(0..0, docs);
+        } else {
+            fn_attrs.splice(0..0, docs);
+        }
         let field = |name| Field {
             name,
             attrs: field_attrs,
@@ -170,14 +182,14 @@ impl Parse for Entry {
                 field: field(name),
                 function: function(f),
                 ty,
-                deps,
+                deps: *deps,
             }),
             (Shape::Derived { ty, deps, f }, None) => {
                 fieldless("views", first_field)?;
                 Kind::View(View {
                     function: function(f),
                     ty,
-                    deps,
+                    deps: *deps,
                 })
             }
             (Shape::Routed { ty, f }, None) => {
@@ -235,5 +247,107 @@ impl Parse for Shape {
             ty,
             init: input.parse()?,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use alloc::string::String;
+    use alloc::string::ToString as _;
+
+    use proc_macro2::TokenStream;
+    use quote::quote;
+
+    use crate::Declaration;
+
+    fn error(input: TokenStream) -> Option<String> {
+        syn::parse2::<Declaration>(input)
+            .err()
+            .map(|error| error.to_string())
+    }
+
+    #[test]
+    fn rejects_unnamed_inputs() {
+        let error = error(quote!(struct S { A = A(0) }));
+        assert_eq!(
+            error.as_deref(),
+            Some("inputs are stored, so they need a field name: `name: Type = initial`")
+        );
+    }
+
+    #[test]
+    fn rejects_field_attributes_on_routers() {
+        let error = error(quote!(struct S { #[strata(field(serde(skip)))] [u8] => f }));
+        assert_eq!(
+            error.as_deref(),
+            Some("routers have no field, so `field(..)` does not apply to them")
+        );
+    }
+
+    #[test]
+    fn rejects_fn_attributes_on_inputs() {
+        let error = error(quote!(
+            struct S { #[strata(fn(inline))] a: A = A(0) }
+        ));
+        assert_eq!(
+            error.as_deref(),
+            Some("inputs have no function, so `fn(..)` does not apply to them")
+        );
+    }
+
+    #[test]
+    fn rejects_unknown_attribute_targets() {
+        let error = error(quote!(
+            struct S { #[strata(impl(inline))] a: A = A(0) }
+        ));
+        assert_eq!(
+            error.as_deref(),
+            Some("expected `bank`, `fn(..)` or `field(..)`")
+        );
+    }
+
+    #[test]
+    fn rejects_banks_that_are_not_inputs() {
+        for input in [
+            quote!(struct S { #[strata(bank)] a: A = B => f }),
+            quote!(struct S { #[strata(bank)] A = B => f }),
+            quote!(struct S { #[strata(bank)] [u8] => f }),
+        ] {
+            assert_eq!(
+                error(input).as_deref(),
+                Some("only inputs can be banks: `#[strata(bank)] name: [T; N] = initial`")
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_named_routers() {
+        let error = error(quote!(struct S { frame: [u8] => f }));
+        assert_eq!(
+            error.as_deref(),
+            Some("routers have no field, so they cannot be named")
+        );
+    }
+
+    #[test]
+    fn rejects_repeated_crate_options() {
+        let error = error(quote!(
+            #[strata(crate = a)]
+            #[strata(crate = b)]
+            struct S {}
+        ));
+        assert_eq!(error.as_deref(), Some("`crate` is given more than once"));
+    }
+
+    #[test]
+    fn rejects_unknown_options() {
+        let error = error(quote!(
+            #[strata(krate = layers)]
+            struct S {}
+        ));
+        assert_eq!(
+            error.as_deref(),
+            Some("expected `crate = path::to::outcrop`")
+        );
     }
 }

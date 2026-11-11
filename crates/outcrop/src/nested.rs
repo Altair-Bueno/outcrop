@@ -14,7 +14,7 @@ use crate::strata::Strata;
 
 /// A struct declared with `strata!`, deposited as one layer of a formation.
 #[derive(Debug, Clone, Copy)]
-pub struct Nested<S>(pub(super) S);
+pub struct Nested<S>(pub S);
 
 /// Index of a signal of a nested struct in [`Select`] and [`Feed`], wrapping
 /// the index the struct finds it by.

@@ -85,7 +85,8 @@ pub struct Element<'a, T> {
 impl<'a, T> Element<'a, T> {
     /// Visits every element of `bank` whose change bit is set, the bits
     /// starting at bit `start` of `bits`, clearing each bit before visiting
-    /// its element under `panic = "unwind"`. Bytes with no bit set are skipped whole.
+    /// its element under `panic = "unwind"`. Bytes with no bit set are skipped
+    /// whole.
     pub(crate) fn report<V>(bank: &'a [T], bits: &mut [u8], start: usize, visitor: &mut V)
     where
         V: Visit<Self>,

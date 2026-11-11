@@ -392,3 +392,44 @@ fn a_panicking_visitor_leaves_the_signals_after_it_to_the_next_poll() {
     assert_eq!(poll(&mut formation), ["Heating(true)"]);
     assert_eq!(poll(&mut formation), [""; 0]);
 }
+
+#[test]
+fn clones_keep_their_own_memos() {
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    struct Name(String);
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    struct Greeting(String);
+
+    let mut formation = Formation::new()
+        .input(Name("Ada".to_owned()))
+        .memo(|n: &Name| Greeting(format!("Hello, {}", n.0)));
+    poll(&mut formation);
+    let mut clone = formation.clone();
+
+    clone.feed(Name("Grace".to_owned()));
+
+    assert_eq!(
+        poll(&mut clone),
+        [r#"Name("Grace")"#, r#"Greeting("Hello, Grace")"#]
+    );
+    assert_eq!(poll(&mut formation), [""; 0]);
+}
+
+#[test]
+fn copies_keep_their_own_memos() {
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    struct Celsius(i16);
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    struct Frost(bool);
+
+    let mut formation = Formation::new()
+        .input(Celsius(20))
+        .memo(|c: &Celsius| Frost(c.0 < 0));
+    poll(&mut formation);
+    let mut copy = formation;
+
+    copy.feed(Celsius(-5));
+
+    assert_eq!(poll(&mut copy), ["Celsius(-5)", "Frost(true)"]);
+    assert_eq!(poll(&mut formation), [""; 0]);
+}

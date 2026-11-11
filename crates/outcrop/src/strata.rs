@@ -29,9 +29,9 @@ use crate::reading::Reading;
 ///   one, and evaluates nothing.
 /// - [`Get::get`] is [`Stale`](Reading::Stale) exactly when the signal is a
 ///   memo, or is computed from one, and any bit of `Flags` is set.
-/// - [`Report::report`] visits exactly the marked signals, bottom-up, and
-///   under `panic = "unwind"` clears each bit just before visiting its signal;
-///   under `panic = "abort"` it may leave the bits for
+/// - [`Report::report`] visits exactly the marked signals, bottom-up, and under
+///   `panic = "unwind"` clears each bit just before visiting its signal; under
+///   `panic = "abort"` it may leave the bits for
 ///   [`Formation::poll`](crate::Formation::poll) to reset.
 ///
 /// An impl breaking them makes its own formations report or compute wrong

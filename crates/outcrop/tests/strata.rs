@@ -168,6 +168,78 @@ macro_rules! wrapped {
 
 wrapped!(Temperature, AntiFreeze);
 
+macro_rules! typed {
+    ($deps:ty) => {
+        outcrop::strata! {
+            struct Typed {
+                temperature: Temperature = Temperature(20),
+                setpoint: Setpoint = Setpoint(18),
+                heating: Heating = $deps => heating,
+            }
+        }
+    };
+}
+
+typed!((Temperature, Setpoint));
+
+trait Sensor {
+    fn celsius(&self) -> i16;
+}
+
+struct Probe(i16);
+
+impl Sensor for Probe {
+    fn celsius(&self) -> i16 {
+        self.0
+    }
+}
+
+outcrop::strata! {
+    struct Sensed {
+        temperature: Temperature = Temperature(20),
+        dyn Sensor + Send => |sensor, sink| sink.feed(Temperature(sensor.celsius())),
+    }
+}
+
+macro_rules! routed {
+    ($routed:ty) => {
+        outcrop::strata! {
+            struct Routed {
+                temperature: Temperature = Temperature(20),
+                $routed => |sensor, sink| sink.feed(Temperature(sensor.celsius())),
+            }
+        }
+    };
+}
+
+routed!(dyn Sensor + Send);
+
+#[deny(unused_doc_comments)]
+mod documented {
+    use super::AntiFreeze;
+    use super::Heating;
+    use super::Setpoint;
+    use super::Temperature;
+
+    outcrop::strata! {
+        pub struct Documented {
+            /// The measured temperature.
+            temperature: Temperature = Temperature(20),
+            /// The raw registers.
+            #[strata(bank)]
+            registers: [u16; 2] = [0; 2],
+            /// Whether the room needs heating.
+            heating: Heating = Temperature => |t| Heating(t.0 < 18),
+            /// Whether the pipes may freeze.
+            AntiFreeze = Temperature => |t| AntiFreeze(t.0 < 5),
+            /// The setpoint, following the temperature.
+            Setpoint = Temperature => |t| Setpoint(t.0 + 1),
+            /// Readings in tenths of a degree.
+            i16 => |value, sink| sink.feed(Temperature(*value / 10)),
+        }
+    }
+}
+
 type Celsius = Temperature;
 
 type Threshold = Setpoint;
@@ -375,6 +447,38 @@ fn routers_chain_from_bytes_to_registers() {
     );
 
     assert_eq!(poll(&mut formation), ["Register(7)", "Register(9)"]);
+}
+
+#[test]
+fn dependencies_passed_as_a_type_fragment_are_split() {
+    let mut formation = Formation::from(Typed::default());
+    poll(&mut formation);
+
+    formation.feed(Setpoint(21));
+
+    assert_eq!(poll(&mut formation), ["Setpoint(21)", "Heating(true)"]);
+}
+
+#[test]
+fn routers_take_trait_objects_with_several_bounds() {
+    let mut formation = Formation::from(Sensed::default());
+    poll(&mut formation);
+
+    let sensor: &(dyn Sensor + Send) = &Probe(7);
+    formation.feed(sensor);
+
+    assert_eq!(poll(&mut formation), ["Temperature(7)"]);
+}
+
+#[test]
+fn routers_take_trait_objects_passed_as_a_type_fragment() {
+    let mut formation = Formation::from(Routed::default());
+    poll(&mut formation);
+
+    let sensor: &(dyn Sensor + Send) = &Probe(-3);
+    formation.feed(sensor);
+
+    assert_eq!(poll(&mut formation), ["Temperature(-3)"]);
 }
 
 #[test]

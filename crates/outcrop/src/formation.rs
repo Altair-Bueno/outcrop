@@ -109,11 +109,11 @@ impl<S: Layered> Formation<S> {
     /// Deposits a bank: an array of inputs with a change bit per element,
     /// each read as the [`Slot`](crate::Slot) whose index points at it.
     ///
-    /// A bank is fed a [`Write`](crate::Write), which marks only the elements whose value
-    /// changed, so a signal depending on a slot is recomputed and reported
-    /// only when its element changed. [`poll`](Self::poll) reports every
-    /// changed element as an [`Element`](crate::Element), and the next one
-    /// reports them all.
+    /// A bank is fed a [`Write`](crate::Write), which marks only the elements
+    /// whose value changed, so a signal depending on a slot is recomputed and
+    /// reported only when its element changed. [`poll`](Self::poll) reports
+    /// every changed element as an [`Element`](crate::Element), and the next
+    /// one reports them all.
     ///
     /// The change bits are packed in `BYTES` bytes, which must be
     /// `N.div_ceil(8)` and is given explicitly, since stable Rust cannot
@@ -414,9 +414,9 @@ impl<S: Strata> Formation<S> {
     /// its dependencies changed, whether or not its own value did.
     ///
     /// Under `panic = "unwind"`, each signal is unmarked just before it is
-    /// visited: if `visitor` panics and the panic is caught, the signals it had not reached yet are
-    /// reported by the next poll; the one it panicked on is not, so a visitor
-    /// that always panics on a value cannot block the others.
+    /// visited: if `visitor` panics and the panic is caught, the signals it had
+    /// not reached yet are reported by the next poll; the one it panicked on is
+    /// not, so a visitor that always panics on a value cannot block the others.
     pub fn poll<V>(&mut self, visitor: &mut V)
     where
         S: Report<V>,

@@ -8,13 +8,13 @@ use crate::capabilities::AvailableModes;
 use crate::register;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Power {
+pub enum Power {
     Off,
     On,
 }
 
 impl Power {
-    pub(crate) const fn new(register: &register::Power) -> Option<Self> {
+    pub const fn new(register: &register::Power) -> Option<Self> {
         match register.0 {
             0 => Some(Self::Off),
             1 => Some(Self::On),
@@ -24,7 +24,7 @@ impl Power {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Mode {
+pub enum Mode {
     Auto,
     Cool,
     Heat,
@@ -33,10 +33,10 @@ pub(crate) enum Mode {
 }
 
 impl Mode {
-    pub(crate) const ALL: [Self; 5] = [Self::Auto, Self::Cool, Self::Heat, Self::Fan, Self::Dry];
+    pub const ALL: [Self; 5] = [Self::Auto, Self::Cool, Self::Heat, Self::Fan, Self::Dry];
 
     /// Position of the mode in [`AvailableModes`].
-    pub(crate) const fn bit(self) -> u16 {
+    pub const fn bit(self) -> u16 {
         match self {
             Self::Auto => 0,
             Self::Cool => 1,
@@ -47,7 +47,7 @@ impl Mode {
     }
 
     /// The current mode, if the unit lists it among its available modes.
-    pub(crate) fn new(register: &register::Mode, available: &AvailableModes) -> Option<Self> {
+    pub fn new(register: &register::Mode, available: &AvailableModes) -> Option<Self> {
         let mode = match register.0 {
             1 => Self::Auto,
             2 => Self::Cool,
@@ -61,7 +61,7 @@ impl Mode {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum FanSpeed {
+pub enum FanSpeed {
     Auto,
     Silent,
     Low,
@@ -70,7 +70,7 @@ pub(crate) enum FanSpeed {
 }
 
 impl FanSpeed {
-    pub(crate) const fn new(register: &register::FanSpeed) -> Option<Self> {
+    pub const fn new(register: &register::FanSpeed) -> Option<Self> {
         match register.0 {
             0 => Some(Self::Auto),
             25 => Some(Self::Silent),
@@ -84,10 +84,10 @@ impl FanSpeed {
 
 /// The fan speed again, encoded as a step instead of a percentage.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct NumericFanSpeed(FanSpeed);
+pub struct NumericFanSpeed(FanSpeed);
 
 impl NumericFanSpeed {
-    pub(crate) const fn new(register: &register::NumericFanSpeed) -> Option<Self> {
+    pub const fn new(register: &register::NumericFanSpeed) -> Option<Self> {
         let speed = match register.0 {
             0 => FanSpeed::Auto,
             1 => FanSpeed::Silent,
@@ -101,7 +101,7 @@ impl NumericFanSpeed {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Louver {
+pub enum Louver {
     Position(u8),
     Auto,
     Swing,
@@ -110,7 +110,7 @@ pub(crate) enum Louver {
 
 /// Four louvers, one per nibble, starting at the least significant.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct Louvers([Option<Louver>; 4]);
+pub struct Louvers([Option<Louver>; 4]);
 
 impl Louvers {
     /// Decodes every nibble of `word`, keeping the louvers `supports` accepts.
@@ -131,10 +131,10 @@ impl Louvers {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct VerticalLouvers(Louvers);
+pub struct VerticalLouvers(Louvers);
 
 impl VerticalLouvers {
-    pub(crate) fn new(register: &register::VerticalLouvers, available: &AvailableLouvers) -> Self {
+    pub fn new(register: &register::VerticalLouvers, available: &AvailableLouvers) -> Self {
         Self(Louvers::new(register.0, |louver| match louver {
             Louver::Position(_) => true,
             Louver::Auto => available.auto_vertical,
@@ -145,14 +145,11 @@ impl VerticalLouvers {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct HorizontalLouvers(Louvers);
+pub struct HorizontalLouvers(Louvers);
 
 impl HorizontalLouvers {
     /// The map has no flag for automatic horizontal louvers, so it is kept.
-    pub(crate) fn new(
-        register: &register::HorizontalLouvers,
-        available: &AvailableLouvers,
-    ) -> Self {
+    pub fn new(register: &register::HorizontalLouvers, available: &AvailableLouvers) -> Self {
         Self(Louvers::new(register.0, |louver| match louver {
             Louver::Position(_) | Louver::Auto => true,
             Louver::Swing => available.swing_horizontal,
