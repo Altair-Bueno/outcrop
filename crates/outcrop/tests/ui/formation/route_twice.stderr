@@ -1,0 +1,25 @@
+error[E0283]: type annotations needed
+ --> tests/ui/formation/route_twice.rs:4:52
+  |
+4 |     let _ = Formation::new().route(|_: &u8, _| {}).route(|_: &u8, _| {});
+  |                                                    ^^^^^ cannot infer type of the type parameter `I` declared on the method `route`
+  |
+  = note: multiple `impl`s satisfying `for<'a> (outcrop::stratum::Router<u8, {closure@$DIR/tests/ui/formation/route_twice.rs:4:58: 4:69}>, (outcrop::stratum::Router<u8, {closure@$DIR/tests/ui/formation/route_twice.rs:4:36: 4:47}>, ())): Feed<&'a u8, _>` found in the `outcrop` crate:
+          - impl<'a, In, F, Tail> Feed<&'a In, outcrop::stratum::Here> for (outcrop::stratum::Router<In, F>, Tail)
+            where for<'a, 'b, 'c> <F as FnOnce<(&'a In, &'b mut outcrop::Sink<'c, Tail>)>>::Output == (), for<'a, 'b, 'c> F: FnMut(&'a In, &'b mut outcrop::Sink<'c, Tail>), Tail: outcrop::plumbing::LayeredImpl, In: ?Sized;
+          - impl<T, I, L, Tail> Feed<T, outcrop::stratum::There<I>> for (L, Tail)
+            where L: outcrop::plumbing::Layer<Tail>, Tail: outcrop::plumbing::LayeredImpl, Tail: Feed<T, I>;
+  = note: required for `(outcrop::stratum::Router<u8, {closure@$DIR/tests/ui/formation/route_twice.rs:4:58: 4:69}>, (outcrop::stratum::Router<u8, {closure@$DIR/tests/ui/formation/route_twice.rs:4:36: 4:47}>, ()))` to implement `for<'a> outcrop::plumbing::Routed<&'a u8, _>`
+  = note: required for `(outcrop::stratum::Router<u8, {closure@$DIR/tests/ui/formation/route_twice.rs:4:58: 4:69}>, (outcrop::stratum::Router<u8, {closure@$DIR/tests/ui/formation/route_twice.rs:4:36: 4:47}>, ()))` to implement `outcrop::plumbing::Sound<_>`
+note: required by a bound in `Formation::<S>::route`
+ --> src/formation.rs
+  |
+  |     pub fn route<In: ?Sized, F, I>(self, f: F) -> Deposited<Router<In, F>, S>
+  |            ----- required by a bound in this associated function
+...
+  |         (Router<In, F>, S): Sound<I>,
+  |                             ^^^^^^^^ required by this bound in `Formation::<S>::route`
+help: consider specifying the generic arguments
+  |
+4 |     let _ = Formation::new().route(|_: &u8, _| {}).route::<u8, _, I>(|_: &u8, _| {});
+  |                                                         ++++++++++++

@@ -1,0 +1,23 @@
+error[E0283]: type annotations needed
+ --> tests/ui/formation/bank_twice.rs:6:26
+  |
+6 |         .bank::<1, _, _, _>([0_u16; 3]);
+  |          ----            ^ cannot infer type of the type parameter `I` declared on the method `bank`
+  |          |
+  |          type must be known at this point
+  |
+  = note: multiple `impl`s satisfying `for<'w> (outcrop::stratum::Bank<u16, 3, 1>, (outcrop::stratum::Bank<u16, 2, 1>, ())): Feed<outcrop::Write<'w, u16>, _>` found in the `outcrop` crate:
+          - impl<'w, T, N, BYTES, Tail> Feed<outcrop::Write<'w, T>, outcrop::stratum::Slotted> for (outcrop::stratum::Bank<T, N, BYTES>, Tail)
+            where the constant `N` has type `usize`, the constant `BYTES` has type `usize`, T: Eq, T: Clone, Tail: outcrop::plumbing::LayeredImpl;
+          - impl<T, I, L, Tail> Feed<T, outcrop::stratum::There<I>> for (L, Tail)
+            where L: outcrop::plumbing::Layer<Tail>, Tail: outcrop::plumbing::LayeredImpl, Tail: Feed<T, I>;
+  = note: required for `(outcrop::stratum::Bank<u16, 3, 1>, (outcrop::stratum::Bank<u16, 2, 1>, ()))` to implement `for<'w> outcrop::plumbing::Routed<outcrop::Write<'w, u16>, _>`
+  = note: required for `(outcrop::stratum::Bank<u16, 3, 1>, (outcrop::stratum::Bank<u16, 2, 1>, ()))` to implement `outcrop::plumbing::Sound<_>`
+note: required by a bound in `Formation::<S>::bank`
+ --> src/formation.rs
+  |
+  |     pub fn bank<const BYTES: usize, T: Eq + Clone, const N: usize, I>(
+  |            ---- required by a bound in this associated function
+...
+  |         (Bank<T, N, BYTES>, S): Sound<I>,
+  |                                 ^^^^^^^^ required by this bound in `Formation::<S>::bank`

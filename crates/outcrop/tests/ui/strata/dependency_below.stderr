@@ -1,0 +1,43 @@
+error[E0277]: `A` is not a signal declared above
+  --> tests/ui/strata/dependency_below.rs:6:1
+   |
+ 6 | / outcrop::strata! {
+ 7 | |     struct S {
+ 8 | |         b: B = A => |a| B(a.0),
+ 9 | |         a: A = A(0),
+10 | |     }
+11 | | }
+   | |_^ a signal can only depend on the inputs, memos and views declared above it
+   |
+   = help: the trait `outcrop::plumbing::Select<A, _>` is not implemented for `()`
+help: the following other types implement trait `outcrop::plumbing::Select<T, I>`
+  --> src/stratum.rs
+   |
+   |   impl<E: Settle<Tail>, Tail: LayeredImpl> Select<E::Signal, Here> for (E, Tail) {
+   |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `(E, Tail)` implements `outcrop::plumbing::Select<<E as outcrop::plumbing::Value>::Signal, outcrop::stratum::Here>`
+...
+   | / impl<E, const N: usize, const BYTES: usize, A, Tail> Select<E, Slotted>
+   | |     for (Bank<E::Item, N, BYTES, A>, Tail)
+   | | where
+   | |     E: Slot,
+   | |     A: Borrow<[E::Item; N]>,
+   | |     Tail: LayeredImpl,
+   | |______________________^ `(outcrop::stratum::Bank<<E as Slot>::Item, N, BYTES, A>, Tail)` implements `outcrop::plumbing::Select<E, outcrop::stratum::Slotted>`
+...
+   |   impl<T, I, E, Tail: Select<T, I>> Select<T, There<I>> for (E, Tail) {
+   |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `(E, Tail)` implements `outcrop::plumbing::Select<T, outcrop::stratum::There<I>>`
+   |
+  ::: src/nested.rs
+   |
+   | / impl<T, I, S, Tail, const N: usize> Select<T, Within<I>> for (Nested<S>, Tail)
+   | | where
+   | |     S: Signal<T, I, Flags = Chunk<N>>,
+   | |     Tail: LayeredImpl,
+   | |______________________^ `(outcrop::nested::Nested<S>, Tail)` implements `outcrop::plumbing::Select<T, outcrop::nested::Within<I>>`
+   = note: required for `for<'a> fn(&'a A) -> B {__outcrop_memo_0}` to implement `outcrop::plumbing::ComputeImpl<(), (for<'a> fn(&'a A) -> B, (_,))>`
+note: required by a bound in `outcrop::__private::compute`
+  --> src/__private.rs
+   |
+   | pub fn compute<F: ComputeImpl<C, M>, C, M>(f: &F, chain: &C) -> F::Output {
+   |                   ^^^^^^^^^^^^^^^^^ required by this bound in `compute`
+   = note: this error originates in the macro `outcrop::strata` (in Nightly builds, run with -Z macro-backtrace for more info)

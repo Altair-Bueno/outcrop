@@ -1,0 +1,19 @@
+error[E0277]: `for<'a, 'b, 'c, 'd, 'e, 'f, 'g, 'h, 'i> fn(&'a u8, &'b u16, &'c u32, &'d u64, &'e u128, &'f i8, &'g i16, &'h i32, &'i i64) -> Sum {__outcrop_memo_9}` cannot derive a signal from the strata beneath it
+  --> tests/ui/strata/nine_dependencies.rs:4:1
+   |
+ 4 | / outcrop::strata! {
+ 5 | |     struct S {
+ 6 | |         a: u8 = 0, b: u16 = 0, c: u32 = 0, d: u64 = 0, e: u128 = 0,
+ 7 | |         f: i8 = 0, g: i16 = 0, h: i32 = 0, i: i64 = 0,
+...  |
+11 | | }
+   | |_^ not a function of signals already in the formation
+   |
+   = help: the trait `outcrop::plumbing::ComputeImpl<_, _>` is not implemented for fn item `for<'a, 'b, 'c, 'd, 'e, 'f, 'g, 'h, 'i> fn(&'a u8, &'b u16, &'c u32, &'d u64, &'e u128, &'f i8, &'g i16, &'h i32, &'i i64) -> Sum {__outcrop_memo_9}`
+   = note: every argument must be a reference `&T` to a distinct signal deposited earlier with `input`, `memo` or `view`, with at most eight arguments
+note: required by a bound in `outcrop::__private::compute`
+  --> src/__private.rs
+   |
+   | pub fn compute<F: ComputeImpl<C, M>, C, M>(f: &F, chain: &C) -> F::Output {
+   |                   ^^^^^^^^^^^^^^^^^ required by this bound in `compute`
+   = note: this error originates in the macro `outcrop::strata` (in Nightly builds, run with -Z macro-backtrace for more info)

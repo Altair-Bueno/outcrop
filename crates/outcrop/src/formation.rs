@@ -31,53 +31,18 @@ type Deposited<E, S> = Formation<(E, S)>;
 /// written. Every signal has a value from the moment it is declared, and the
 /// formation tracks changes in one bit per signal, sized from its strata.
 ///
-/// Depending on a signal the formation does not contain is a compile-time
-/// error:
+/// Depending on a signal the formation does not contain, or feeding a memo or
+/// a view, is a compile-time error. Every signal has its own type, so
+/// declaring or routing a type twice is rejected too.
 ///
-/// ```compile_fail,E0277
-/// # use outcrop::Formation;
-/// #[derive(PartialEq, Eq)]
-/// struct A(u8);
-/// #[derive(PartialEq, Eq)]
-/// struct B(u8);
-/// let formation = Formation::new().memo(|a: &A| B(a.0));
-/// ```
-///
-/// And feeding a memo or a view:
-///
-/// ```compile_fail,E0277
-/// # use outcrop::Formation;
-/// #[derive(PartialEq, Eq)]
-/// struct A(u8);
-/// #[derive(PartialEq, Eq)]
-/// struct B(u8);
-/// let mut formation = Formation::new().input(A(0)).view(|a: &A| B(a.0));
-/// formation.feed(B(1));
-/// ```
-///
-/// Every signal has its own type, so declaring a type twice is rejected:
-///
-/// ```compile_fail
-/// # use outcrop::Formation;
-/// #[derive(PartialEq, Eq)]
-/// struct A(u8);
-/// let formation = Formation::new().input(A(0)).input(A(1));
-/// ```
-///
-/// And so is routing a type twice:
-///
-/// ```compile_fail
-/// # use outcrop::Formation;
-/// let formation = Formation::new().route(|_: &u8, _| {}).route(|_: &u8, _| {});
-/// ```
-///
-/// Finding a signal by its type takes one level of trait resolution per
-/// signal above it, so a formation of around 120 signals or more exceeds the
-/// compiler's default recursion limit of 128. The compiler reports it as
-/// E0275, "overflow evaluating the requirement", and newer compilers already
-/// warn that exceeding it will become a hard error. Raise the limit in the
-/// crate that builds the formation, with `#![recursion_limit = "256"]`.
-/// `strata!` is subject to the same limit.
+/// Each layer is checked against every layer beneath it, about two levels of
+/// trait resolution per layer, so a formation of 64 layers or more exceeds
+/// the compiler's default recursion limit of 128, and one of 63 can when its
+/// top layer is a memo or view. The compiler reports E0275, "overflow
+/// evaluating the requirement".
+/// Raise the limit in the crate that builds the formation, with
+/// `#![recursion_limit = "256"]`. A nested `strata!` struct counts as one
+/// layer; the struct itself has limits of its own, listed on `strata!`.
 ///
 /// Two formations are equal, and hash alike, when their signals hold equal
 /// values and the same changes await the next [`poll`](Self::poll). Until
@@ -129,47 +94,10 @@ impl<S: Layered> Formation<S> {
     /// NaN, would be reported as changed every time. Wrap such values in a type
     /// whose `Eq` compares them by their bits, for instance.
     ///
-    /// ```compile_fail,E0277
-    /// # use outcrop::Formation;
-    /// let formation = Formation::new().input(0.5_f32);
-    /// ```
-    ///
-    /// Every signal of a formation has a distinct type:
-    ///
-    /// ```
-    /// # use outcrop::Formation;
-    /// let formation = Formation::new().input(0_u8).input(1_u16);
-    /// ```
-    ///
-    /// ```compile_fail
-    /// # use outcrop::Formation;
-    /// let formation = Formation::new().input(0_u8).input(1_u8);
-    /// ```
-    ///
-    /// An input cannot share its type with a router beneath it either, since
-    /// feeding that type could not tell them apart:
-    ///
-    /// ```
-    /// # use outcrop::Formation;
-    /// let formation = Formation::new()
-    ///     .route(|_: &u8, _| {})
-    ///     .input::<&'static u16, _>(&0);
-    /// ```
-    ///
-    /// ```compile_fail
-    /// # use outcrop::Formation;
-    /// let formation = Formation::new()
-    ///     .route(|_: &u8, _| {})
-    ///     .input::<&'static u8, _>(&0);
-    /// ```
-    ///
-    /// The indices that tell two such layers apart cannot be named, so the
-    /// check cannot be bypassed by spelling one out:
-    ///
-    /// ```compile_fail
-    /// # use outcrop::Formation;
-    /// let formation = Formation::new().input(0_u8).input::<u8, ((), ())>(1);
-    /// ```
+    /// Every signal of a formation has a distinct type, and an input cannot
+    /// share its type with a router beneath it either, since feeding that type
+    /// could not tell them apart. The indices that tell layers apart cannot
+    /// be named, so the check cannot be bypassed by spelling one out.
     #[must_use]
     pub fn input<T: Eq, I>(self, initial: T) -> Deposited<Input<T>, S>
     where
@@ -232,16 +160,7 @@ impl<S: Layered> Formation<S> {
     /// of the same type as another signal is only rejected where it is read.
     ///
     /// Two banks of the same item type are rejected, since a `Write` could
-    /// not tell them apart:
-    ///
-    /// ```compile_fail
-    /// # use outcrop::Formation;
-    /// let formation = Formation::new()
-    ///     .bank::<1, _, _, _>([0_u16; 2])
-    ///     .bank::<1, _, _, _>([0_u16; 3]);
-    /// ```
-    ///
-    /// And so is a byte count other than `N.div_ceil(8)`:
+    /// not tell them apart, and so is a byte count other than `N.div_ceil(8)`:
     ///
     /// ```compile_fail,E0080
     /// # use outcrop::Formation;
@@ -348,18 +267,7 @@ impl<S: Layered> Formation<S> {
     /// The routed value is not stored, so borrowed data such as byte slices
     /// can be fed, and several signals can be produced from a single feed.
     ///
-    /// A router can only feed what lies beneath it:
-    ///
-    /// ```compile_fail,E0277
-    /// # use outcrop::Formation;
-    /// #[derive(PartialEq, Eq)]
-    /// struct A(u8);
-    /// #[derive(PartialEq, Eq)]
-    /// struct B(u8);
-    /// let formation = Formation::new()
-    ///     .input(A(0))
-    ///     .route(|a: &u8, out| out.feed(B(*a)));
-    /// ```
+    /// A router can only feed what lies beneath it.
     #[must_use]
     pub fn route<In: ?Sized, F, I>(self, f: F) -> Deposited<Router<In, F>, S>
     where
@@ -416,23 +324,7 @@ impl<S: Layered> Formation<S> {
     /// ```
     ///
     /// So nesting a struct that declares a type the formation already holds
-    /// is rejected, as is nesting the same struct twice:
-    ///
-    /// ```compile_fail
-    /// # use outcrop::Formation;
-    /// #[derive(PartialEq, Eq)]
-    /// struct Kelvin(u16);
-    ///
-    /// outcrop::strata! {
-    ///     struct Probe {
-    ///         kelvin: Kelvin = Kelvin(293),
-    ///     }
-    /// }
-    ///
-    /// let formation = Formation::new()
-    ///     .input(Kelvin(0))
-    ///     .nest(Probe::default());
-    /// ```
+    /// is rejected, as is nesting the same struct twice.
     #[cfg(feature = "macros")]
     #[must_use]
     pub fn nest<N, I>(self, strata: N) -> Deposited<Nested<N>, S>

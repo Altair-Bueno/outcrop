@@ -125,92 +125,15 @@ struct Router {
 /// Raise the limit in the crate that declares the struct, with
 /// `#![recursion_limit = "256"]`.
 ///
-/// A signal can only depend on signals declared above it:
+/// A signal can only depend on signals declared above it. Every signal has its
+/// own type, so declaring a type twice is rejected, however it is spelled,
+/// and so is routing a type twice, an input of a type a router is also fed,
+/// in either order, two banks of the same item type, which a `Write` could
+/// not tell apart, and a memo or view of more than eight dependencies. Inputs
+/// and memos must implement `Eq`, as with `Formation`.
 ///
-/// ```compile_fail,E0277
-/// #[derive(PartialEq, Eq)]
-/// struct A(u8);
-/// #[derive(PartialEq, Eq)]
-/// struct B(u8);
-///
-/// outcrop::strata! {
-///     struct S {
-///         b: B = A => |a| B(a.0),
-///         a: A = A(0),
-///     }
-/// }
-/// ```
-///
-/// Every signal has its own type, so declaring a type twice is rejected,
-/// however it is spelled:
-///
-/// ```compile_fail
-/// #[derive(PartialEq, Eq)]
-/// struct A(u8);
-/// type Alias = A;
-///
-/// outcrop::strata! {
-///     struct S {
-///         a: A = A(0),
-///         alias: Alias = A(1),
-///     }
-/// }
-/// ```
-///
-/// And so is routing a type twice:
-///
-/// ```compile_fail
-/// outcrop::strata! {
-///     struct S {
-///         [u8] => |_, _| {},
-///         [u8] => |_, _| {},
-///     }
-/// }
-/// ```
-///
-/// As is an input of a type a router is also fed, in either order:
-///
-/// ```compile_fail
-/// outcrop::strata! {
-///     struct S {
-///         u8 => |_, _| {},
-///         value: &'static u8 = &0,
-///     }
-/// }
-/// ```
-///
-/// As are two banks of the same item type, which a `Write` could not tell
-/// apart:
-///
-/// ```compile_fail
-/// outcrop::strata! {
-///     struct S {
-///         #[strata(bank)]
-///         a: [u16; 2] = [0; 2],
-///         #[strata(bank)]
-///         b: [u16; 3] = [0; 3],
-///     }
-/// }
-/// ```
-///
-/// As is a memo or view of more than eight dependencies:
-///
-/// ```compile_fail,E0277
-/// #[derive(PartialEq, Eq)]
-/// struct Sum(u8);
-///
-/// outcrop::strata! {
-///     struct S {
-///         a: u8 = 0, b: u16 = 0, c: u32 = 0, d: u64 = 0, e: u128 = 0,
-///         f: i8 = 0, g: i16 = 0, h: i32 = 0, i: i64 = 0,
-///         sum: Sum = (u8, u16, u32, u64, u128, i8, i16, i32, i64)
-///             => |_, _, _, _, _, _, _, _, _| Sum(0),
-///     }
-/// }
-/// ```
-///
-/// And so is a slot past the end of its bank, once compiled with `cargo build`
-/// rather than `cargo check`:
+/// A slot past the end of its bank is rejected too, once compiled with
+/// `cargo build` rather than `cargo check`:
 ///
 /// ```compile_fail,E0080
 /// # use outcrop::{Formation, Slot};
@@ -238,16 +161,6 @@ struct Router {
 /// }
 ///
 /// Formation::from(S::default()).poll(&mut ());
-/// ```
-///
-/// Inputs and memos must implement `Eq`, as with `Formation`:
-///
-/// ```compile_fail,E0277
-/// outcrop::strata! {
-///     struct S {
-///         ratio: f32 = 0.5,
-///     }
-/// }
 /// ```
 ///
 /// Attributes written directly on an entry apply to the whole entry: they are

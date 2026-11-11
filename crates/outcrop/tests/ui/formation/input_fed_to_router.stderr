@@ -1,0 +1,23 @@
+error[E0283]: type annotations needed
+ --> tests/ui/formation/input_fed_to_router.rs:6:31
+  |
+6 |         .input::<&'static u8, _>(&0);
+  |          -----                ^ cannot infer type of the type parameter `I` declared on the method `input`
+  |          |
+  |          type must be known at this point
+  |
+  = note: multiple `impl`s satisfying `(outcrop::stratum::Input<&'static u8>, (outcrop::stratum::Router<u8, {closure@$DIR/tests/ui/formation/input_fed_to_router.rs:5:16: 5:27}>, ())): Feed<&'static u8, _>` found in the `outcrop` crate:
+          - impl<T, I, L, Tail> Feed<T, outcrop::stratum::There<I>> for (L, Tail)
+            where L: outcrop::plumbing::Layer<Tail>, Tail: outcrop::plumbing::LayeredImpl, Tail: Feed<T, I>;
+          - impl<T, Tail> Feed<T, outcrop::stratum::Here> for (outcrop::stratum::Input<T>, Tail)
+            where T: Eq, Tail: outcrop::plumbing::LayeredImpl;
+  = note: required for `(outcrop::stratum::Input<&'static u8>, (outcrop::stratum::Router<u8, {closure@$DIR/tests/ui/formation/input_fed_to_router.rs:5:16: 5:27}>, ()))` to implement `outcrop::plumbing::Routed<&'static u8, _>`
+  = note: required for `(outcrop::stratum::Input<&'static u8>, (outcrop::stratum::Router<u8, {closure@$DIR/tests/ui/formation/input_fed_to_router.rs:5:16: 5:27}>, ()))` to implement `outcrop::plumbing::Sound<(outcrop::stratum::Here, _)>`
+note: required by a bound in `Formation::<S>::input`
+ --> src/formation.rs
+  |
+  |     pub fn input<T: Eq, I>(self, initial: T) -> Deposited<Input<T>, S>
+  |            ----- required by a bound in this associated function
+  |     where
+  |         (Input<T>, S): Sound<I>,
+  |                        ^^^^^^^^ required by this bound in `Formation::<S>::input`

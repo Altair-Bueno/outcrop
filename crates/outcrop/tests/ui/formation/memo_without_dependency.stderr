@@ -1,0 +1,24 @@
+error[E0277]: `{closure@$DIR/tests/ui/formation/memo_without_dependency.rs:9:35: 9:42}` cannot derive a signal from the strata beneath it
+ --> tests/ui/formation/memo_without_dependency.rs:9:30
+  |
+9 |     let _ = Formation::new().memo(|a: &A| B(a.0));
+  |                              ^^^^ not a function of signals already in the formation
+  |
+  = help: the trait `outcrop::plumbing::ComputeImpl<(), _>` is not implemented for closure `{closure@$DIR/tests/ui/formation/memo_without_dependency.rs:9:35: 9:42}`
+  = note: every argument must be a reference `&T` to a distinct signal deposited earlier with `input`, `memo` or `view`, with at most eight arguments
+help: the following other types implement trait `Strata`
+ --> src/stratum.rs
+  |
+  | impl Strata for () {
+  | ^^^^^^^^^^^^^^^^^^ `()`
+...
+  | impl<L: Layer<Tail>, Tail: LayeredImpl> Strata for (L, Tail) {
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `(L, Tail)`
+  = note: required for `outcrop::stratum::Memo<{closure@$DIR/tests/ui/formation/memo_without_dependency.rs:9:35: 9:42}, _, _>` to implement `outcrop::plumbing::Settle<()>`
+  = note: required for `outcrop::stratum::Memo<{closure@$DIR/tests/ui/formation/memo_without_dependency.rs:9:35: 9:42}, _, _>` to implement `outcrop::plumbing::Layer<()>`
+  = note: required for `(outcrop::stratum::Memo<{closure@$DIR/tests/ui/formation/memo_without_dependency.rs:9:35: 9:42}, _, _>, ())` to implement `Strata`
+note: required by a bound in `Formation`
+ --> src/formation.rs
+  |
+  | pub struct Formation<S: Strata = ()> {
+  |                         ^^^^^^ required by this bound in `Formation`

@@ -1,0 +1,69 @@
+error[E0277]: the trait bound `(outcrop::stratum::Input<u8>, (outcrop::stratum::Input<u8>, ())): outcrop::plumbing::Sound<((), ())>` is not satisfied
+ --> tests/ui/formation/spelled_index.rs:4:64
+  |
+4 |     let _ = Formation::new().input(0_u8).input::<u8, ((), ())>(1);
+  |                                          -----                 ^ the trait `Feed<u8, ()>` is not implemented for `(outcrop::stratum::Input<u8>, (outcrop::stratum::Input<u8>, ()))`
+  |                                          |
+  |                                          required by a bound introduced by this call
+  |
+  = help: the following other types implement trait `Feed<T, I>`:
+            `()` implements `Feed<T, Infallible>`
+            `(L, Tail)` implements `Feed<T, outcrop::stratum::There<I>>`
+            `(outcrop::nested::Nested<S>, Tail)` implements `Feed<T, outcrop::nested::Within<I>>`
+            `(outcrop::stratum::Bank<T, N, BYTES>, Tail)` implements `Feed<outcrop::Write<'_, T>, outcrop::stratum::Slotted>`
+            `(outcrop::stratum::Input<T>, Tail)` implements `Feed<T, outcrop::stratum::Here>`
+            `(outcrop::stratum::Router<In, F>, Tail)` implements `Feed<&In, outcrop::stratum::Here>`
+  = note: required for `(outcrop::stratum::Input<u8>, (outcrop::stratum::Input<u8>, ()))` to implement `outcrop::plumbing::Routed<u8, ()>`
+  = note: required for `(outcrop::stratum::Input<u8>, (outcrop::stratum::Input<u8>, ()))` to implement `outcrop::plumbing::Sound<((), ())>`
+note: required by a bound in `Formation::<S>::input`
+ --> src/formation.rs
+  |
+  |     pub fn input<T: Eq, I>(self, initial: T) -> Deposited<Input<T>, S>
+  |            ----- required by a bound in this associated function
+  |     where
+  |         (Input<T>, S): Sound<I>,
+  |                        ^^^^^^^^ required by this bound in `Formation::<S>::input`
+
+error[E0277]: the trait bound `(outcrop::stratum::Input<u8>, (outcrop::stratum::Input<u8>, ())): outcrop::plumbing::Sound<((), ())>` is not satisfied
+ --> tests/ui/formation/spelled_index.rs:4:64
+  |
+4 |     let _ = Formation::new().input(0_u8).input::<u8, ((), ())>(1);
+  |                                          -----                 ^ the trait `outcrop::plumbing::Select<u8, ()>` is not implemented for `(outcrop::stratum::Input<u8>, (outcrop::stratum::Input<u8>, ()))`
+  |                                          |
+  |                                          required by a bound introduced by this call
+  |
+help: the following other types implement trait `outcrop::plumbing::Select<T, I>`
+ --> src/stratum.rs
+  |
+  |   impl<E: Settle<Tail>, Tail: LayeredImpl> Select<E::Signal, Here> for (E, Tail) {
+  |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `(E, Tail)` implements `outcrop::plumbing::Select<<E as outcrop::plumbing::Value>::Signal, outcrop::stratum::Here>`
+...
+  | / impl<E, const N: usize, const BYTES: usize, A, Tail> Select<E, Slotted>
+  | |     for (Bank<E::Item, N, BYTES, A>, Tail)
+  | | where
+  | |     E: Slot,
+  | |     A: Borrow<[E::Item; N]>,
+  | |     Tail: LayeredImpl,
+  | |______________________^ `(outcrop::stratum::Bank<<E as Slot>::Item, N, BYTES, A>, Tail)` implements `outcrop::plumbing::Select<E, outcrop::stratum::Slotted>`
+...
+  |   impl<T, I, E, Tail: Select<T, I>> Select<T, There<I>> for (E, Tail) {
+  |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `(E, Tail)` implements `outcrop::plumbing::Select<T, outcrop::stratum::There<I>>`
+  |
+ ::: src/nested.rs
+  |
+  | / impl<T, I, S, Tail, const N: usize> Select<T, Within<I>> for (Nested<S>, Tail)
+  | | where
+  | |     S: Signal<T, I, Flags = Chunk<N>>,
+  | |     Tail: LayeredImpl,
+  | |______________________^ `(outcrop::nested::Nested<S>, Tail)` implements `outcrop::plumbing::Select<T, outcrop::nested::Within<I>>`
+  = note: required for `(outcrop::stratum::Input<u8>, (outcrop::stratum::Input<u8>, ()))` to implement `Get<u8, ()>`
+  = note: required for `(outcrop::stratum::Input<u8>, (outcrop::stratum::Input<u8>, ()))` to implement `outcrop::plumbing::Distinct<u8, ()>`
+  = note: required for `(outcrop::stratum::Input<u8>, (outcrop::stratum::Input<u8>, ()))` to implement `outcrop::plumbing::Sound<((), ())>`
+note: required by a bound in `Formation::<S>::input`
+ --> src/formation.rs
+  |
+  |     pub fn input<T: Eq, I>(self, initial: T) -> Deposited<Input<T>, S>
+  |            ----- required by a bound in this associated function
+  |     where
+  |         (Input<T>, S): Sound<I>,
+  |                        ^^^^^^^^ required by this bound in `Formation::<S>::input`

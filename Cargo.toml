@@ -15,6 +15,7 @@ outcrop-macros = { path = "crates/outcrop-macros", default-features = false }
 proc-macro2 = { version = "1.0.107", default-features = false }
 quote = { version = "1.0.47", default-features = false }
 syn = { version = "3.0.9", default-features = false }
+trybuild = { version = "1.0.122", default-features = false }
 
 [workspace.lints.rust]
 unsafe_code = "warn"

@@ -1,0 +1,56 @@
+error[E0283]: type annotations needed
+ --> tests/ui/formation/input_twice.rs:4:42
+  |
+4 |     let _ = Formation::new().input(0_u8).input(1_u8);
+  |                                          ^^^^^ ---- type must be known at this point
+  |                                          |
+  |                                          cannot infer type of the type parameter `I` declared on the method `input`
+  |
+  = note: multiple `impl`s satisfying `(outcrop::stratum::Input<u8>, (outcrop::stratum::Input<u8>, ())): Feed<u8, _>` found in the `outcrop` crate:
+          - impl<T, I, L, Tail> Feed<T, outcrop::stratum::There<I>> for (L, Tail)
+            where L: outcrop::plumbing::Layer<Tail>, Tail: outcrop::plumbing::LayeredImpl, Tail: Feed<T, I>;
+          - impl<T, Tail> Feed<T, outcrop::stratum::Here> for (outcrop::stratum::Input<T>, Tail)
+            where T: Eq, Tail: outcrop::plumbing::LayeredImpl;
+  = note: required for `(outcrop::stratum::Input<u8>, (outcrop::stratum::Input<u8>, ()))` to implement `outcrop::plumbing::Routed<u8, _>`
+  = note: required for `(outcrop::stratum::Input<u8>, (outcrop::stratum::Input<u8>, ()))` to implement `outcrop::plumbing::Sound<(_, _)>`
+note: required by a bound in `Formation::<S>::input`
+ --> src/formation.rs
+  |
+  |     pub fn input<T: Eq, I>(self, initial: T) -> Deposited<Input<T>, S>
+  |            ----- required by a bound in this associated function
+  |     where
+  |         (Input<T>, S): Sound<I>,
+  |                        ^^^^^^^^ required by this bound in `Formation::<S>::input`
+help: consider specifying the generic arguments
+  |
+4 |     let _ = Formation::new().input(0_u8).input::<u8, (I, J)>(1_u8);
+  |                                               ++++++++++++++
+
+error[E0283]: type annotations needed
+ --> tests/ui/formation/input_twice.rs:4:42
+  |
+4 |     let _ = Formation::new().input(0_u8).input(1_u8);
+  |                                          ^^^^^ ---- type must be known at this point
+  |                                          |
+  |                                          cannot infer type of the type parameter `I` declared on the method `input`
+  |
+  = note: multiple `impl`s satisfying `(outcrop::stratum::Input<u8>, (outcrop::stratum::Input<u8>, ())): outcrop::plumbing::Select<u8, _>` found in the `outcrop` crate:
+          - impl<E, Tail> outcrop::plumbing::Select<<E as outcrop::plumbing::Value>::Signal, outcrop::stratum::Here> for (E, Tail)
+            where E: outcrop::plumbing::Settle<Tail>, Tail: outcrop::plumbing::LayeredImpl;
+          - impl<T, I, E, Tail> outcrop::plumbing::Select<T, outcrop::stratum::There<I>> for (E, Tail)
+            where Tail: outcrop::plumbing::Select<T, I>;
+  = note: required for `(outcrop::stratum::Input<u8>, (outcrop::stratum::Input<u8>, ()))` to implement `Get<u8, _>`
+  = note: required for `(outcrop::stratum::Input<u8>, (outcrop::stratum::Input<u8>, ()))` to implement `outcrop::plumbing::Distinct<u8, _>`
+  = note: required for `(outcrop::stratum::Input<u8>, (outcrop::stratum::Input<u8>, ()))` to implement `outcrop::plumbing::Sound<(_, _)>`
+note: required by a bound in `Formation::<S>::input`
+ --> src/formation.rs
+  |
+  |     pub fn input<T: Eq, I>(self, initial: T) -> Deposited<Input<T>, S>
+  |            ----- required by a bound in this associated function
+  |     where
+  |         (Input<T>, S): Sound<I>,
+  |                        ^^^^^^^^ required by this bound in `Formation::<S>::input`
+help: consider specifying the generic arguments
+  |
+4 |     let _ = Formation::new().input(0_u8).input::<u8, (I, J)>(1_u8);
+  |                                               ++++++++++++++

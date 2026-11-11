@@ -1,0 +1,74 @@
+error[E0283]: type annotations needed
+  --> tests/ui/strata/nest_held_type.rs:15:10
+   |
+15 |         .nest(Probe::default());
+   |          ^^^^ cannot infer type of the type parameter `I` declared on the method `nest`
+   |
+   = note: multiple `impl`s satisfying `(outcrop::nested::Nested<Probe>, (outcrop::stratum::Input<Kelvin>, ())): Feed<Kelvin, _>` found in the `outcrop` crate:
+           - impl<T, I, L, Tail> Feed<T, outcrop::stratum::There<I>> for (L, Tail)
+             where L: outcrop::plumbing::Layer<Tail>, Tail: outcrop::plumbing::LayeredImpl, Tail: Feed<T, I>;
+           - impl<T, I, S, Tail> Feed<T, outcrop::nested::Within<I>> for (outcrop::nested::Nested<S>, Tail)
+             where S: Feed<T, I>, Tail: outcrop::plumbing::LayeredImpl, (<Tail as Strata>::Flags, <S as Strata>::Flags): outcrop::plumbing::Bits, (<Tail as Strata>::Flags, <S as Strata>::Flags): ?Sized;
+   = note: required for `(outcrop::nested::Nested<Probe>, (outcrop::stratum::Input<Kelvin>, ()))` to implement `outcrop::plumbing::Routed<Kelvin, _>`
+   = note: required for `outcrop::__private::Feeds<(outcrop::nested::Nested<Probe>, (outcrop::stratum::Input<Kelvin>, ())), Kelvin, _>` to implement `outcrop::__private::Holds`
+note: required for `Probe` to implement `outcrop::__private::Nestable<(outcrop::stratum::Input<Kelvin>, ()), (_, _)>`
+  --> tests/ui/strata/nest_held_type.rs:6:1
+   |
+ 6 | / outcrop::strata! {
+ 7 | |     struct Probe {
+   | |            ^^^^^
+ 8 | |         kelvin: Kelvin = Kelvin(293),
+ 9 | |     }
+10 | | }
+   | |_^
+note: required by a bound in `Formation::<S>::nest`
+  --> src/formation.rs
+   |
+   |     pub fn nest<N, I>(self, strata: N) -> Deposited<Nested<N>, S>
+   |            ---- required by a bound in this associated function
+   |     where
+   |         N: Strata + Nestable<S, I>,
+   |                     ^^^^^^^^^^^^^^ required by this bound in `Formation::<S>::nest`
+   = note: this error originates in the macro `outcrop::strata` (in Nightly builds, run with -Z macro-backtrace for more info)
+help: consider specifying the generic arguments
+   |
+15 |         .nest::<Probe, (__OutcropN0, __OutcropN1)>(Probe::default());
+   |              +++++++++++++++++++++++++++++++++++++
+
+error[E0283]: type annotations needed
+  --> tests/ui/strata/nest_held_type.rs:15:10
+   |
+15 |         .nest(Probe::default());
+   |          ^^^^ cannot infer type of the type parameter `I` declared on the method `nest`
+   |
+   = note: multiple `impl`s satisfying `(outcrop::nested::Nested<Probe>, (outcrop::stratum::Input<Kelvin>, ())): outcrop::plumbing::Select<Kelvin, _>` found in the `outcrop` crate:
+           - impl<T, I, E, Tail> outcrop::plumbing::Select<T, outcrop::stratum::There<I>> for (E, Tail)
+             where Tail: outcrop::plumbing::Select<T, I>;
+           - impl<T, I, S, Tail, N> outcrop::plumbing::Select<T, outcrop::nested::Within<I>> for (outcrop::nested::Nested<S>, Tail)
+             where <S as Strata>::Flags == outcrop::__private::Chunk<N>, the constant `N` has type `usize`, S: outcrop::__private::Signal<T, I>, Tail: outcrop::plumbing::LayeredImpl;
+   = note: required for `(outcrop::nested::Nested<Probe>, (outcrop::stratum::Input<Kelvin>, ()))` to implement `Get<Kelvin, _>`
+   = note: required for `(outcrop::nested::Nested<Probe>, (outcrop::stratum::Input<Kelvin>, ()))` to implement `outcrop::plumbing::Distinct<Kelvin, _>`
+   = note: required for `outcrop::__private::Signals<(outcrop::nested::Nested<Probe>, (outcrop::stratum::Input<Kelvin>, ())), Kelvin, _>` to implement `outcrop::__private::Holds`
+note: required for `Probe` to implement `outcrop::__private::Nestable<(outcrop::stratum::Input<Kelvin>, ()), (_, _)>`
+  --> tests/ui/strata/nest_held_type.rs:6:1
+   |
+ 6 | / outcrop::strata! {
+ 7 | |     struct Probe {
+   | |            ^^^^^
+ 8 | |         kelvin: Kelvin = Kelvin(293),
+ 9 | |     }
+10 | | }
+   | |_^
+note: required by a bound in `Formation::<S>::nest`
+  --> src/formation.rs
+   |
+   |     pub fn nest<N, I>(self, strata: N) -> Deposited<Nested<N>, S>
+   |            ---- required by a bound in this associated function
+   |     where
+   |         N: Strata + Nestable<S, I>,
+   |                     ^^^^^^^^^^^^^^ required by this bound in `Formation::<S>::nest`
+   = note: this error originates in the macro `outcrop::strata` (in Nightly builds, run with -Z macro-backtrace for more info)
+help: consider specifying the generic arguments
+   |
+15 |         .nest::<Probe, (__OutcropN0, __OutcropN1)>(Probe::default());
+   |              +++++++++++++++++++++++++++++++++++++

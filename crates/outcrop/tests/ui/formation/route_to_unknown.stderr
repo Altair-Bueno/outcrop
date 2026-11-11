@@ -1,0 +1,32 @@
+error[E0277]: `B` cannot be fed to this formation
+  --> tests/ui/formation/route_to_unknown.rs:11:39
+   |
+11 |         .route(|a: &u8, out| out.feed(B(*a)));
+   |                                  ---- ^^^^^ not an input or router of this formation
+   |                                  |
+   |                                  required by a bound introduced by this call
+   |
+help: the trait `outcrop::plumbing::Absent` is not implemented for `B`
+  --> tests/ui/formation/route_to_unknown.rs:6:1
+   |
+ 6 | struct B(u8);
+   | ^^^^^^^^
+   = note: inputs are fed by value and routers by reference; memos and views are computed by the formation and cannot be fed
+   = help: the following other types implement trait `Feed<T, I>`:
+             `()` implements `Feed<T, Infallible>`
+             `(L, Tail)` implements `Feed<T, outcrop::stratum::There<I>>`
+             `(outcrop::nested::Nested<S>, Tail)` implements `Feed<T, outcrop::nested::Within<I>>`
+             `(outcrop::stratum::Bank<T, N, BYTES>, Tail)` implements `Feed<outcrop::Write<'_, T>, outcrop::stratum::Slotted>`
+             `(outcrop::stratum::Input<T>, Tail)` implements `Feed<T, outcrop::stratum::Here>`
+             `(outcrop::stratum::Router<In, F>, Tail)` implements `Feed<&In, outcrop::stratum::Here>`
+   = note: required for `()` to implement `Feed<B, Infallible>`
+   = note: 1 redundant requirement hidden
+   = note: required for `(outcrop::stratum::Input<A>, ())` to implement `Feed<B, outcrop::stratum::There<Infallible>>`
+note: required by a bound in `outcrop::Sink::<'s, S>::feed`
+  --> src/sink.rs
+   |
+   |     pub fn feed<T, I>(&mut self, value: T)
+   |            ---- required by a bound in this associated function
+   |     where
+   |         S: Feed<T, I>,
+   |            ^^^^^^^^^^ required by this bound in `Sink::<'s, S>::feed`

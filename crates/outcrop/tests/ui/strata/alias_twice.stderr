@@ -1,0 +1,76 @@
+error[E0283]: type annotations needed
+  --> tests/ui/strata/alias_twice.rs:5:1
+   |
+ 5 | / outcrop::strata! {
+ 6 | |     struct S {
+ 7 | |         a: A = A(0),
+ 8 | |         alias: Alias = A(1),
+ 9 | |     }
+10 | | }
+   | |_^ cannot infer type
+   |
+note: multiple `impl`s satisfying `S: Feed<A, _>` found
+  --> tests/ui/strata/alias_twice.rs:5:1
+   |
+ 5 | / outcrop::strata! {
+ 6 | |     struct S {
+   | |____________^
+   = note: required for `(outcrop::nested::Nested<S>, ())` to implement `Feed<A, outcrop::nested::Within<_>>`
+   = note: required for `(outcrop::nested::Nested<S>, ())` to implement `outcrop::plumbing::Routed<A, outcrop::nested::Within<_>>`
+   = note: required for `outcrop::__private::Feeds<(outcrop::nested::Nested<S>, ()), A, outcrop::nested::Within<_>>` to implement `outcrop::__private::Holds`
+note: required for `S` to implement `outcrop::__private::Nestable<(), (outcrop::nested::Within<_>, outcrop::nested::Within<_>, outcrop::nested::Within<_>, outcrop::nested::Within<_>)>`
+  --> tests/ui/strata/alias_twice.rs:5:1
+   |
+ 5 | / outcrop::strata! {
+ 6 | |     struct S {
+   | |            ^
+ 7 | |         a: A = A(0),
+ 8 | |         alias: Alias = A(1),
+ 9 | |     }
+10 | | }
+   | |_^
+note: required by a bound in `outcrop::__private::nestable`
+  --> src/__private.rs
+   |
+   | pub const fn nestable<N: Nestable<S, I>, S, I>() {}
+   |                          ^^^^^^^^^^^^^^ required by this bound in `nestable`
+   = note: this error originates in the macro `outcrop::strata` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0283]: type annotations needed
+  --> tests/ui/strata/alias_twice.rs:5:1
+   |
+ 5 | / outcrop::strata! {
+ 6 | |     struct S {
+ 7 | |         a: A = A(0),
+ 8 | |         alias: Alias = A(1),
+ 9 | |     }
+10 | | }
+   | |_^ cannot infer type
+   |
+note: multiple `impl`s satisfying `S: outcrop::__private::Signal<A, _>` found
+  --> tests/ui/strata/alias_twice.rs:5:1
+   |
+ 5 | / outcrop::strata! {
+ 6 | |     struct S {
+   | |____________^
+   = note: required for `(outcrop::nested::Nested<S>, ())` to implement `outcrop::plumbing::Select<A, outcrop::nested::Within<_>>`
+   = note: required for `(outcrop::nested::Nested<S>, ())` to implement `Get<A, outcrop::nested::Within<_>>`
+   = note: required for `(outcrop::nested::Nested<S>, ())` to implement `outcrop::plumbing::Distinct<A, outcrop::nested::Within<_>>`
+   = note: required for `outcrop::__private::Signals<(outcrop::nested::Nested<S>, ()), A, outcrop::nested::Within<_>>` to implement `outcrop::__private::Holds`
+note: required for `S` to implement `outcrop::__private::Nestable<(), (outcrop::nested::Within<_>, outcrop::nested::Within<_>, outcrop::nested::Within<_>, outcrop::nested::Within<_>)>`
+  --> tests/ui/strata/alias_twice.rs:5:1
+   |
+ 5 | / outcrop::strata! {
+ 6 | |     struct S {
+   | |            ^
+ 7 | |         a: A = A(0),
+ 8 | |         alias: Alias = A(1),
+ 9 | |     }
+10 | | }
+   | |_^
+note: required by a bound in `outcrop::__private::nestable`
+  --> src/__private.rs
+   |
+   | pub const fn nestable<N: Nestable<S, I>, S, I>() {}
+   |                          ^^^^^^^^^^^^^^ required by this bound in `nestable`
+   = note: this error originates in the macro `outcrop::strata` (in Nightly builds, run with -Z macro-backtrace for more info)

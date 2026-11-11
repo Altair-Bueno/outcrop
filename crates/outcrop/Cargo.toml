@@ -13,12 +13,19 @@ macros = ["dep:outcrop-macros"]
 [dependencies]
 outcrop-macros = { workspace = true, optional = true }
 
+[dev-dependencies]
+trybuild = { workspace = true }
+
 [[test]]
 name = "strata"
 required-features = ["macros"]
 
 [[test]]
 name = "nest"
+required-features = ["macros"]
+
+[[test]]
+name = "ui"
 required-features = ["macros"]
 
 [lints]
