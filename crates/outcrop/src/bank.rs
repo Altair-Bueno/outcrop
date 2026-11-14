@@ -91,26 +91,25 @@ impl<'a, T> Element<'a, T> {
         V: Visit<Self>,
     {
         let end = start + bank.len();
-        let mut byte = start / 8;
-        while 8 * byte < end {
-            let mut set = bits[byte];
+        let first = start / 8;
+        for (byte, slot) in (first..).zip(&mut bits[first..end.div_ceil(8)]) {
+            let mut set = *slot;
             if 8 * byte < start {
                 set &= u8::MAX << (start % 8);
             }
             if 8 * byte + 8 > end {
                 set &= u8::MAX >> (8 * byte + 8 - end);
             }
+            let keep = *slot ^ set;
             while set != 0 {
                 let low = usize::try_from(set.trailing_zeros()).unwrap_or_default();
                 set &= set - 1;
-                bits[byte] &= !(1 << low);
+                *slot = keep | set;
                 let index = 8 * byte + low - start;
-                visitor.visit(&Self {
-                    index,
-                    value: &bank[index],
-                });
+                if let Some(value) = bank.get(index) {
+                    visitor.visit(&Self { index, value });
+                }
             }
-            byte += 1;
         }
     }
 }

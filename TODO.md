@@ -83,8 +83,14 @@ each measured against a snapshot of the tree before it with
       7478 -> 7646 B; fuel +1-2% on feeds and routes, one changed element +2%,
       full bank 10198 -> 11118 (+9%, macro 10913); peak stack -16 B on the
       builder's feed and route scenarios (343 -> 327). Dropping the reset
-      alone saved 1-10 fuel and 68 B. The full-bank cost is the per-element
-      read-modify-write of the change byte in `Element::report`.
+      alone saved 1-10 fuel and 68 B. `Element::report` then slices the bank's
+      bytes once, stores `keep | set` per element instead of a
+      read-modify-write, `keep` being the byte's bits outside the bank, and
+      looks elements up with `get`: full bank 11118 -> 10723 (+5% over the
+      abort-only clears), one changed element 646 -> 587 (below its 634), peak
+      stack -16 B on banks. Clearing the visited bit with `current ^= bit`
+      instead cut one element to 598 but raised the full bank to 11664. The
+      size binaries hold no bank, so code size does not show this.
 - [x] **2. Unnameable builder indices.** The builder's lookups took `()` and
       `(I,)` as indices, so `.input(0_u8).input::<u8, (), ()>(1)` compiled,
       passing `Distinct` and `Routed` through the top layer alone. They are now
