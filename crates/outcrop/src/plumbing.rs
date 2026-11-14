@@ -8,7 +8,6 @@ use crate::strata::Strata;
 
 pub trait Bits: Copy + Eq + Hash + Debug + Default {
     const BITS: usize;
-    const ALL: Self;
 
     fn get(&self, index: usize) -> bool;
 
@@ -47,9 +46,6 @@ pub trait Layer<Tail: LayeredImpl>: Sized {
     /// The flags of `Tail` with this layer's bits added.
     type Flags: Bits;
     type Cursor: Cursor;
-    /// Flags marking every signal as changed.
-    const CHANGED: Self::Flags = <Self::Flags as Bits>::ALL;
-
     /// Adds this layer's bits to `flags`, marked as changed.
     fn deposit(flags: Tail::Flags) -> Self::Flags;
 
@@ -62,7 +58,7 @@ pub trait Layer<Tail: LayeredImpl>: Sized {
 /// A layer whose changed signals can be reported to the visitor `V`.
 pub trait LayerReport<V, Tail: LayeredImpl>: Layer<Tail> {
     /// Reports the changed signals, clearing the bit of each before visiting
-    /// it under `panic = "unwind"`.
+    /// it.
     fn report(&self, tail: &Tail, changed: &mut Self::Flags, visitor: &mut V);
 }
 

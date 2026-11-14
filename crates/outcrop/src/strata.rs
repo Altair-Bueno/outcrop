@@ -18,7 +18,7 @@ use core::hash::Hash;
 ///
 /// - Every signal owns exactly one bit of `Flags`, and `Flags::default()` marks
 ///   none.
-/// - [`CHANGED`](Self::CHANGED) marks every signal.
+/// - [`changed`](Self::changed) marks every signal and no other bit.
 /// - [`evaluate`](Self::evaluate) visits the signals bottom-up, so each sees
 ///   the bits set by those beneath it. It recomputes a memo only if a
 ///   dependency's bit is set, marks the memo only if its value changed, marks a
@@ -27,10 +27,8 @@ use core::hash::Hash;
 ///   one, and evaluates nothing.
 /// - [`Get::get`] computes nothing but a view: a memo reads the value
 ///   [`evaluate`](Self::evaluate) last stored.
-/// - [`Report::report`] visits exactly the marked signals, bottom-up, and under
-///   `panic = "unwind"` clears each bit just before visiting its signal; under
-///   `panic = "abort"` it may leave the bits for
-///   [`Formation::poll`](crate::Formation::poll) to reset.
+/// - [`Report::report`] visits exactly the marked signals, bottom-up, and
+///   clears each bit just before visiting its signal, leaving every bit clear.
 ///
 /// An impl breaking them makes its own formations report or compute wrong
 /// values; it cannot cause undefined behaviour, as the crate has no unsafe
@@ -45,7 +43,7 @@ pub trait Strata {
 
     /// Flags marking every signal as changed, so that the first
     /// [`poll`](crate::Formation::poll) reports every initial value.
-    const CHANGED: Self::Flags;
+    fn changed() -> Self::Flags;
 
     /// Recomputes the memos whose dependencies changed, and marks the memos
     /// whose value changed and the views whose dependencies changed.

@@ -73,6 +73,18 @@ each measured against a snapshot of the tree before it with
       Dropping `#[inline(always)]` on the single-signal `report` made it worse
       (builder 12440 B, 375 B of stack). `cargo test` runs with unwind, so the
       harness's report counts are the check on the abort path.
+      **Reverted 2026-11-14** for one code path that `cargo test` checks:
+      `report` always clears each bit before visiting, and `poll` no longer
+      resets the flags afterwards. For that, no bit outside a signal may ever
+      be set: `Strata::CHANGED` became `Strata::changed()`, which the builder
+      builds through `Layer::deposit`, and banks and `strata!` mark only their
+      own bits with `Chunk::first`; `Layer::CHANGED` and `Bits::ALL` are gone.
+      Against the abort-only clears: code size builder 12154 -> 12430 B, macro
+      7478 -> 7646 B; fuel +1-2% on feeds and routes, one changed element +2%,
+      full bank 10198 -> 11118 (+9%, macro 10913); peak stack -16 B on the
+      builder's feed and route scenarios (343 -> 327). Dropping the reset
+      alone saved 1-10 fuel and 68 B. The full-bank cost is the per-element
+      read-modify-write of the change byte in `Element::report`.
 - [x] **2. Unnameable builder indices.** The builder's lookups took `()` and
       `(I,)` as indices, so `.input(0_u8).input::<u8, (), ()>(1)` compiled,
       passing `Distinct` and `Routed` through the top layer alone. They are now

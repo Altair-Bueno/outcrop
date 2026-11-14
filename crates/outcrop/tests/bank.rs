@@ -223,6 +223,8 @@ fn builder_banks_pack_a_change_bit_per_element() {
 
 #[cfg(feature = "macros")]
 mod declared {
+    use outcrop::Strata;
+
     use super::*;
 
     #[derive(Debug, PartialEq, Eq)]
@@ -261,6 +263,15 @@ mod declared {
         poll(&mut formation);
 
         assert_eq!(feed_each_bank(&mut formation), FED_APART);
+    }
+
+    #[test]
+    fn reporting_every_change_of_banks_short_of_a_byte_leaves_no_bit_set() {
+        let mut changed = <Device as Strata>::changed();
+
+        Device::default().report(&mut changed, &mut Recorder::default());
+
+        assert_eq!(changed, <Device as Strata>::Flags::default());
     }
 
     #[test]

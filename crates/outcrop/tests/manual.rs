@@ -53,7 +53,9 @@ impl Default for Thermostat {
 impl Strata for Thermostat {
     type Flags = [u8; 1];
 
-    const CHANGED: [u8; 1] = [0b111];
+    fn changed() -> [u8; 1] {
+        [0b111]
+    }
 
     fn evaluate(&mut self, changed: &mut [u8; 1]) {
         if changed[0] & 0b11 != 0 {
@@ -89,7 +91,9 @@ struct Below3<'s>(&'s mut Thermostat);
 impl Strata for Below3<'_> {
     type Flags = [u8; 1];
 
-    const CHANGED: [u8; 1] = [0b111];
+    fn changed() -> [u8; 1] {
+        [0b111]
+    }
 
     fn evaluate(&mut self, _: &mut [u8; 1]) {}
 }

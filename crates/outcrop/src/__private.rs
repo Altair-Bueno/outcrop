@@ -42,8 +42,8 @@ pub fn ne<T: Eq>(a: &T, b: &T) -> bool {
     a != b
 }
 
-pub const fn all<const N: usize>() -> Chunk<N> {
-    Chunk::ALL
+pub const fn first<const N: usize>(len: usize) -> Chunk<N> {
+    Chunk::first(len)
 }
 
 pub fn is_set<const N: usize>(changed: &Chunk<N>, bit: usize) -> bool {
@@ -55,9 +55,7 @@ pub fn set<const N: usize>(changed: &mut Chunk<N>, bit: usize) {
 }
 
 pub fn clear<const N: usize>(changed: &mut Chunk<N>, bit: usize) {
-    if cfg!(panic = "unwind") {
-        changed.clear_top(bit);
-    }
+    changed.clear_top(bit);
 }
 
 #[diagnostic::on_unimplemented(

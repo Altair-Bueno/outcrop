@@ -163,7 +163,7 @@ impl Declaration {
             impl #krate::Strata for #ident {
                 type Flags = #flags;
 
-                const CHANGED: #flags = #private::all();
+                fn changed() -> #flags { #private::first(#count) }
 
                 fn evaluate(&mut self, #changed_flags: &mut #flags) {
                     #(#evaluations)*
@@ -629,7 +629,9 @@ impl<'d> Expansion<'d> {
             impl #krate::Strata for #view<'_> {
                 type Flags = #flags;
 
-                const CHANGED: #flags = <#ident as #krate::Strata>::CHANGED;
+                fn changed() -> #flags {
+                    <#ident as #krate::Strata>::changed()
+                }
 
                 fn evaluate(&mut self, _: &mut #flags) {}
             }

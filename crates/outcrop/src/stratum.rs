@@ -147,7 +147,9 @@ type Next<Tail> = <<Tail as LayeredImpl>::Cursor as Cursor>::Next;
 impl Strata for () {
     type Flags = u8;
 
-    const CHANGED: u8 = 0;
+    fn changed() -> u8 {
+        0
+    }
 
     fn evaluate(&mut self, _: &mut u8) {}
 }
@@ -159,7 +161,9 @@ impl LayeredImpl for () {
 impl<L: Layer<Tail>, Tail: LayeredImpl> Strata for (L, Tail) {
     type Flags = L::Flags;
 
-    const CHANGED: Self::Flags = L::CHANGED;
+    fn changed() -> Self::Flags {
+        L::deposit(Tail::changed())
+    }
 
     fn evaluate(&mut self, changed: &mut Self::Flags) {
         self.1.evaluate(L::below_mut(changed));
@@ -205,9 +209,7 @@ where
     #[inline(always)]
     fn report(&self, tail: &Tail, changed: &mut Grown<Tail>, visitor: &mut V) {
         if changed.get(Tail::LEN) {
-            if cfg!(panic = "unwind") {
-                changed.clear_top(Tail::LEN);
-            }
+            changed.clear_top(Tail::LEN);
             visitor.visit(self.value(tail).borrow());
         }
     }
@@ -216,8 +218,6 @@ where
 impl<In: ?Sized, F, Tail: LayeredImpl> Layer<Tail> for Router<In, F> {
     type Flags = Tail::Flags;
     type Cursor = Tail::Cursor;
-    const CHANGED: Tail::Flags = Tail::CHANGED;
-
     fn deposit(flags: Tail::Flags) -> Tail::Flags {
         flags
     }
@@ -243,7 +243,7 @@ where
     type Cursor = Used<8>;
 
     fn deposit(flags: Tail::Flags) -> Self::Flags {
-        (flags, Chunk::ALL)
+        (flags, Chunk::first(N))
     }
 
     fn below_mut(flags: &mut Self::Flags) -> &mut Tail::Flags {

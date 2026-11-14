@@ -77,7 +77,7 @@ impl<S: Strata> From<S> for Formation<S> {
     /// [`poll`](Self::poll) reports every initial value.
     fn from(strata: S) -> Self {
         Self {
-            changed: S::CHANGED,
+            changed: S::changed(),
             strata,
         }
     }
@@ -430,10 +430,10 @@ impl<S: Strata> Formation<S> {
     /// to its dependents. A view is reported and propagated whenever one of
     /// its dependencies changed, whether or not its own value did.
     ///
-    /// Under `panic = "unwind"`, each signal is unmarked just before it is
-    /// visited: if `visitor` panics and the panic is caught, the signals it had
-    /// not reached yet are reported by the next poll; the one it panicked on is
-    /// not, so a visitor that always panics on a value cannot block the others.
+    /// Each signal is unmarked just before it is visited: if `visitor` panics
+    /// and the panic is caught, the signals it had not reached yet are reported
+    /// by the next poll; the one it panicked on is not, so a visitor that
+    /// always panics on a value cannot block the others.
     pub fn poll<V>(&mut self, visitor: &mut V)
     where
         S: Report<V>,
@@ -443,6 +443,29 @@ impl<S: Strata> Formation<S> {
         }
         self.strata.evaluate(&mut self.changed);
         self.strata.report(&mut self.changed, visitor);
-        self.changed = S::Flags::default();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::visit::Visit;
+
+    struct Ignore;
+
+    impl<T> Visit<T> for Ignore {
+        fn visit(&mut self, _: &T) {}
+    }
+
+    #[test]
+    fn a_poll_leaves_no_bit_set_after_banks_short_of_a_byte() {
+        let mut formation = Formation::new()
+            .input(0_u8)
+            .bank::<1, _, _, _>([0_u16; 5])
+            .input(0_i8);
+
+        formation.poll(&mut Ignore);
+
+        assert_eq!(formation.changed, Default::default());
     }
 }

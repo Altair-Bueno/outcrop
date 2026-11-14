@@ -35,7 +35,7 @@ where
     type Cursor = Used<8>;
 
     fn deposit(flags: Tail::Flags) -> Self::Flags {
-        (flags, S::CHANGED)
+        (flags, S::changed())
     }
 
     fn below_mut(flags: &mut Self::Flags) -> &mut Tail::Flags {
