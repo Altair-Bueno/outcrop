@@ -179,25 +179,6 @@ fn signals_around_a_bank_keep_their_own_bits() {
 }
 
 #[test]
-fn routers_feed_banks_beneath_them() {
-    let mut formation = Formation::new()
-        .bank::<1, _, _, _>([0_u16; 2])
-        .memo(celsius)
-        .route(|bytes: &[u8], sink| {
-            let words = bytes.iter().copied().map(u16::from).collect::<Vec<_>>();
-            sink.feed(Write::new(0, &words));
-        });
-    poll(&mut formation);
-
-    formation.feed(&[0_u8, 200][..]);
-
-    assert_eq!(
-        poll(&mut formation),
-        ["Element { index: 1, value: 200 }", "Celsius(20)"]
-    );
-}
-
-#[test]
 fn elements_carry_their_index() {
     struct Indices(Vec<usize>);
 
@@ -240,10 +221,6 @@ mod declared {
             registers: [u16; 11] = [0; 11],
             celsius: Celsius = Register<1> => celsius,
             Total = (Register<2>, Register<3>) => total,
-            [u8] => |bytes, sink| {
-                let words = bytes.iter().copied().map(u16::from).collect::<Vec<_>>();
-                sink.feed(Write::new(0, &words));
-            },
         }
     }
 
@@ -280,11 +257,7 @@ mod declared {
             .input(Label("a"))
             .bank::<2, _, _, _>([0_u16; 11])
             .memo(celsius)
-            .view(total)
-            .route(|bytes: &[u8], sink| {
-                let words = bytes.iter().copied().map(u16::from).collect::<Vec<_>>();
-                sink.feed(Write::new(0, &words));
-            });
+            .view(total);
         let mut declared = Formation::from(Probe::default());
 
         assert_eq!(poll(&mut declared), poll(&mut built));
@@ -293,8 +266,8 @@ mod declared {
         declared.feed(Write::new(2, &[1, 0, 9]));
         assert_eq!(poll(&mut declared), poll(&mut built));
 
-        built.feed(&[0_u8, 250][..]);
-        declared.feed(&[0_u8, 250][..]);
+        built.feed(Write::new(0, &[0, 250]));
+        declared.feed(Write::new(0, &[0, 250]));
         assert_eq!(poll(&mut declared), poll(&mut built));
 
         built.feed(Label("b"));

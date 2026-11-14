@@ -19,6 +19,8 @@ error[E0277]: the trait bound `f32: Eq` is not satisfied
 note: required by a bound in `Formation::<S>::input`
  --> src/formation.rs
   |
+  | impl<S: Layered> Formation<S> {
+...
   |     pub fn input<T: Eq, I>(self, initial: T) -> Deposited<Input<T>, S>
   |                     ^^ required by this bound in `Formation::<S>::input`
 
@@ -31,19 +33,19 @@ error[E0277]: the trait bound `(outcrop::stratum::Input<f32>, ()): outcrop::plum
   |                              required by a bound introduced by this call
   |
   = help: the following other types implement trait `Feed<T, I>`:
-            `()` implements `Feed<T, Infallible>`
+            `()` implements `Feed<T, !>`
             `(L, Tail)` implements `Feed<T, outcrop::stratum::There<I>>`
             `(outcrop::nested::Nested<S>, Tail)` implements `Feed<T, outcrop::nested::Within<I>>`
             `(outcrop::stratum::Bank<T, N, BYTES>, Tail)` implements `Feed<outcrop::Write<'_, T>, outcrop::stratum::Slotted>`
             `(outcrop::stratum::Input<T>, Tail)` implements `Feed<T, outcrop::stratum::Here>`
-            `(outcrop::stratum::Router<In, F>, Tail)` implements `Feed<&In, outcrop::stratum::Here>`
   = note: required for `(outcrop::stratum::Input<f32>, ())` to implement `outcrop::plumbing::Routed<f32, _>`
   = note: required for `(outcrop::stratum::Input<f32>, ())` to implement `outcrop::plumbing::Sound<(outcrop::stratum::Here, _)>`
 note: required by a bound in `Formation::<S>::input`
  --> src/formation.rs
   |
+  | impl<S: Layered> Formation<S> {
+...
   |     pub fn input<T: Eq, I>(self, initial: T) -> Deposited<Input<T>, S>
-  |            ----- required by a bound in this associated function
   |     where
   |         (Input<T>, S): Sound<I>,
   |                        ^^^^^^^^ required by this bound in `Formation::<S>::input`

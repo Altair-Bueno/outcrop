@@ -122,21 +122,6 @@ fn nested_signals_are_read_by_type() {
 }
 
 #[test]
-fn routers_above_feed_nested_inputs() {
-    let mut formation = Formation::new()
-        .nest(Probe::default())
-        .route(|k: &u16, sink| sink.feed(Kelvin(*k)));
-    poll(&mut formation);
-
-    formation.feed(&273_u16);
-
-    assert_eq!(
-        poll(&mut formation),
-        ["Kelvin(273)", "Celsius(0)", "Freezing(true)"]
-    );
-}
-
-#[test]
 fn signals_around_a_nested_struct_keep_their_own_bits() {
     let mut formation = Formation::new()
         .input(Label("a"))
@@ -177,17 +162,12 @@ outcrop::strata! {
         #[cfg(any())]
         kelvin: Kelvin = Kelvin(0),
         offset: Offset = Offset(1),
-        #[cfg(any())]
-        u16 => |_, _| {},
     }
 }
 
 #[test]
 fn entries_compiled_out_do_not_clash_with_the_formation() {
-    let mut formation = Formation::new()
-        .input(Kelvin(300))
-        .route(|_: &u16, _| {})
-        .nest(Partial::default());
+    let mut formation = Formation::new().input(Kelvin(300)).nest(Partial::default());
 
     assert_eq!(poll(&mut formation), ["Kelvin(300)", "Offset(1)"]);
 }

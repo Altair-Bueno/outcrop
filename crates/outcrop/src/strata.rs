@@ -5,7 +5,7 @@ use core::hash::Hash;
 /// The signals a [`Formation`](crate::Formation) is made of.
 ///
 /// Implemented by the strata built with
-/// [`Formation::input`](crate::Formation::input), `memo`, `view` and `route`,
+/// [`Formation::input`](crate::Formation::input), `bank`, `memo` and `view`,
 /// and by the types declared with `strata!`. Each signal owns one change bit in
 /// [`Flags`](Self::Flags).
 ///
@@ -35,7 +35,7 @@ use core::hash::Hash;
 /// code.
 #[diagnostic::on_unimplemented(
     message = "`{Self}` is not a stack of strata",
-    note = "strata are built with `Formation::input`, `memo`, `view` and `route`, or declared with `strata!`"
+    note = "strata are built with `Formation::input`, `bank`, `memo` and `view`, or declared with `strata!`"
 )]
 pub trait Strata {
     /// The change bits, one per signal.
@@ -50,16 +50,17 @@ pub trait Strata {
     fn evaluate(&mut self, changed: &mut Self::Flags);
 }
 
-/// Strata accepting a `T`, either as an input or through a router.
+/// Strata accepting a `T`, as an input or, for a [`Write`](crate::Write), a
+/// bank.
 ///
 /// The index `I` is inferred, and only tells apart where the `T` goes.
 #[diagnostic::on_unimplemented(
     message = "`{T}` cannot be fed to this formation",
-    label = "not an input or router of this formation",
-    note = "inputs are fed by value and routers by reference; memos and views are computed by the formation and cannot be fed"
+    label = "not an input or bank of this formation",
+    note = "inputs are fed by value and banks with a `Write`; memos and views are computed by the formation and cannot be fed"
 )]
 pub trait Feed<T, I>: Strata {
-    /// Stores or routes `value`, marking the inputs whose value changed.
+    /// Stores `value`, marking the inputs whose value changed.
     fn feed(&mut self, changed: &mut Self::Flags, value: T);
 }
 

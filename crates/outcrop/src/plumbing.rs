@@ -28,7 +28,7 @@ pub trait Cursor {
 }
 
 #[diagnostic::on_unimplemented(
-    message = "`{Self}` is not built by `Formation::input`, `memo`, `view` and `route`",
+    message = "`{Self}` is not built by `Formation::input`, `memo` and `view`",
     note = "strata declared with `strata!` are complete and cannot be extended"
 )]
 pub trait LayeredImpl: Strata<Flags: Bits> {
@@ -64,7 +64,7 @@ pub trait LayerReport<V, Tail: LayeredImpl>: Layer<Tail> {
 
 /// A layer holding a single signal. Not generic, unlike [`Settle`], so that
 /// no other crate can implement it and the blanket [`Layer`] impl over it
-/// stays apart from those of routers and banks.
+/// stays apart from those of banks.
 pub trait Value {
     type Signal;
 }
@@ -111,8 +111,8 @@ pub trait ComputeImpl<S, M> {
 
 #[diagnostic::on_unimplemented(
     message = "`{Self}` cannot be fed to this formation",
-    label = "not an input or router of this formation",
-    note = "inputs are fed by value and routers by reference; memos and views are computed by the formation and cannot be fed"
+    label = "not an input or bank of this formation",
+    note = "inputs are fed by value and banks with a `Write`; memos and views are computed by the formation and cannot be fed"
 )]
 pub trait Absent {}
 

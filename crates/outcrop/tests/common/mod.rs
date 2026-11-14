@@ -45,16 +45,3 @@ impl<const ADDRESS: usize> Slot for Register<ADDRESS> {
         Self(*item)
     }
 }
-
-#[derive(Debug, PartialEq, Eq)]
-pub struct ModbusRegister {
-    pub address: u16,
-    pub value: u16,
-}
-
-pub fn decode(chunk: &[u8]) -> ModbusRegister {
-    ModbusRegister {
-        address: u16::from_be_bytes([chunk[0], chunk[1]]),
-        value: u16::from_be_bytes([chunk[2], chunk[3]]),
-    }
-}

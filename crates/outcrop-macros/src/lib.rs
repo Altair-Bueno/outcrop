@@ -34,7 +34,6 @@ enum Kind {
     Bank(Input),
     Memo(Memo),
     View(View),
-    Router(Router),
 }
 
 struct Field {
@@ -66,11 +65,6 @@ struct View {
     deps: Type,
 }
 
-struct Router {
-    function: Function,
-    ty: Type,
-}
-
 /// Declares a named strata type, for formations whose type must be written
 /// out, such as one kept in a `static`.
 ///
@@ -90,15 +84,13 @@ struct Router {
 ///   the [`outcrop::Slot`](https://docs.rs/outcrop) whose index points at it.
 ///   `poll` reports each changed element as an
 ///   [`outcrop::Element`](https://docs.rs/outcrop).
-/// - `In => f`: a router, called with every fed `&In` and an [`outcrop::Sink`](https://docs.rs/outcrop)
-///   feeding the inputs and routers declared above it.
 ///
 /// So the struct's fields are exactly the stored signals.
 ///
 /// A `strata!` struct behaves like the formation built with the same calls
-/// to `Formation::input`, `memo`, `view` and `route`. Signals are found by
-/// type, so an alias or any path to a type names the same signal. A memo, view
-/// or router accepts the same functions its `Formation` counterpart does,
+/// to `Formation::input`, `memo` and `view`. Signals are found by
+/// type, so an alias or any path to a type names the same signal. A memo or
+/// view accepts the same functions its `Formation` counterpart does,
 /// taking each argument by reference for any lifetime: a path such as
 /// `Celsius::from` whose `From<&Kelvin>` impl fixes the lifetime is rejected,
 /// and a closure `|k| Celsius::from(k)` is accepted. Memos and views take at
@@ -107,8 +99,7 @@ struct Router {
 /// One difference remains: `f` cannot capture anything, because the struct
 /// must name every type it holds. For a memo or view that is no loss, since it
 /// should depend only on its arguments, and a value that varies belongs in an
-/// input. A router that keeps state between feeds can only be built with
-/// `Formation`.
+/// input.
 ///
 /// Large declarations exceed the compiler's default recursion limit of 128:
 ///
@@ -125,8 +116,7 @@ struct Router {
 ///
 /// A signal can only depend on signals declared above it. Every signal has its
 /// own type, so declaring a type twice is rejected, however it is spelled,
-/// and so is routing a type twice, an input of a type a router is also fed,
-/// in either order, two banks of the same item type, which a `Write` could
+/// and so are two banks of the same item type, which a `Write` could
 /// not tell apart, and a memo or view of more than eight dependencies. Inputs
 /// and memos must implement `Eq`, as with `Formation`.
 ///
@@ -166,9 +156,9 @@ struct Router {
 /// `cfg_attr` need to compile an entry in or out. To put attributes on a
 /// single item, list them in `#[strata(field(..))]` for the field of an input
 /// or memo, or in `#[strata(fn(..))]` for the function generated from the `f`
-/// of a memo, view or router. Derive helpers such as `serde` and lints such
+/// of a memo or view. Derive helpers such as `serde` and lints such
 /// as `expect` belong there. Doc comments go to the field of an input or
-/// memo, or else to the function of a view or router, without being listed:
+/// memo, or else to the function of a view, without being listed:
 ///
 /// ```
 /// #[derive(PartialEq, Eq)]
@@ -260,11 +250,6 @@ struct Router {
 ///     struct Thermostat {
 ///         temperature: Temperature = Temperature(20),
 ///         AntiFreeze = Temperature => |t| AntiFreeze(t.0 < 10),
-///         [i16] => |samples, sink| {
-///             if let Some(last) = samples.last() {
-///                 sink.feed(Temperature(*last));
-///             }
-///         },
 ///     }
 /// }
 ///
@@ -278,7 +263,7 @@ struct Router {
 ///
 /// let mut formation = Formation::from(Thermostat::default());
 /// formation.poll(&mut Print); // Temperature(20), AntiFreeze(false)
-/// formation.feed(&[12, 3][..]);
+/// formation.feed(Temperature(3));
 /// formation.poll(&mut Print); // Temperature(3), AntiFreeze(true)
 /// ```
 #[proc_macro]

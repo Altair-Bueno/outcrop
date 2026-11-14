@@ -22,18 +22,11 @@ use crate::Function;
 use crate::Input;
 use crate::Kind;
 use crate::Memo;
-use crate::Router;
 use crate::View;
 
 struct Signal<'d> {
     attrs: &'d [Attribute],
     field: Option<&'d Ident>,
-}
-
-struct Fed<'d> {
-    attrs: &'d [Attribute],
-    ty: TokenStream,
-    marker: Ident,
 }
 
 /// A type of the struct that the strata it is nested on must not also hold:
@@ -62,7 +55,6 @@ struct Expansion<'d> {
     next: TokenStream,
     bits: Vec<TokenStream>,
     signals: Vec<Signal<'d>>,
-    fed: Vec<Fed<'d>>,
     checks: Vec<Check<'d>>,
     fields: Vec<TokenStream>,
     builds: Vec<TokenStream>,
@@ -93,7 +85,6 @@ impl Declaration {
             next: quote!(0usize),
             bits: Vec::new(),
             signals: Vec::new(),
-            fed: Vec::new(),
             checks: Vec::new(),
             fields: Vec::new(),
             builds: Vec::new(),
@@ -212,7 +203,6 @@ impl<'d> Expansion<'d> {
                 Kind::Bank(bank) => self.bank(attrs, bank),
                 Kind::Memo(memo) => self.memo(attrs, memo),
                 Kind::View(view) => self.view(attrs, view),
-                Kind::Router(router) => self.router(attrs, position, router),
             }
         }
     }
@@ -306,17 +296,6 @@ impl<'d> Expansion<'d> {
         (bit, marker)
     }
 
-    fn feeds(
-        &mut self,
-        attrs: &'d [Attribute],
-        checked: TokenStream,
-        ty: TokenStream,
-        marker: Ident,
-    ) {
-        self.check(attrs, "Feeds", checked);
-        self.fed.push(Fed { attrs, ty, marker });
-    }
-
     /// Implements the lookup of a signal by its type, used by the signals
     /// above it, `get` and `poll`.
     fn lookup(
@@ -361,21 +340,6 @@ impl<'d> Expansion<'d> {
         quote!(#(#checks)||*)
     }
 
-    fn helper(
-        &mut self,
-        attrs: &[Attribute],
-        function: &Function,
-        name: &Ident,
-        parameters: &[TokenStream],
-        output: &TokenStream,
-        bound: &TokenStream,
-    ) {
-        let Function { attrs: targeted, f } = function;
-        let function = self::function(name, parameters, output, f, bound);
-        self.helpers
-            .push(quote!(#(#attrs)* #(#[#targeted])* #function));
-    }
-
     fn derivation(
         &mut self,
         attrs: &[Attribute],
@@ -384,9 +348,10 @@ impl<'d> Expansion<'d> {
         deps: &[&Type],
         ty: &Type,
     ) {
-        let parameters = deps.iter().map(|dep| quote!(&#dep)).collect::<Vec<_>>();
-        let bound = quote!(::core::ops::Fn(#(#parameters),*) -> #ty);
-        self.helper(attrs, function, name, &parameters, &quote!(-> #ty), &bound);
+        let Function { attrs: targeted, f } = function;
+        let function = self::function(name, deps, ty, f);
+        self.helpers
+            .push(quote!(#(#attrs)* #(#[#targeted])* #function));
     }
 
     fn field(&mut self, attrs: &[Attribute], field: &Field, ty: &Type) {
@@ -461,7 +426,7 @@ impl<'d> Expansion<'d> {
                 }
             }
         });
-        self.feeds(attrs, ty.to_token_stream(), ty.to_token_stream(), marker);
+        self.check(attrs, "Feeds", ty.to_token_stream());
     }
 
     fn bank(&mut self, attrs: &'d [Attribute], bank: &'d Input) {
@@ -510,7 +475,7 @@ impl<'d> Expansion<'d> {
             #(#attrs)*
             #private::report(&self.#name, changed, #base, visitor);
         });
-        self.feeds(attrs, quote!(#krate::Write<'static, #item>), write, marker);
+        self.check(attrs, "Feeds", quote!(#krate::Write<'static, #item>));
     }
 
     fn memo(&mut self, attrs: &'d [Attribute], memo: &'d Memo) {
@@ -581,72 +546,6 @@ impl<'d> Expansion<'d> {
                 #private::set(changed, #bit);
             }
         });
-    }
-
-    fn router(&mut self, attrs: &'d [Attribute], position: usize, router: &'d Router) {
-        let Router {
-            function,
-            ty: pointee,
-        } = router;
-        let pointee = referent(pointee);
-        let ty = quote!(&#pointee);
-        let view = format_ident!("__OutcropBelow{position}", span = Span::mixed_site());
-        let marker = format_ident!("__OutcropRouter{position}", span = Span::mixed_site());
-        let helper = format_ident!("__outcrop_route_{position}");
-        let krate = self.krate;
-        let sink = quote!(&mut #krate::Sink<'_, #view<'_>>);
-        self.helper(
-            attrs,
-            function,
-            &helper,
-            &[quote!(#ty), sink.clone()],
-            &TokenStream::new(),
-            &quote!(::core::ops::FnMut(#ty, #sink)),
-        );
-        let (ident, flags) = (self.ident, &self.flags);
-        let below = self.fed.iter().map(
-            |Fed {
-                 attrs: fed_attrs,
-                 ty,
-                 marker,
-             }| {
-                quote! {
-                    #(#attrs)*
-                    #(#fed_attrs)*
-                    impl #krate::Feed<#ty, #marker> for #view<'_> {
-                        fn feed(&mut self, changed: &mut #flags, value: #ty) {
-                            <#ident as #krate::Feed<#ty, #marker>>::feed(self.0, changed, value);
-                        }
-                    }
-                }
-            },
-        );
-        self.impls.push(quote! {
-            #(#attrs)*
-            struct #view<'s>(&'s mut #ident);
-
-            #(#attrs)*
-            impl #krate::Strata for #view<'_> {
-                type Flags = #flags;
-
-                fn changed() -> #flags {
-                    <#ident as #krate::Strata>::changed()
-                }
-
-                fn evaluate(&mut self, _: &mut #flags) {}
-            }
-
-            #(#below)*
-
-            #(#attrs)*
-            impl #krate::Feed<#ty, #marker> for #ident {
-                fn feed(&mut self, changed: &mut #flags, value: #ty) {
-                    #helper(value, &mut #krate::Sink::new(&mut #view(self), changed));
-                }
-            }
-        });
-        self.marker(attrs, &marker);
-        self.feeds(attrs, quote!(&'static #pointee), ty, marker);
     }
 }
 
@@ -720,7 +619,7 @@ fn duplicates(entries: &[Entry]) -> (TokenStream, BTreeSet<usize>) {
             Kind::Input(Input { ty, .. })
             | Kind::Memo(Memo { ty, .. })
             | Kind::View(View { ty, .. }) => Some((position, ty)),
-            Kind::Bank(_) | Kind::Router(_) => None,
+            Kind::Bank(_) => None,
         })
         .filter(|(_, ty)| !seen.insert(ty.to_token_stream().to_string()))
         .map(|(position, ty)| {
@@ -746,20 +645,6 @@ fn cfg_switch(
     }
 }
 
-/// `ty` as it can follow `&`: a trait object with several bounds, such as
-/// `dyn A + Send`, in parentheses.
-fn referent(ty: &Type) -> TokenStream {
-    if let Type::Group(group) = ty {
-        referent(&group.elem)
-    } else if let Type::TraitObject(object) = ty
-        && object.bounds.len() > 1
-    {
-        quote!((#ty))
-    } else {
-        ty.to_token_stream()
-    }
-}
-
 fn dependencies(deps: &Type) -> Vec<&Type> {
     if let Type::Group(group) = deps {
         dependencies(&group.elem)
@@ -774,17 +659,10 @@ fn dependencies(deps: &Type) -> Vec<&Type> {
     }
 }
 
-/// A function calling `f` with its arguments, after checking `f` against
-/// `bound` as `Formation::memo`, `view` and `route` do, which also types the
-/// parameters of a closure.
-fn function(
-    name: &Ident,
-    parameters: &[TokenStream],
-    output: &TokenStream,
-    f: &Expr,
-    bound: &TokenStream,
-) -> TokenStream {
-    let arguments = (0..parameters.len())
+/// A function computing `ty` from `deps` with `f`, after checking `f` against
+/// `Fn(&Dep, ..) -> Signal`, which also types the parameters of a closure.
+fn function(name: &Ident, deps: &[&Type], ty: &Type, f: &Expr) -> TokenStream {
+    let arguments = (0..deps.len())
         .map(|index| format_ident!("__outcrop_a{index}", span = Span::mixed_site()))
         .collect::<Vec<_>>();
     let (typed, generic, function) = (
@@ -793,12 +671,11 @@ fn function(
         mixed("__outcrop_f"),
     );
     quote! {
-        fn #name(#(#arguments: #parameters),*) #output {
-            fn #typed<#generic: #bound>(#function: #generic) -> #generic {
+        fn #name(#(#arguments: &#deps),*) -> #ty {
+            fn #typed<#generic: ::core::ops::Fn(#(&#deps),*) -> #ty>(#function: #generic) -> #generic {
                 #function
             }
-            #[allow(unused_mut)]
-            let mut #function = #typed(#f);
+            let #function = #typed(#f);
             #function(#(#arguments),*)
         }
     }
@@ -860,14 +737,8 @@ mod tests {
             #[doc = "a"] a: A = A(0),
             #[doc = "b"] b: B = A => f,
             #[doc = "c"] C = A => f,
-            #[doc = "r"] [u8] => g,
         }))?;
-        for (doc, item) in [
-            ("a", "a : A"),
-            ("b", "b : B"),
-            ("c", "fn __outcrop_view_2"),
-            ("r", "fn __outcrop_route_3"),
-        ] {
+        for (doc, item) in [("a", "a : A"), ("b", "b : B"), ("c", "fn __outcrop_view_2")] {
             let doc = format!("# [doc = \"{doc}\"]");
             assert_eq!(output.matches(&doc).count(), 1, "{doc} in {output}");
             assert!(output.contains(&format!("{doc} {item}")), "{output}");
@@ -894,7 +765,6 @@ mod tests {
             a: A = A(0),
             #[strata(fn(inline), field(serde(skip)))] b: B = A => f,
             #[strata(fn(inline, cold))] C = A => f,
-            #[strata(fn(inline))] [u8] => f,
         }))?;
         assert!(output.contains("# [serde (skip)] b : B"), "{output}");
         assert!(
@@ -903,10 +773,6 @@ mod tests {
         );
         assert!(
             output.contains("# [inline] # [cold] fn __outcrop_view_2"),
-            "{output}"
-        );
-        assert!(
-            output.contains("# [inline] fn __outcrop_route_3"),
             "{output}"
         );
         assert!(!output.contains("strata"), "{output}");
@@ -918,7 +784,7 @@ mod tests {
         let output = expand(quote!(struct S {
             #[deny(x)] a: A = A(0),
             #[deny(y)] B = A => f,
-            #[deny(z)] [u8] => g,
+            #[deny(z)] #[strata(bank)] c: [u8; 2] = [0; 2],
         }))?;
         for item in [
             "# [deny (x)] a : A",
@@ -932,8 +798,7 @@ mod tests {
             "# [deny (y)] if :: outcrop :: __private :: is_set (changed",
             "# [deny (y)] let __outcrop_chain = :: outcrop :: __private :: view (__outcrop_view_1",
             "# [deny (y)] impl :: outcrop :: __private :: Signal < B",
-            "# [deny (z)] fn __outcrop_route_2",
-            "# [deny (z)] impl :: outcrop :: Feed < & [u8]",
+            "# [deny (z)] impl :: outcrop :: Feed < :: outcrop :: Write",
             "# [deny (z)] # [allow (unused_macros)] macro_rules ! __outcrop_nest3",
             ":: outcrop :: __private :: nestable :: < Self , () , _ > () ;",
         ] {
@@ -947,7 +812,7 @@ mod tests {
         let output = expand(quote!(struct S { a: A = A(0), #[strata(fn(inline))] B = A => f }))?;
         assert!(
             output.contains(
-                "# [inline] fn __outcrop_view_1 (__outcrop_a0 : & A) -> B { fn __outcrop_typed < __OutcropF : :: core :: ops :: Fn (& A) -> B > (__outcrop_f : __OutcropF) -> __OutcropF { __outcrop_f } # [allow (unused_mut)] let mut __outcrop_f = __outcrop_typed (f) ; __outcrop_f (__outcrop_a0) }"
+                "# [inline] fn __outcrop_view_1 (__outcrop_a0 : & A) -> B { fn __outcrop_typed < __OutcropF : :: core :: ops :: Fn (& A) -> B > (__outcrop_f : __OutcropF) -> __OutcropF { __outcrop_f } let __outcrop_f = __outcrop_typed (f) ; __outcrop_f (__outcrop_a0) }"
             ),
             "{output}"
         );
@@ -1016,11 +881,12 @@ mod tests {
 
     #[test]
     fn builds_the_chain_only_for_memos_and_views() -> syn::Result<()> {
-        let stored = expand(quote!(struct S {
+        let stored = expand(quote!(
+            struct S {
             a: A = A(0),
             #[strata(bank)] b: [u8; 2] = [0; 2],
-            [u8] => f,
-        }))?;
+        }
+        ))?;
         assert!(!stored.contains("__outcrop_chain"), "{stored}");
         for derived in [
             quote!(struct S { a: A = A(0), b: B = A => f }),
@@ -1049,10 +915,10 @@ mod tests {
     fn uses_the_given_crate_path() -> syn::Result<()> {
         let output = expand(quote!(
             #[strata(crate = layers)]
-            struct S { a: A = A(0), b: B = A => f, [u8] => g }
+            struct S { a: A = A(0), b: B = A => f, #[strata(bank)] c: [u8; 2] = [0; 2] }
         ))?;
         assert!(output.contains("impl layers :: Strata for S"), "{output}");
-        assert!(output.contains("layers :: Sink"), "{output}");
+        assert!(output.contains("layers :: Write"), "{output}");
         assert!(!output.contains("outcrop ::"), "{output}");
         assert!(!output.contains("# [strata"), "{output}");
         Ok(())

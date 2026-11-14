@@ -67,7 +67,6 @@ mod formation;
 #[cfg(feature = "macros")]
 mod nested;
 mod plumbing;
-mod sink;
 mod strata;
 mod stratum;
 mod visit;
@@ -78,7 +77,6 @@ pub use bank::Write;
 pub use formation::Formation;
 #[cfg(feature = "macros")]
 pub use outcrop_macros::strata;
-pub use sink::Sink;
 pub use strata::Feed;
 pub use strata::Get;
 pub use strata::Report;

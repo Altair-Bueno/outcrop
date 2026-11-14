@@ -16,8 +16,9 @@ error[E0283]: type annotations needed
 note: required by a bound in `Formation::<S>::bank`
  --> src/formation.rs
   |
+  | impl<S: Layered> Formation<S> {
+...
   |     pub fn bank<const BYTES: usize, T: Eq + Clone, const N: usize, I>(
-  |            ---- required by a bound in this associated function
 ...
   |         (Bank<T, N, BYTES>, S): Sound<I>,
   |                                 ^^^^^^^^ required by this bound in `Formation::<S>::bank`
