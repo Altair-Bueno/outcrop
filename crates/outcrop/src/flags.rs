@@ -6,7 +6,6 @@ pub struct Used<const BITS: u8>;
 
 impl Bits for u8 {
     const BITS: usize = 8;
-    const ALL: Self = Self::MAX;
 
     fn get(&self, index: usize) -> bool {
         self & (1 << index) != 0
@@ -23,7 +22,6 @@ impl Bits for u8 {
 
 impl<Tail: Bits, Top: Bits> Bits for (Tail, Top) {
     const BITS: usize = Tail::BITS + Top::BITS;
-    const ALL: Self = (Tail::ALL, Top::ALL);
 
     fn get(&self, index: usize) -> bool {
         if index < Tail::BITS {
@@ -48,6 +46,22 @@ impl<Tail: Bits, Top: Bits> Bits for (Tail, Top) {
 pub struct Chunk<const BYTES: usize>([u8; BYTES]);
 
 impl<const BYTES: usize> Chunk<BYTES> {
+    /// The bits below `len` set, the rest clear.
+    pub(crate) const fn first(len: usize) -> Self {
+        let mut bytes = [0; BYTES];
+        let mut byte = 0;
+        while byte < BYTES {
+            let below = len.saturating_sub(8 * byte);
+            bytes[byte] = if below >= 8 {
+                u8::MAX
+            } else {
+                !(u8::MAX << below)
+            };
+            byte += 1;
+        }
+        Self(bytes)
+    }
+
     pub(crate) const fn bytes_mut(&mut self) -> &mut [u8; BYTES] {
         &mut self.0
     }
@@ -61,7 +75,6 @@ impl<const BYTES: usize> Default for Chunk<BYTES> {
 
 impl<const BYTES: usize> Bits for Chunk<BYTES> {
     const BITS: usize = 8 * BYTES;
-    const ALL: Self = Self([u8::MAX; BYTES]);
 
     fn get(&self, index: usize) -> bool {
         self.0[index / 8].get(index % 8)

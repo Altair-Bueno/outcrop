@@ -90,6 +90,24 @@ fn summary(a: &Pair<0>, b: &Pair<2>, c: &Pair<4>, d: &Pair<6>, s: &ScaledView) -
     Summary(fold(&a.0) ^ fold(&b.0) ^ fold(&c.0) ^ fold(&d.0) ^ s.0[0])
 }
 
+/// Feeds the register a frame addresses, or the unrelated input.
+macro_rules! route {
+    ($formation:expr, $frame:expr) => {{
+        let frame: Frame = $frame;
+        match frame.address {
+            0 => $formation.feed(Register::<0>(frame.value)),
+            1 => $formation.feed(Register::<1>(frame.value)),
+            2 => $formation.feed(Register::<2>(frame.value)),
+            3 => $formation.feed(Register::<3>(frame.value)),
+            4 => $formation.feed(Register::<4>(frame.value)),
+            5 => $formation.feed(Register::<5>(frame.value)),
+            6 => $formation.feed(Register::<6>(frame.value)),
+            7 => $formation.feed(Register::<7>(frame.value)),
+            _ => $formation.feed(Unrelated(frame.value)),
+        }
+    }};
+}
+
 macro_rules! builder {
     () => {
         Formation::new()
@@ -102,17 +120,6 @@ macro_rules! builder {
             .input(Register::<5>(1))
             .input(Register::<6>(1))
             .input(Register::<7>(1))
-            .route(|f: &Frame, sink| match f.address {
-                0 => sink.feed(Register::<0>(f.value)),
-                1 => sink.feed(Register::<1>(f.value)),
-                2 => sink.feed(Register::<2>(f.value)),
-                3 => sink.feed(Register::<3>(f.value)),
-                4 => sink.feed(Register::<4>(f.value)),
-                5 => sink.feed(Register::<5>(f.value)),
-                6 => sink.feed(Register::<6>(f.value)),
-                7 => sink.feed(Register::<7>(f.value)),
-                _ => sink.feed(Unrelated(f.value)),
-            })
             .memo(scaled)
             .view(decode::<0>)
             .view(decode::<1>)
@@ -144,17 +151,6 @@ outcrop::strata! {
         r5: Register<5> = Register(1),
         r6: Register<6> = Register(1),
         r7: Register<7> = Register(1),
-        Frame => |f, sink| match f.address {
-            0 => sink.feed(Register::<0>(f.value)),
-            1 => sink.feed(Register::<1>(f.value)),
-            2 => sink.feed(Register::<2>(f.value)),
-            3 => sink.feed(Register::<3>(f.value)),
-            4 => sink.feed(Register::<4>(f.value)),
-            5 => sink.feed(Register::<5>(f.value)),
-            6 => sink.feed(Register::<6>(f.value)),
-            7 => sink.feed(Register::<7>(f.value)),
-            _ => sink.feed(Unrelated(f.value)),
-        },
         scaled: Scaled = Register<0> => scaled,
         Decoded<0> = Register<0> => decode::<0>,
         Decoded<1> = Register<1> => decode::<1>,
@@ -259,10 +255,13 @@ macro_rules! scenarios {
             formation.poll(&mut sum);
             for i in 0..black_box(rounds) {
                 for address in 0..9 {
-                    formation.feed(&Frame {
-                        address: black_box(address),
-                        value: black_box(i as u16),
-                    });
+                    route!(
+                        formation,
+                        Frame {
+                            address: black_box(address),
+                            value: black_box(i as u16),
+                        }
+                    );
                 }
                 formation.poll(&mut sum);
             }

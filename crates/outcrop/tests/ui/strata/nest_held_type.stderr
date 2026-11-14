@@ -24,8 +24,9 @@ note: required for `Probe` to implement `outcrop::__private::Nestable<(outcrop::
 note: required by a bound in `Formation::<S>::nest`
   --> src/formation.rs
    |
+   | impl<S: Layered> Formation<S> {
+...
    |     pub fn nest<N, I>(self, strata: N) -> Deposited<Nested<N>, S>
-   |            ---- required by a bound in this associated function
    |     where
    |         N: Strata + Nestable<S, I>,
    |                     ^^^^^^^^^^^^^^ required by this bound in `Formation::<S>::nest`
@@ -62,8 +63,9 @@ note: required for `Probe` to implement `outcrop::__private::Nestable<(outcrop::
 note: required by a bound in `Formation::<S>::nest`
   --> src/formation.rs
    |
+   | impl<S: Layered> Formation<S> {
+...
    |     pub fn nest<N, I>(self, strata: N) -> Deposited<Nested<N>, S>
-   |            ---- required by a bound in this associated function
    |     where
    |         N: Strata + Nestable<S, I>,
    |                     ^^^^^^^^^^^^^^ required by this bound in `Formation::<S>::nest`

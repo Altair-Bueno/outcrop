@@ -21,7 +21,6 @@ use crate::plumbing::Select;
 use crate::plumbing::Settle;
 use crate::plumbing::Sound;
 use crate::plumbing::Value;
-use crate::sink::Sink;
 use crate::strata::Feed;
 use crate::strata::Get;
 use crate::strata::Report;
@@ -99,31 +98,8 @@ impl<F: Clone, M, O> Clone for View<F, M, O> {
 
 impl<F: Copy, M, O> Copy for View<F, M, O> {}
 
-/// A router that turns a fed `&In` into feeds of the strata beneath it.
-pub struct Router<In: ?Sized, F> {
-    pub f: F,
-    pub marker: PhantomData<fn(&In)>,
-}
-
-impl<In: ?Sized, F> fmt::Debug for Router<In, F> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Router").finish_non_exhaustive()
-    }
-}
-
-impl<In: ?Sized, F: Clone> Clone for Router<In, F> {
-    fn clone(&self) -> Self {
-        Self {
-            f: self.f.clone(),
-            marker: PhantomData,
-        }
-    }
-}
-
-impl<In: ?Sized, F: Copy> Copy for Router<In, F> {}
-
 /// Strata built with [`Formation::input`](crate::Formation::input), `memo`,
-/// `view` and `route`, which can be extended further.
+/// `bank` and `view`, which can be extended further.
 ///
 /// This trait is sealed.
 pub trait Layered: LayeredImpl {}
@@ -147,7 +123,9 @@ type Next<Tail> = <<Tail as LayeredImpl>::Cursor as Cursor>::Next;
 impl Strata for () {
     type Flags = u8;
 
-    const CHANGED: u8 = 0;
+    fn changed() -> u8 {
+        0
+    }
 
     fn evaluate(&mut self, _: &mut u8) {}
 }
@@ -159,7 +137,9 @@ impl LayeredImpl for () {
 impl<L: Layer<Tail>, Tail: LayeredImpl> Strata for (L, Tail) {
     type Flags = L::Flags;
 
-    const CHANGED: Self::Flags = L::CHANGED;
+    fn changed() -> Self::Flags {
+        L::deposit(Tail::changed())
+    }
 
     fn evaluate(&mut self, changed: &mut Self::Flags) {
         self.1.evaluate(L::below_mut(changed));
@@ -205,32 +185,10 @@ where
     #[inline(always)]
     fn report(&self, tail: &Tail, changed: &mut Grown<Tail>, visitor: &mut V) {
         if changed.get(Tail::LEN) {
-            if cfg!(panic = "unwind") {
-                changed.clear_top(Tail::LEN);
-            }
+            changed.clear_top(Tail::LEN);
             visitor.visit(self.value(tail).borrow());
         }
     }
-}
-
-impl<In: ?Sized, F, Tail: LayeredImpl> Layer<Tail> for Router<In, F> {
-    type Flags = Tail::Flags;
-    type Cursor = Tail::Cursor;
-    const CHANGED: Tail::Flags = Tail::CHANGED;
-
-    fn deposit(flags: Tail::Flags) -> Tail::Flags {
-        flags
-    }
-
-    fn below_mut(flags: &mut Tail::Flags) -> &mut Tail::Flags {
-        flags
-    }
-
-    fn evaluate(&mut self, _: &Tail, _: &mut Tail::Flags) {}
-}
-
-impl<V, In: ?Sized, F, Tail: LayeredImpl> LayerReport<V, Tail> for Router<In, F> {
-    fn report(&self, _: &Tail, _: &mut Tail::Flags, _: &mut V) {}
 }
 
 type Banked<Tail, const BYTES: usize> = (<Tail as Strata>::Flags, Chunk<BYTES>);
@@ -243,7 +201,7 @@ where
     type Cursor = Used<8>;
 
     fn deposit(flags: Tail::Flags) -> Self::Flags {
-        (flags, Chunk::ALL)
+        (flags, Chunk::first(N))
     }
 
     fn below_mut(flags: &mut Self::Flags) -> &mut Tail::Flags {
@@ -413,25 +371,12 @@ impl<T, const N: usize, const BYTES: usize, Tail, I> Sound<I> for (Bank<T, N, BY
 {
 }
 
-impl<In: ?Sized, F, Tail, I> Sound<I> for (Router<In, F>, Tail) where for<'a> Self: Routed<&'a In, I>
-{}
-
 impl<T: Eq, Tail: LayeredImpl> Feed<T, Here> for (Input<T>, Tail) {
     fn feed(&mut self, changed: &mut Self::Flags, value: T) {
         if self.0.0 != value {
             self.0.0 = value;
             changed.set_top(Tail::LEN);
         }
-    }
-}
-
-impl<'a, In: ?Sized, F, Tail> Feed<&'a In, Here> for (Router<In, F>, Tail)
-where
-    F: FnMut(&In, &mut Sink<'_, Tail>),
-    Tail: LayeredImpl,
-{
-    fn feed(&mut self, changed: &mut Self::Flags, value: &'a In) {
-        (self.0.f)(value, &mut Sink::new(&mut self.1, changed));
     }
 }
 

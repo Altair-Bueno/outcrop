@@ -2,9 +2,7 @@
 
 mod common;
 
-use common::ModbusRegister;
 use common::PanicOn;
-use common::decode;
 use common::poll;
 use outcrop as layers;
 use outcrop::Formation;
@@ -44,23 +42,6 @@ outcrop::strata! {
         heating: Heating = (Temperature, Setpoint) => heating,
         anti_freeze: AntiFreeze = Temperature => |t| AntiFreeze(t.0 < 10),
         alarm: Alarm = (Heating, AntiFreeze) => |h: &Heating, a| Alarm(h.0 && a.0),
-    }
-}
-
-outcrop::strata! {
-    struct Modbus {
-        aa: Register<0xAA> = Register(0),
-        ab: Register<0xAB> = Register(0),
-        ModbusRegister => |r, sink| match r.address {
-            0xAA => sink.feed(Register::<0xAA>(r.value)),
-            0xAB => sink.feed(Register::<0xAB>(r.value)),
-            _ => {}
-        },
-        [u8] => |frame, sink| {
-            for chunk in frame.as_chunks::<4>().0 {
-                sink.feed(&decode(chunk));
-            }
-        },
     }
 }
 
@@ -121,11 +102,6 @@ outcrop::strata! {
         },
         alarm: Alarm = (AntiFreezeSupported, Setpoint) => |a, s| Alarm(a.0 && s.0 > 0x2300),
         Heating = Alarm => |a| Heating(!a.0),
-        ModbusRegister => |r, sink| match r.address {
-            0x42 => sink.feed(Register::<0x42>(r.value)),
-            0x43 => sink.feed(Register::<0x43>(r.value)),
-            _ => {}
-        },
     }
 }
 
@@ -181,38 +157,6 @@ macro_rules! typed {
 
 typed!((Temperature, Setpoint));
 
-trait Sensor {
-    fn celsius(&self) -> i16;
-}
-
-struct Probe(i16);
-
-impl Sensor for Probe {
-    fn celsius(&self) -> i16 {
-        self.0
-    }
-}
-
-outcrop::strata! {
-    struct Sensed {
-        temperature: Temperature = Temperature(20),
-        dyn Sensor + Send => |sensor, sink| sink.feed(Temperature(sensor.celsius())),
-    }
-}
-
-macro_rules! routed {
-    ($routed:ty) => {
-        outcrop::strata! {
-            struct Routed {
-                temperature: Temperature = Temperature(20),
-                $routed => |sensor, sink| sink.feed(Temperature(sensor.celsius())),
-            }
-        }
-    };
-}
-
-routed!(dyn Sensor + Send);
-
 #[deny(unused_doc_comments)]
 mod documented {
     use super::AntiFreeze;
@@ -233,8 +177,6 @@ mod documented {
             AntiFreeze = Temperature => |t| AntiFreeze(t.0 < 5),
             /// The setpoint, following the temperature.
             Setpoint = Temperature => |t| Setpoint(t.0 + 1),
-            /// Readings in tenths of a degree.
-            i16 => |value, sink| sink.feed(Temperature(*value / 10)),
         }
     }
 }
@@ -282,10 +224,6 @@ outcrop::strata! {
         anti_freeze: AntiFreeze = Temperature => |t| AntiFreeze(t.0 < 10),
         #[cfg(any())]
         Alarm = Missing => |_| Alarm(true),
-        #[cfg(any())]
-        [u8] => |_, _| {},
-        #[cfg(all())]
-        i16 => |value, sink| sink.feed(Temperature(*value)),
     }
 }
 
@@ -297,8 +235,6 @@ outcrop::strata! {
         missing: Missing = Missing,
         #[cfg_attr(all(), cfg(any()))]
         Alarm = Missing => |_| Alarm(true),
-        #[cfg_attr(all(), cfg(any()))]
-        Missing => |_, _| {},
         #[cfg(all())]
         #[strata(fn(expect(unused_variables, reason = "reaches the view's closure")))]
         AntiFreeze = Temperature => |t| AntiFreeze(false),
@@ -312,12 +248,6 @@ outcrop::strata! {
 }
 
 outcrop::strata! {
-    struct RouterOnly {
-        u8 => |_, _| {},
-    }
-}
-
-outcrop::strata! {
     struct Annotated {
         temperature: Temperature = Temperature(20),
         // The closures below ignore their arguments, so each `#[expect]` is
@@ -327,8 +257,6 @@ outcrop::strata! {
         anti_freeze: AntiFreeze = Temperature => |t| AntiFreeze(false),
         #[strata(fn(expect(unused_variables, reason = "reaches the view's closure")))]
         Alarm = Temperature => |t| Alarm(true),
-        #[strata(fn(expect(unused_variables, reason = "reaches the router's closure")))]
-        i16 => |value, sink| sink.feed(Temperature(0)),
     }
 }
 
@@ -435,20 +363,6 @@ fn derives_apply_to_the_declared_struct() {
 }
 
 #[test]
-fn routers_chain_from_bytes_to_registers() {
-    let mut formation = Formation::from(Modbus::default());
-    poll(&mut formation);
-
-    formation.feed(
-        &[
-            0x00, 0xAA, 0x00, 0x07, 0x00, 0xAB, 0x00, 0x09, 0x00, 0xFF, 0x00, 0x01,
-        ][..],
-    );
-
-    assert_eq!(poll(&mut formation), ["Register(7)", "Register(9)"]);
-}
-
-#[test]
 fn dependencies_passed_as_a_type_fragment_are_split() {
     let mut formation = Formation::from(Typed::default());
     poll(&mut formation);
@@ -456,28 +370,6 @@ fn dependencies_passed_as_a_type_fragment_are_split() {
     formation.feed(Setpoint(21));
 
     assert_eq!(poll(&mut formation), ["Setpoint(21)", "Heating(true)"]);
-}
-
-#[test]
-fn routers_take_trait_objects_with_several_bounds() {
-    let mut formation = Formation::from(Sensed::default());
-    poll(&mut formation);
-
-    let sensor: &(dyn Sensor + Send) = &Probe(7);
-    formation.feed(sensor);
-
-    assert_eq!(poll(&mut formation), ["Temperature(7)"]);
-}
-
-#[test]
-fn routers_take_trait_objects_passed_as_a_type_fragment() {
-    let mut formation = Formation::from(Routed::default());
-    poll(&mut formation);
-
-    let sensor: &(dyn Sensor + Send) = &Probe(-3);
-    formation.feed(sensor);
-
-    assert_eq!(poll(&mut formation), ["Temperature(-3)"]);
 }
 
 #[test]
@@ -540,24 +432,19 @@ fn cfg_removes_absent_signals() {
 #[test]
 fn formations_without_signals_take_no_bits() {
     assert_eq!(size_of::<<Empty as Strata>::Flags>(), 0);
-    assert_eq!(size_of::<<RouterOnly as Strata>::Flags>(), 0);
 
     let mut empty = Formation::from(Empty::default());
-    let mut router = Formation::from(RouterOnly::default());
-    router.feed(&1_u8);
 
     assert_eq!(poll(&mut empty), Vec::<String>::new());
-    assert_eq!(poll(&mut router), Vec::<String>::new());
 }
 
 #[test]
 fn attributes_reach_the_functions_they_target() {
     let mut formation = Formation::from(Annotated::default());
-    formation.feed(&3_i16);
 
     assert_eq!(
         poll(&mut formation),
-        ["Temperature(0)", "AntiFreeze(false)", "Alarm(true)"]
+        ["Temperature(20)", "AntiFreeze(false)", "Alarm(true)"]
     );
 }
 
@@ -587,14 +474,14 @@ fn cfg_removed_signals_take_no_bits() {
 }
 
 #[test]
-fn cfg_keeps_present_signals_and_routers() {
+fn cfg_keeps_present_signals() {
     let mut formation = Formation::from(Gated::default());
     assert_eq!(
         poll(&mut formation),
         ["Temperature(20)", "AntiFreeze(false)"]
     );
 
-    formation.feed(&3_i16);
+    formation.feed(Temperature(3));
 
     assert_eq!(poll(&mut formation), ["Temperature(3)", "AntiFreeze(true)"]);
 }
@@ -630,21 +517,6 @@ fn memos_keep_their_value_until_the_next_poll() {
 
     assert_eq!(formation.get::<Heating, _>(), &Heating(true));
     assert_eq!(formation.get::<Alarm, _>(), &Alarm(false));
-}
-
-#[test]
-fn inputs_fed_through_routers_are_current_before_the_poll() {
-    let mut formation = Formation::from(Gated::default());
-    poll(&mut formation);
-
-    formation.feed(&3_i16);
-
-    assert_eq!(formation.get::<Temperature, _>(), &Temperature(3));
-    assert_eq!(formation.get::<AntiFreeze, _>(), &AntiFreeze(false));
-
-    poll(&mut formation);
-
-    assert_eq!(formation.get::<AntiFreeze, _>(), &AntiFreeze(true));
 }
 
 #[test]
@@ -696,14 +568,8 @@ fn memos_and_views_build_on_each_other() {
     let mut formation = Formation::from(ModbusMap::default());
     poll(&mut formation);
 
-    formation.feed(&ModbusRegister {
-        address: 0x42,
-        value: 0x23,
-    });
-    formation.feed(&ModbusRegister {
-        address: 0x43,
-        value: 0x01,
-    });
+    formation.feed(Register::<0x42>(0x23));
+    formation.feed(Register::<0x43>(0x01));
 
     assert_eq!(formation.get::<Setpoint, _>(), Setpoint(0x2301));
     assert_eq!(formation.get::<Alarm, _>(), &Alarm(false));
@@ -748,14 +614,8 @@ fn views_see_the_last_of_several_feeds() {
     let mut formation = Formation::from(ModbusMap::default());
     poll(&mut formation);
 
-    formation.feed(&ModbusRegister {
-        address: 0x42,
-        value: 0x24,
-    });
-    formation.feed(&ModbusRegister {
-        address: 0x42,
-        value: 0x25,
-    });
+    formation.feed(Register::<0x42>(0x24));
+    formation.feed(Register::<0x42>(0x25));
 
     assert_eq!(
         poll(&mut formation),

@@ -6,7 +6,6 @@ use common::poll;
 use outcrop::Feed;
 use outcrop::Formation;
 use outcrop::Report;
-use outcrop::Sink;
 use outcrop::Strata;
 use outcrop::Visit;
 
@@ -34,11 +33,6 @@ impl Thermostat {
     fn derive_2(t: &Temperature, s: &Setpoint) -> Heating {
         Heating(t.0 < s.0)
     }
-
-    fn route_3(frame: &[i16], sink: &mut Sink<'_, Below3<'_>>) {
-        sink.feed(Temperature(frame[0]));
-        sink.feed(Setpoint(frame[1]));
-    }
 }
 
 impl Default for Thermostat {
@@ -53,7 +47,9 @@ impl Default for Thermostat {
 impl Strata for Thermostat {
     type Flags = [u8; 1];
 
-    const CHANGED: [u8; 1] = [0b111];
+    fn changed() -> [u8; 1] {
+        [0b111]
+    }
 
     fn evaluate(&mut self, changed: &mut [u8; 1]) {
         if changed[0] & 0b11 != 0 {
@@ -81,34 +77,6 @@ impl Feed<Setpoint, ()> for Thermostat {
             self.s1 = value;
             changed[0] |= 0b10;
         }
-    }
-}
-
-struct Below3<'s>(&'s mut Thermostat);
-
-impl Strata for Below3<'_> {
-    type Flags = [u8; 1];
-
-    const CHANGED: [u8; 1] = [0b111];
-
-    fn evaluate(&mut self, _: &mut [u8; 1]) {}
-}
-
-impl Feed<Temperature, ()> for Below3<'_> {
-    fn feed(&mut self, changed: &mut [u8; 1], value: Temperature) {
-        <Thermostat as Feed<Temperature, ()>>::feed(self.0, changed, value);
-    }
-}
-
-impl Feed<Setpoint, ()> for Below3<'_> {
-    fn feed(&mut self, changed: &mut [u8; 1], value: Setpoint) {
-        <Thermostat as Feed<Setpoint, ()>>::feed(self.0, changed, value);
-    }
-}
-
-impl<'a> Feed<&'a [i16], ()> for Thermostat {
-    fn feed(&mut self, changed: &mut [u8; 1], value: &'a [i16]) {
-        Self::route_3(value, &mut Sink::new(&mut Below3(self), changed));
     }
 }
 
@@ -151,16 +119,6 @@ fn feeding_an_input_recomputes_its_dependents() {
     formation.feed(Temperature(10));
 
     assert_eq!(poll(&mut formation), ["Temperature(10)", "Heating(true)"]);
-}
-
-#[test]
-fn routers_feed_the_inputs_above_them() {
-    let mut formation = Formation::from(Thermostat::default());
-    poll(&mut formation);
-
-    formation.feed(&[20, 25][..]);
-
-    assert_eq!(poll(&mut formation), ["Setpoint(25)", "Heating(true)"]);
 }
 
 #[test]

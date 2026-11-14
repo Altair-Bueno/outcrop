@@ -24,7 +24,6 @@ use crate::Function;
 use crate::Input;
 use crate::Kind;
 use crate::Memo;
-use crate::Router;
 use crate::View;
 
 impl Parse for Declaration {
@@ -154,12 +153,6 @@ impl Parse for Entry {
                     "inputs are stored, so they need a field name: `name: Type = initial`",
                 ));
             }
-            (Shape::Routed { .. }, Some(name)) => {
-                return Err(syn::Error::new(
-                    name.span(),
-                    "routers have no field, so they cannot be named",
-                ));
-            }
             (Shape::Stored { ty, init }, Some(name)) => {
                 if let Some(span) = first_fn {
                     return Err(syn::Error::new(
@@ -185,18 +178,11 @@ impl Parse for Entry {
                 deps: *deps,
             }),
             (Shape::Derived { ty, deps, f }, None) => {
-                fieldless("views", first_field)?;
+                fieldless(first_field)?;
                 Kind::View(View {
                     function: function(f),
                     ty,
                     deps: *deps,
-                })
-            }
-            (Shape::Routed { ty, f }, None) => {
-                fieldless("routers", first_field)?;
-                Kind::Router(Router {
-                    function: function(f),
-                    ty,
                 })
             }
         };
@@ -204,11 +190,11 @@ impl Parse for Entry {
     }
 }
 
-fn fieldless(kind: &str, first_field: Option<Span>) -> syn::Result<()> {
+fn fieldless(first_field: Option<Span>) -> syn::Result<()> {
     match first_field {
         Some(span) => Err(syn::Error::new(
             span,
-            format!("{kind} have no field, so `field(..)` does not apply to them"),
+            "views have no field, so `field(..)` does not apply to them",
         )),
         None => Ok(()),
     }
@@ -217,19 +203,11 @@ fn fieldless(kind: &str, first_field: Option<Span>) -> syn::Result<()> {
 enum Shape {
     Stored { ty: Type, init: Expr },
     Derived { ty: Type, deps: Box<Type>, f: Expr },
-    Routed { ty: Type, f: Expr },
 }
 
 impl Parse for Shape {
     fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
         let ty = input.parse()?;
-        if input.peek(Token![=>]) {
-            input.parse::<Token![=>]>()?;
-            return Ok(Self::Routed {
-                ty,
-                f: input.parse()?,
-            });
-        }
         input.parse::<Token![=]>()?;
         let fork = input.fork();
         if let Ok(deps) = fork.parse::<Type>()
@@ -276,11 +254,11 @@ mod tests {
     }
 
     #[test]
-    fn rejects_field_attributes_on_routers() {
-        let error = error(quote!(struct S { #[strata(field(serde(skip)))] [u8] => f }));
+    fn rejects_field_attributes_on_views() {
+        let error = error(quote!(struct S { #[strata(field(serde(skip)))] B = A => f }));
         assert_eq!(
             error.as_deref(),
-            Some("routers have no field, so `field(..)` does not apply to them")
+            Some("views have no field, so `field(..)` does not apply to them")
         );
     }
 
@@ -311,22 +289,12 @@ mod tests {
         for input in [
             quote!(struct S { #[strata(bank)] a: A = B => f }),
             quote!(struct S { #[strata(bank)] A = B => f }),
-            quote!(struct S { #[strata(bank)] [u8] => f }),
         ] {
             assert_eq!(
                 error(input).as_deref(),
                 Some("only inputs can be banks: `#[strata(bank)] name: [T; N] = initial`")
             );
         }
-    }
-
-    #[test]
-    fn rejects_named_routers() {
-        let error = error(quote!(struct S { frame: [u8] => f }));
-        assert_eq!(
-            error.as_deref(),
-            Some("routers have no field, so they cannot be named")
-        );
     }
 
     #[test]

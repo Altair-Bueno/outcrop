@@ -5,7 +5,7 @@ use core::hash::Hash;
 /// The signals a [`Formation`](crate::Formation) is made of.
 ///
 /// Implemented by the strata built with
-/// [`Formation::input`](crate::Formation::input), `memo`, `view` and `route`,
+/// [`Formation::input`](crate::Formation::input), `bank`, `memo` and `view`,
 /// and by the types declared with `strata!`. Each signal owns one change bit in
 /// [`Flags`](Self::Flags).
 ///
@@ -18,7 +18,7 @@ use core::hash::Hash;
 ///
 /// - Every signal owns exactly one bit of `Flags`, and `Flags::default()` marks
 ///   none.
-/// - [`CHANGED`](Self::CHANGED) marks every signal.
+/// - [`changed`](Self::changed) marks every signal and no other bit.
 /// - [`evaluate`](Self::evaluate) visits the signals bottom-up, so each sees
 ///   the bits set by those beneath it. It recomputes a memo only if a
 ///   dependency's bit is set, marks the memo only if its value changed, marks a
@@ -27,17 +27,15 @@ use core::hash::Hash;
 ///   one, and evaluates nothing.
 /// - [`Get::get`] computes nothing but a view: a memo reads the value
 ///   [`evaluate`](Self::evaluate) last stored.
-/// - [`Report::report`] visits exactly the marked signals, bottom-up, and under
-///   `panic = "unwind"` clears each bit just before visiting its signal; under
-///   `panic = "abort"` it may leave the bits for
-///   [`Formation::poll`](crate::Formation::poll) to reset.
+/// - [`Report::report`] visits exactly the marked signals, bottom-up, and
+///   clears each bit just before visiting its signal, leaving every bit clear.
 ///
 /// An impl breaking them makes its own formations report or compute wrong
 /// values; it cannot cause undefined behaviour, as the crate has no unsafe
 /// code.
 #[diagnostic::on_unimplemented(
     message = "`{Self}` is not a stack of strata",
-    note = "strata are built with `Formation::input`, `memo`, `view` and `route`, or declared with `strata!`"
+    note = "strata are built with `Formation::input`, `bank`, `memo` and `view`, or declared with `strata!`"
 )]
 pub trait Strata {
     /// The change bits, one per signal.
@@ -45,23 +43,24 @@ pub trait Strata {
 
     /// Flags marking every signal as changed, so that the first
     /// [`poll`](crate::Formation::poll) reports every initial value.
-    const CHANGED: Self::Flags;
+    fn changed() -> Self::Flags;
 
     /// Recomputes the memos whose dependencies changed, and marks the memos
     /// whose value changed and the views whose dependencies changed.
     fn evaluate(&mut self, changed: &mut Self::Flags);
 }
 
-/// Strata accepting a `T`, either as an input or through a router.
+/// Strata accepting a `T`, as an input or, for a [`Write`](crate::Write), a
+/// bank.
 ///
 /// The index `I` is inferred, and only tells apart where the `T` goes.
 #[diagnostic::on_unimplemented(
     message = "`{T}` cannot be fed to this formation",
-    label = "not an input or router of this formation",
-    note = "inputs are fed by value and routers by reference; memos and views are computed by the formation and cannot be fed"
+    label = "not an input or bank of this formation",
+    note = "inputs are fed by value and banks with a `Write`; memos and views are computed by the formation and cannot be fed"
 )]
 pub trait Feed<T, I>: Strata {
-    /// Stores or routes `value`, marking the inputs whose value changed.
+    /// Stores `value`, marking the inputs whose value changed.
     fn feed(&mut self, changed: &mut Self::Flags, value: T);
 }
 

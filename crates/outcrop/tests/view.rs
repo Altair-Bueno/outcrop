@@ -164,38 +164,6 @@ fn views_build_on_views() {
 }
 
 #[test]
-fn routers_feed_through_views() {
-    let mut formation = Formation::new()
-        .input(Register::<0x42>(0x22))
-        .view(anti_freeze)
-        .route(|value: &u16, out| out.feed(Register::<0x42>(*value)));
-    poll(&mut formation);
-
-    formation.feed(&0x23);
-
-    assert_eq!(
-        poll(&mut formation),
-        ["Register(35)", "AntiFreezeSupported(true)"]
-    );
-}
-
-#[test]
-fn views_above_routers_see_routed_values() {
-    let mut formation = Formation::new()
-        .input(Register::<0x42>(0x22))
-        .route(|value: &u16, out| out.feed(Register::<0x42>(*value)))
-        .view(anti_freeze);
-    poll(&mut formation);
-
-    formation.feed(&0x23);
-
-    assert_eq!(
-        poll(&mut formation),
-        ["Register(35)", "AntiFreezeSupported(true)"]
-    );
-}
-
-#[test]
 fn views_need_no_partial_eq() {
     #[derive(Debug)]
     struct Label(&'static str);
@@ -220,23 +188,6 @@ fn views_see_the_last_of_several_feeds() {
 
     formation.feed(Register::<0x42>(0x24));
     formation.feed(Register::<0x42>(0x25));
-
-    assert_eq!(
-        poll(&mut formation),
-        ["Register(37)", "AntiFreezeSupported(true)"]
-    );
-}
-
-#[test]
-fn views_above_routers_see_the_last_of_several_routed_values() {
-    let mut formation = Formation::new()
-        .input(Register::<0x42>(0x22))
-        .route(|value: &u16, out| out.feed(Register::<0x42>(*value)))
-        .view(anti_freeze);
-    poll(&mut formation);
-
-    formation.feed(&0x24);
-    formation.feed(&0x25);
 
     assert_eq!(
         poll(&mut formation),

@@ -8,7 +8,6 @@ use crate::strata::Strata;
 
 pub trait Bits: Copy + Eq + Hash + Debug + Default {
     const BITS: usize;
-    const ALL: Self;
 
     fn get(&self, index: usize) -> bool;
 
@@ -29,7 +28,7 @@ pub trait Cursor {
 }
 
 #[diagnostic::on_unimplemented(
-    message = "`{Self}` is not built by `Formation::input`, `memo`, `view` and `route`",
+    message = "`{Self}` is not built by `Formation::input`, `memo` and `view`",
     note = "strata declared with `strata!` are complete and cannot be extended"
 )]
 pub trait LayeredImpl: Strata<Flags: Bits> {
@@ -47,9 +46,6 @@ pub trait Layer<Tail: LayeredImpl>: Sized {
     /// The flags of `Tail` with this layer's bits added.
     type Flags: Bits;
     type Cursor: Cursor;
-    /// Flags marking every signal as changed.
-    const CHANGED: Self::Flags = <Self::Flags as Bits>::ALL;
-
     /// Adds this layer's bits to `flags`, marked as changed.
     fn deposit(flags: Tail::Flags) -> Self::Flags;
 
@@ -62,13 +58,13 @@ pub trait Layer<Tail: LayeredImpl>: Sized {
 /// A layer whose changed signals can be reported to the visitor `V`.
 pub trait LayerReport<V, Tail: LayeredImpl>: Layer<Tail> {
     /// Reports the changed signals, clearing the bit of each before visiting
-    /// it under `panic = "unwind"`.
+    /// it.
     fn report(&self, tail: &Tail, changed: &mut Self::Flags, visitor: &mut V);
 }
 
 /// A layer holding a single signal. Not generic, unlike [`Settle`], so that
 /// no other crate can implement it and the blanket [`Layer`] impl over it
-/// stays apart from those of routers and banks.
+/// stays apart from those of banks.
 pub trait Value {
     type Signal;
 }
@@ -115,8 +111,8 @@ pub trait ComputeImpl<S, M> {
 
 #[diagnostic::on_unimplemented(
     message = "`{Self}` cannot be fed to this formation",
-    label = "not an input or router of this formation",
-    note = "inputs are fed by value and routers by reference; memos and views are computed by the formation and cannot be fed"
+    label = "not an input or bank of this formation",
+    note = "inputs are fed by value and banks with a `Write`; memos and views are computed by the formation and cannot be fed"
 )]
 pub trait Absent {}
 

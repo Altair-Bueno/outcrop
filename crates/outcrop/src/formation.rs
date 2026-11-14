@@ -6,7 +6,6 @@ use crate::__private::Nestable;
 use crate::nested::Nested;
 use crate::plumbing::Layer;
 use crate::plumbing::Sound;
-use crate::sink::Sink;
 use crate::strata::Feed;
 use crate::strata::Get;
 use crate::strata::Report;
@@ -16,16 +15,14 @@ use crate::stratum::Compute;
 use crate::stratum::Input;
 use crate::stratum::Layered;
 use crate::stratum::Memo;
-use crate::stratum::Router;
 use crate::stratum::View;
 
 type Deposited<E, S> = Formation<(E, S)>;
 
 /// A statically shaped graph of signals.
 ///
-/// Each [`input`](Self::input), [`memo`](Self::memo), [`view`](Self::view)
-/// or [`route`](Self::route) deposits a stratum on top of the previous ones,
-/// and
+/// Each [`input`](Self::input), [`bank`](Self::bank), [`memo`](Self::memo)
+/// or [`view`](Self::view) deposits a stratum on top of the previous ones, and
 /// a stratum can only depend on the strata beneath it, so cycles cannot be
 /// written. Every signal has a value from the moment it is declared, and the
 /// formation tracks changes in one bit per signal, sized from its strata.
@@ -77,7 +74,7 @@ impl<S: Strata> From<S> for Formation<S> {
     /// [`poll`](Self::poll) reports every initial value.
     fn from(strata: S) -> Self {
         Self {
-            changed: S::CHANGED,
+            changed: S::changed(),
             strata,
         }
     }
@@ -93,10 +90,10 @@ impl<S: Layered> Formation<S> {
     /// NaN, would be reported as changed every time. Wrap such values in a type
     /// whose `Eq` compares them by their bits, for instance.
     ///
-    /// Every signal of a formation has a distinct type, and an input cannot
-    /// share its type with a router beneath it either, since feeding that type
-    /// could not tell them apart. The indices that tell layers apart cannot
-    /// be named, so the check cannot be bypassed by spelling one out.
+    /// Every signal of a formation has a distinct type, since feeding or
+    /// reading that type could not tell them apart. The indices that tell
+    /// layers apart cannot be named, so the check cannot be bypassed by
+    /// spelling one out.
     #[must_use]
     pub fn input<T: Eq, I>(self, initial: T) -> Deposited<Input<T>, S>
     where
@@ -260,28 +257,8 @@ impl<S: Layered> Formation<S> {
         })
     }
 
-    /// Deposits a router that turns a fed `&In` into feeds of the inputs and
-    /// routers beneath it.
-    ///
-    /// The routed value is not stored, so borrowed data such as byte slices
-    /// can be fed, and several signals can be produced from a single feed.
-    ///
-    /// A router can only feed what lies beneath it.
-    #[must_use]
-    pub fn route<In: ?Sized, F, I>(self, f: F) -> Deposited<Router<In, F>, S>
-    where
-        F: FnMut(&In, &mut Sink<'_, S>),
-        (Router<In, F>, S): Sound<I>,
-    {
-        self.deposit(Router {
-            f,
-            marker: PhantomData,
-        })
-    }
-
     /// Deposits a struct declared with `strata!` as one layer, whose signals
-    /// the signals above can depend on, and that the formation and the
-    /// routers above can feed.
+    /// the signals above can depend on, and that the formation can feed.
     ///
     /// Every signal of the struct is reported by the next
     /// [`poll`](Self::poll). The struct depends only on its own signals,
@@ -348,7 +325,7 @@ impl<S: Layered> Formation<S> {
 }
 
 impl<S: Strata> Formation<S> {
-    /// Feeds an input by value, or a router by reference.
+    /// Feeds an input, or a bank with a [`Write`](crate::Write).
     ///
     /// Feeding an input its current value changes nothing. Feeding it a
     /// different value marks it as changed until the next
@@ -430,10 +407,10 @@ impl<S: Strata> Formation<S> {
     /// to its dependents. A view is reported and propagated whenever one of
     /// its dependencies changed, whether or not its own value did.
     ///
-    /// Under `panic = "unwind"`, each signal is unmarked just before it is
-    /// visited: if `visitor` panics and the panic is caught, the signals it had
-    /// not reached yet are reported by the next poll; the one it panicked on is
-    /// not, so a visitor that always panics on a value cannot block the others.
+    /// Each signal is unmarked just before it is visited: if `visitor` panics
+    /// and the panic is caught, the signals it had not reached yet are reported
+    /// by the next poll; the one it panicked on is not, so a visitor that
+    /// always panics on a value cannot block the others.
     pub fn poll<V>(&mut self, visitor: &mut V)
     where
         S: Report<V>,
@@ -443,6 +420,29 @@ impl<S: Strata> Formation<S> {
         }
         self.strata.evaluate(&mut self.changed);
         self.strata.report(&mut self.changed, visitor);
-        self.changed = S::Flags::default();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::visit::Visit;
+
+    struct Ignore;
+
+    impl<T> Visit<T> for Ignore {
+        fn visit(&mut self, _: &T) {}
+    }
+
+    #[test]
+    fn a_poll_leaves_no_bit_set_after_banks_short_of_a_byte() {
+        let mut formation = Formation::new()
+            .input(0_u8)
+            .bank::<1, _, _, _>([0_u16; 5])
+            .input(0_i8);
+
+        formation.poll(&mut Ignore);
+
+        assert_eq!(formation.changed, Default::default());
     }
 }
